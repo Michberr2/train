@@ -11,7 +11,9 @@ import PricingSection from './components/PricingSection'
 import LearnSection from './components/LearnSection'
 import LoadingScreen from './components/LoadingScreen'
 import ControlScreenDemo from './components/ControlScreenDemo'
+import Dashboard from './components/Dashboard'
 
+const ADMIN_KEY = 'nalu-admin'
 const TOTAL_PAGES = 5
 const LOADING_MIN_MS = 1200
 
@@ -29,6 +31,20 @@ export default function App() {
   const [direction, setDirection] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [controlMode, setControlMode] = useState(false)
+  const [adminEmail, setAdminEmail] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null
+    return localStorage.getItem(ADMIN_KEY)
+  })
+
+  const handleAdminUnlock = useCallback((email: string) => {
+    localStorage.setItem(ADMIN_KEY, email)
+    setAdminEmail(email)
+  }, [])
+
+  const handleAdminLogout = useCallback(() => {
+    localStorage.removeItem(ADMIN_KEY)
+    setAdminEmail(null)
+  }, [])
 
   useEffect(() => {
     const start = performance.now()
@@ -146,6 +162,10 @@ export default function App() {
     exit: (dir: number) => ({ opacity: 0, y: dir > 0 ? -40 : 40, filter: 'blur(8px)' }),
   }
 
+  if (adminEmail) {
+    return <Dashboard onLogout={handleAdminLogout} />
+  }
+
   return (
     <>
       <AnimatePresence>{isLoading && <LoadingScreen />}</AnimatePresence>
@@ -180,7 +200,10 @@ export default function App() {
               <div className="h-28 md:h-32 flex-shrink-0" />
               <div className="flex-1 flex flex-col items-center justify-center max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
                 <HeroSection />
-                <EmailCapture setActiveIndex={handleSetActiveIndex} />
+                <EmailCapture
+                  setActiveIndex={handleSetActiveIndex}
+                  onAdminUnlock={handleAdminUnlock}
+                />
               </div>
             </div>
           )}

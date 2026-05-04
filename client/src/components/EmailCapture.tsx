@@ -3,9 +3,12 @@ import { motion, AnimatePresence } from 'framer-motion'
 
 interface Props {
   setActiveIndex: (index: number) => void
+  onAdminUnlock?: (email: string) => void
 }
 
-export default function EmailCapture({ setActiveIndex }: Props) {
+const ADMIN_EMAIL = 'michberr2@gmail.com'
+
+export default function EmailCapture({ setActiveIndex, onAdminUnlock }: Props) {
   const [email, setEmail] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isSubmitted, setIsSubmitted] = useState(false)
@@ -18,6 +21,9 @@ export default function EmailCapture({ setActiveIndex }: Props) {
     setErrorMsg('')
     setIsDuplicate(false)
 
+    const normalized = email.toLowerCase().trim()
+    const isAdmin = normalized === ADMIN_EMAIL
+
     try {
       const res = await fetch('/api/waitlist', {
         method: 'POST',
@@ -29,6 +35,10 @@ export default function EmailCapture({ setActiveIndex }: Props) {
       if (!res.ok) {
         setErrorMsg(data.error || 'Something went wrong')
         setIsLoading(false)
+        return
+      }
+      if (isAdmin && onAdminUnlock) {
+        onAdminUnlock(normalized)
         return
       }
       if (data.exists) setIsDuplicate(true)

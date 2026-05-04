@@ -4,6 +4,8 @@ import cors from 'cors'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import waitlistRouter from './routes/waitlist.js'
+import gitRouter from './routes/git.js'
+import chatRouter from './routes/chat.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -17,6 +19,8 @@ app.get('/api/health', (_req, res) => {
 })
 
 app.use('/api/waitlist', waitlistRouter)
+app.use('/api/git', gitRouter)
+app.use('/api/chat', chatRouter)
 
 const clientDist = path.resolve(__dirname, '../../client/dist')
 app.use(express.static(clientDist))
