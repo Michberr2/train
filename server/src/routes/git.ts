@@ -232,4 +232,31 @@ router.get('/file', async (req: Request, res: Response) => {
   }
 })
 
+router.post('/file', async (req: Request, res: Response) => {
+  try {
+    const { repo, path: filePath, content } = req.body ?? {}
+    if (typeof filePath !== 'string' || !filePath) throw new Error('path required')
+    if (typeof content !== 'string') throw new Error('content required')
+    const cwd = resolveRepo(repo)
+    const candidate = path.resolve(cwd, filePath)
+    const rel = path.relative(cwd, candidate)
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new Error('file path outside repo')
+    }
+    try {
+      const stat = await fs.stat(candidate)
+      if (!stat.isFile()) throw new Error('not a file')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+      await fs.mkdir(path.dirname(candidate), { recursive: true })
+    }
+    await fs.writeFile(candidate, content, 'utf-8')
+    const stat = await fs.stat(candidate)
+    res.json({ ok: true, path: filePath, size: stat.size, savedAt: Date.now() })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    res.status(400).json({ error: message })
+  }
+})
+
 export default router

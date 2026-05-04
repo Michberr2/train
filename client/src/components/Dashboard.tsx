@@ -43,6 +43,10 @@ import {
   Pencil,
   Play,
   MessageSquare,
+  PanelBottom,
+  AlignCenter,
+  Download,
+  Image as ImageIcon,
   type LucideIcon,
 } from 'lucide-react'
 import { useTheme } from './ThemeProvider'
@@ -301,6 +305,17 @@ export default function Dashboard({ onLogout }: Props) {
   const [showFiles, setShowFiles] = useState(!isNarrow)
   const [showLeftRail, setShowLeftRail] = useState(!isNarrow)
   const [mobileTab, setMobileTab] = useState<'chat' | 'files' | 'summary'>('chat')
+  const [composerPinned, setComposerPinned] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return localStorage.getItem('nalu-composer-pinned') === '1'
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('nalu-composer-pinned', composerPinned ? '1' : '0')
+    } catch {
+      // ignore
+    }
+  }, [composerPinned])
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
   const [streaming, setStreaming] = useState(false)
@@ -397,6 +412,137 @@ export default function Dashboard({ onLogout }: Props) {
   const [showConnectGithub, setShowConnectGithub] = useState(false)
   const [showPlugins, setShowPlugins] = useState(false)
   const [showAutomations, setShowAutomations] = useState(false)
+  const [openFilePath, setOpenFilePath] = useState<string | null>(null)
+  const [editedContents, setEditedContents] = useState<Map<string, string>>(new Map())
+  const [openFileContent, setOpenFileContent] = useState<string | null>(null)
+  const [openFileLoading, setOpenFileLoading] = useState(false)
+  const [openFileError, setOpenFileError] = useState<string | null>(null)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [saveErrorMsg, setSaveErrorMsg] = useState<string | null>(null)
+  const editsSaveTimer = useRef<number | null>(null)
+  const saveSeqRef = useRef(0)
+
+  useEffect(() => {
+    if (!repo) {
+      setEditedContents(new Map())
+      return
+    }
+    try {
+      const raw = localStorage.getItem(`nalu-edits-${repo.name}`)
+      if (raw) {
+        const obj = JSON.parse(raw) as Record<string, string>
+        setEditedContents(new Map(Object.entries(obj)))
+        return
+      }
+    } catch {
+      // fall through
+    }
+    setEditedContents(new Map())
+  }, [repo])
+
+  const persistEdits = useCallback(
+    (next: Map<string, string>, savingPath: string, savingContent: string) => {
+      if (!repo) return
+      try {
+        const obj = Object.fromEntries(next.entries())
+        localStorage.setItem(`nalu-edits-${repo.name}`, JSON.stringify(obj))
+      } catch {
+        // quota or serialization issue — keep going, server is source of truth
+      }
+      if (editsSaveTimer.current) window.clearTimeout(editsSaveTimer.current)
+      setSaveStatus('saving')
+      setSaveErrorMsg(null)
+      editsSaveTimer.current = window.setTimeout(async () => {
+        const seq = ++saveSeqRef.current
+        try {
+          const res = await fetch('/api/git/file', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ repo: repo.name, path: savingPath, content: savingContent }),
+          })
+          if (seq !== saveSeqRef.current) return
+          const data = await res.json().catch(() => ({}))
+          if (!res.ok) {
+            setSaveStatus('error')
+            setSaveErrorMsg(data?.error || `Save failed (${res.status})`)
+            return
+          }
+          setSavedAt(typeof data?.savedAt === 'number' ? data.savedAt : Date.now())
+          setSaveStatus('saved')
+        } catch (err) {
+          if (seq !== saveSeqRef.current) return
+          setSaveStatus('error')
+          setSaveErrorMsg(err instanceof Error ? err.message : 'Network error')
+        }
+      }, 500)
+    },
+    [repo],
+  )
+
+  const openFile = useCallback(
+    (path: string) => {
+      if (!repo) return
+      const file = repo.files.get(path)
+      if (!file) return
+      setOpenFilePath(path)
+      setOpenFileError(null)
+      setSaveStatus('idle')
+      setSaveErrorMsg(null)
+      const cached = editedContents.get(path)
+      if (cached !== undefined) {
+        setOpenFileContent(cached)
+        setOpenFileLoading(false)
+        return
+      }
+      const ext = getFileExtension(file.name || path)
+      const looksText = TEXT_EXTENSIONS.has(ext) || file.type.startsWith('text/')
+      if (!looksText) {
+        setOpenFileContent(null)
+        setOpenFileLoading(false)
+        return
+      }
+      if (file.size > MAX_TEXT_PREVIEW) {
+        setOpenFileContent(null)
+        setOpenFileError(`File too large to edit (${formatBytes(file.size)})`)
+        setOpenFileLoading(false)
+        return
+      }
+      setOpenFileLoading(true)
+      file
+        .text()
+        .then((content) => {
+          setOpenFileContent(content)
+          setOpenFileLoading(false)
+        })
+        .catch((err) => {
+          setOpenFileError(err instanceof Error ? err.message : 'Failed to read file')
+          setOpenFileLoading(false)
+        })
+    },
+    [repo, editedContents],
+  )
+
+  const closeFile = useCallback(() => {
+    setOpenFilePath(null)
+    setOpenFileContent(null)
+    setOpenFileError(null)
+    setOpenFileLoading(false)
+  }, [])
+
+  const updateOpenFileContent = useCallback(
+    (content: string) => {
+      if (!openFilePath) return
+      setOpenFileContent(content)
+      setEditedContents((prev) => {
+        const next = new Map(prev)
+        next.set(openFilePath, content)
+        persistEdits(next, openFilePath, content)
+        return next
+      })
+    },
+    [openFilePath, persistEdits],
+  )
   const [searchQuery, setSearchQuery] = useState<string | null>(null)
   const [plugins, setPlugins] = useState<Record<string, boolean>>(() => loadPlugins())
   const [automations, setAutomations] = useState<AutomationItem[]>(() => loadAutomations())
@@ -914,6 +1060,17 @@ export default function Dashboard({ onLogout }: Props) {
           streaming={streaming}
           onSend={sendPrompt}
           repo={repo}
+          composerPinned={composerPinned}
+          onToggleComposerPinned={() => setComposerPinned((v) => !v)}
+          openFilePath={openFilePath}
+          openFileContent={openFileContent}
+          openFileLoading={openFileLoading}
+          openFileError={openFileError}
+          savedAt={savedAt}
+          saveStatus={saveStatus}
+          saveErrorMsg={saveErrorMsg}
+          onChangeFileContent={updateOpenFileContent}
+          onCloseFile={closeFile}
         />
         {showSummary && (
           <SummaryPane
@@ -925,7 +1082,7 @@ export default function Dashboard({ onLogout }: Props) {
           />
         )}
         {showFiles && (
-          <FilesPane tree={repo.tree} onClose={() => setShowFiles(false)} />
+          <FilesPane tree={repo.tree} onClose={() => setShowFiles(false)} onOpenFile={openFile} />
         )}
         <CollapsedEdgeRail
           showSummary={showSummary}
@@ -945,10 +1102,28 @@ export default function Dashboard({ onLogout }: Props) {
               streaming={streaming}
               onSend={sendPrompt}
               repo={repo}
+              composerPinned={composerPinned}
+              onToggleComposerPinned={() => setComposerPinned((v) => !v)}
+              openFilePath={openFilePath}
+              openFileContent={openFileContent}
+              openFileLoading={openFileLoading}
+              openFileError={openFileError}
+              savedAt={savedAt}
+              saveStatus={saveStatus}
+              saveErrorMsg={saveErrorMsg}
+              onChangeFileContent={updateOpenFileContent}
+              onCloseFile={closeFile}
             />
           )}
           {mobileTab === 'files' && (
-            <FilesPane tree={repo.tree} onClose={() => setMobileTab('chat')} />
+            <FilesPane
+              tree={repo.tree}
+              onClose={() => setMobileTab('chat')}
+              onOpenFile={(p) => {
+                openFile(p)
+                setMobileTab('chat')
+              }}
+            />
           )}
           {mobileTab === 'summary' && (
             <SummaryPane
@@ -1715,6 +1890,17 @@ function CenterPane({
   streaming,
   onSend,
   repo,
+  composerPinned,
+  onToggleComposerPinned,
+  openFilePath,
+  openFileContent,
+  openFileLoading,
+  openFileError,
+  savedAt,
+  saveStatus,
+  saveErrorMsg,
+  onChangeFileContent,
+  onCloseFile,
 }: {
   prompt: string
   setPrompt: (v: string) => void
@@ -1722,6 +1908,17 @@ function CenterPane({
   streaming: boolean
   onSend: () => void
   repo: RepoSnapshot
+  composerPinned: boolean
+  onToggleComposerPinned: () => void
+  openFilePath: string | null
+  openFileContent: string | null
+  openFileLoading: boolean
+  openFileError: string | null
+  savedAt: number | null
+  saveStatus: 'idle' | 'saving' | 'saved' | 'error'
+  saveErrorMsg: string | null
+  onChangeFileContent: (content: string) => void
+  onCloseFile: () => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -1729,10 +1926,12 @@ function CenterPane({
   }, [messages])
 
   const isEmpty = messages.length === 0
+  const fileIsOpen = openFilePath !== null
+  const useBottomLayout = !isEmpty || composerPinned || fileIsOpen
 
   return (
     <main className="flex-1 min-w-0 flex flex-col relative">
-      {isEmpty ? (
+      {!useBottomLayout ? (
         <div className="flex-1 flex flex-col items-center justify-center px-4 sm:px-8 py-8 sm:py-12 overflow-y-auto">
           <div className="w-full max-w-2xl">
             <h1 className="text-xl sm:text-[28px] font-light text-primary text-center mb-6 sm:mb-8 leading-tight">
@@ -1744,6 +1943,8 @@ function CenterPane({
               onSend={onSend}
               streaming={streaming}
               repo={repo}
+              composerPinned={composerPinned}
+              onToggleComposerPinned={onToggleComposerPinned}
             />
             <ul className="mt-6 space-y-1.5">
               {SUGGESTIONS.map(({ icon: Icon, label }) => (
@@ -1762,13 +1963,61 @@ function CenterPane({
         </div>
       ) : (
         <>
-          <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 sm:px-8 py-6 sm:py-10 scrollbar-hide">
-            <div className="max-w-2xl mx-auto space-y-6">
-              {messages.map((m, i) => (
-                <ChatBubble key={i} message={m} streaming={streaming && i === messages.length - 1 && m.role === 'assistant'} />
-              ))}
+          {fileIsOpen ? (
+            <FileEditorPane
+              path={openFilePath!}
+              file={repo.files.get(openFilePath!) ?? null}
+              content={openFileContent}
+              loading={openFileLoading}
+              error={openFileError}
+              savedAt={savedAt}
+              saveStatus={saveStatus}
+              saveErrorMsg={saveErrorMsg}
+              onChange={onChangeFileContent}
+              onClose={onCloseFile}
+            />
+          ) : (
+            <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 sm:px-8 py-6 sm:py-10 scrollbar-hide">
+              <div className="max-w-2xl mx-auto">
+                {isEmpty ? (
+                  <div className="text-center pt-10 sm:pt-16">
+                    <h1 className="text-xl sm:text-[28px] font-light text-primary leading-tight">
+                      What should we build in {repo.name}?
+                    </h1>
+                    <ul className="mt-6 space-y-1.5 text-left">
+                      {SUGGESTIONS.map(({ icon: Icon, label }) => (
+                        <li key={label}>
+                          <button
+                            onClick={() => setPrompt(label)}
+                            className="w-full flex items-start gap-3 px-3 py-2.5 rounded-lg text-xs text-secondary hover:bg-surface hover:text-primary transition-colors text-left"
+                          >
+                            <Icon
+                              size={14}
+                              strokeWidth={1.6}
+                              className="text-tertiary flex-shrink-0 mt-0.5"
+                            />
+                            <span className="md:truncate">{label}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {messages.map((m, i) => (
+                      <ChatBubble
+                        key={i}
+                        message={m}
+                        streaming={
+                          streaming && i === messages.length - 1 && m.role === 'assistant'
+                        }
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
           <div className="px-4 sm:px-8 pb-4 sm:pb-6 pt-2 border-t border-border-gray bg-background">
             <div className="max-w-2xl mx-auto">
               <PromptComposer
@@ -1777,6 +2026,8 @@ function CenterPane({
                 onSend={onSend}
                 streaming={streaming}
                 repo={repo}
+                composerPinned={composerPinned}
+                onToggleComposerPinned={onToggleComposerPinned}
               />
             </div>
           </div>
@@ -1812,12 +2063,16 @@ function PromptComposer({
   onSend,
   streaming,
   repo,
+  composerPinned,
+  onToggleComposerPinned,
 }: {
   prompt: string
   setPrompt: (v: string) => void
   onSend: () => void
   streaming: boolean
   repo: RepoSnapshot
+  composerPinned: boolean
+  onToggleComposerPinned: () => void
 }) {
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1825,6 +2080,8 @@ function PromptComposer({
       onSend()
     }
   }
+  const ToggleIcon = composerPinned ? AlignCenter : PanelBottom
+  const toggleLabel = composerPinned ? 'Center composer' : 'Pin composer to bottom'
   return (
     <div className="rounded-2xl bg-surface border border-border-gray p-3 shadow-sm">
       <textarea
@@ -1847,14 +2104,29 @@ function PromptComposer({
           <Box size={11} className="flex-shrink-0" />
           <span className="truncate">{repo.branch ? `${repo.name} · ${repo.branch}` : repo.name}</span>
         </div>
-        <button
-          onClick={onSend}
-          disabled={streaming || !prompt.trim()}
-          aria-label="Send"
-          className="w-9 h-9 md:w-8 md:h-8 rounded-full bg-primary text-surface hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-opacity flex-shrink-0"
-        >
-          {streaming ? <Loader2 size={16} className="animate-spin" /> : <ArrowUp size={16} strokeWidth={2.2} />}
-        </button>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <button
+            onClick={onToggleComposerPinned}
+            aria-label={toggleLabel}
+            title={toggleLabel}
+            aria-pressed={composerPinned}
+            className={`w-8 h-8 md:w-7 md:h-7 rounded-md border flex items-center justify-center transition-colors ${
+              composerPinned
+                ? 'bg-accent-blue/15 border-accent-blue text-accent-blue'
+                : 'bg-transparent border-border-gray text-tertiary hover:text-primary hover:border-primary/40'
+            }`}
+          >
+            <ToggleIcon size={14} strokeWidth={1.6} />
+          </button>
+          <button
+            onClick={onSend}
+            disabled={streaming || !prompt.trim()}
+            aria-label="Send"
+            className="w-9 h-9 md:w-8 md:h-8 rounded-full bg-primary text-surface hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-opacity"
+          >
+            {streaming ? <Loader2 size={16} className="animate-spin" /> : <ArrowUp size={16} strokeWidth={2.2} />}
+          </button>
+        </div>
       </div>
       <div className="hidden md:flex items-center gap-1 mt-2 overflow-x-auto scrollbar-hide">
         <ComposerChip icon={Box} label={repo.name} hasChevron />
@@ -2036,7 +2308,15 @@ function SummaryRow({ label, value }: { label: string; value?: string }) {
   )
 }
 
-function FilesPane({ tree, onClose }: { tree: FileNode[]; onClose: () => void }) {
+function FilesPane({
+  tree,
+  onClose,
+  onOpenFile,
+}: {
+  tree: FileNode[]
+  onClose: () => void
+  onOpenFile: (path: string) => void
+}) {
   const [filter, setFilter] = useState('')
   const total = useMemo(() => treeStats(tree).files, [tree])
 
@@ -2072,14 +2352,24 @@ function FilesPane({ tree, onClose }: { tree: FileNode[]; onClose: () => void })
         {filteredTree.length === 0 ? (
           <p className="px-3 py-2 text-[11px] text-tertiary">No files</p>
         ) : (
-          filteredTree.map((node) => <FileTreeNode key={node.path} node={node} depth={0} />)
+          filteredTree.map((node) => (
+            <FileTreeNode key={node.path} node={node} depth={0} onOpenFile={onOpenFile} />
+          ))
         )}
       </div>
     </aside>
   )
 }
 
-function FileTreeNode({ node, depth }: { node: FileNode; depth: number }) {
+function FileTreeNode({
+  node,
+  depth,
+  onOpenFile,
+}: {
+  node: FileNode
+  depth: number
+  onOpenFile: (path: string) => void
+}) {
   const [open, setOpen] = useState(depth < 1)
   const pad = { paddingLeft: 8 + depth * 12 }
 
@@ -2088,6 +2378,7 @@ function FileTreeNode({ node, depth }: { node: FileNode; depth: number }) {
     return (
       <button
         style={pad}
+        onClick={() => onOpenFile(node.path)}
         className="w-full flex items-center gap-1.5 h-6 pr-2 hover:bg-border-gray/40 text-[11px] text-secondary hover:text-primary transition-colors text-left"
       >
         {isJson ? (
@@ -2120,7 +2411,14 @@ function FileTreeNode({ node, depth }: { node: FileNode; depth: number }) {
         <span className="truncate">{node.name}</span>
       </button>
       {open &&
-        node.children.map((child) => <FileTreeNode key={child.path} node={child} depth={depth + 1} />)}
+        node.children.map((child) => (
+          <FileTreeNode
+            key={child.path}
+            node={child}
+            depth={depth + 1}
+            onOpenFile={onOpenFile}
+          />
+        ))}
     </>
   )
 }
@@ -2958,5 +3256,213 @@ function AutomationsModal({
         )}
       </div>
     </ModalShell>
+  )
+}
+
+const TEXT_EXTENSIONS = new Set([
+  'txt', 'md', 'mdx', 'markdown', 'rst',
+  'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs',
+  'json', 'jsonc', 'json5',
+  'html', 'htm', 'css', 'scss', 'sass', 'less',
+  'py', 'rb', 'go', 'rs', 'java', 'kt', 'swift', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'php', 'lua', 'sh', 'bash', 'zsh', 'fish',
+  'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf', 'env',
+  'xml', 'svg',
+  'sql', 'graphql', 'gql', 'proto',
+  'csv', 'tsv', 'log',
+  'gitignore', 'dockerignore', 'editorconfig', 'prettierrc', 'eslintrc',
+])
+
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'svg'])
+
+function getFileExtension(name: string): string {
+  const lower = name.toLowerCase()
+  const dot = lower.lastIndexOf('.')
+  if (dot === -1) return lower
+  return lower.slice(dot + 1)
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+}
+
+const MAX_TEXT_PREVIEW = 2 * 1024 * 1024 // 2 MB
+
+function FileEditorPane({
+  path,
+  file,
+  content,
+  loading,
+  error,
+  savedAt,
+  saveStatus,
+  saveErrorMsg,
+  onChange,
+  onClose,
+}: {
+  path: string
+  file: File | null
+  content: string | null
+  loading: boolean
+  error: string | null
+  savedAt: number | null
+  saveStatus: 'idle' | 'saving' | 'saved' | 'error'
+  saveErrorMsg: string | null
+  onChange: (content: string) => void
+  onClose: () => void
+}) {
+  const ext = getFileExtension((file?.name || path) ?? '')
+  const isImage = !!file && (IMAGE_EXTENSIONS.has(ext) || file.type.startsWith('image/'))
+  const isPdf = !!file && (ext === 'pdf' || file.type === 'application/pdf')
+  const isText = !isImage && !isPdf && (!!file && (TEXT_EXTENSIONS.has(ext) || file.type.startsWith('text/')))
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+  const [savedTick, setSavedTick] = useState(0)
+
+  useEffect(() => {
+    if (!file || (!isImage && !isPdf)) return
+    const url = URL.createObjectURL(file)
+    setObjectUrl(url)
+    return () => {
+      URL.revokeObjectURL(url)
+    }
+  }, [file, isImage, isPdf])
+
+  useEffect(() => {
+    if (savedAt === null) return
+    setSavedTick((t) => t + 1)
+  }, [savedAt])
+
+  const download = () => {
+    if (!file) return
+    const blob = isText && content !== null ? new Blob([content], { type: file.type || 'text/plain' }) : file
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = file.name || path.split('/').pop() || 'file'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  const HeaderIcon = isImage ? ImageIcon : isPdf ? FileText : CodeIcon
+  const savedLabel = savedAt
+    ? new Date(savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null
+
+  return (
+    <div className="flex-1 min-h-0 flex flex-col bg-background">
+      <div className="h-11 flex items-center justify-between px-4 sm:px-6 border-b border-border-gray flex-shrink-0 gap-3">
+        <div className="flex items-center gap-2 text-sm text-primary min-w-0">
+          <HeaderIcon size={14} className="text-tertiary flex-shrink-0" strokeWidth={1.6} />
+          <span className="font-medium truncate" title={path}>{path}</span>
+          {file && <span className="text-xs text-tertiary flex-shrink-0">{formatBytes(file.size)}</span>}
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {isText && saveStatus === 'saving' && (
+            <span className="text-[11px] text-tertiary inline-flex items-center gap-1">
+              <Loader2 size={11} className="animate-spin" />
+              Saving…
+            </span>
+          )}
+          {isText && saveStatus === 'saved' && savedLabel && (
+            <span
+              key={savedTick}
+              className="text-[11px] text-tertiary inline-flex items-center gap-1"
+              title={`Saved to disk at ${savedLabel}`}
+            >
+              <Check size={11} strokeWidth={2} className="text-green-500" />
+              Saved {savedLabel}
+            </span>
+          )}
+          {isText && saveStatus === 'error' && (
+            <span
+              className="text-[11px] text-red-500 inline-flex items-center gap-1 max-w-[16rem] truncate"
+              title={saveErrorMsg ?? 'Save failed'}
+            >
+              <AlertCircle size={11} strokeWidth={2} />
+              {saveErrorMsg ?? 'Save failed'}
+            </span>
+          )}
+          {file && (
+            <button
+              onClick={download}
+              aria-label="Download"
+              title="Download"
+              className="w-7 h-7 rounded-md hover:bg-border-gray/50 flex items-center justify-center text-secondary"
+            >
+              <Download size={14} strokeWidth={1.6} />
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            aria-label="Close file"
+            title="Close file"
+            className="w-7 h-7 rounded-md hover:bg-border-gray/50 flex items-center justify-center text-secondary"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto">
+        {!file && (
+          <div className="p-6 text-sm text-tertiary">File not found in workspace.</div>
+        )}
+        {file && isImage && objectUrl && (
+          <div className="flex items-center justify-center p-4 min-h-full">
+            <img src={objectUrl} alt={path} className="max-w-full max-h-[80dvh] object-contain" />
+          </div>
+        )}
+        {file && isPdf && objectUrl && (
+          <iframe src={objectUrl} title={path} className="w-full h-full min-h-[60dvh] border-0 bg-white" />
+        )}
+        {file && isText && (
+          <>
+            {loading && (
+              <div className="p-4 flex items-center gap-2 text-sm text-tertiary">
+                <Loader2 size={14} className="animate-spin" />
+                Loading…
+              </div>
+            )}
+            {error && (
+              <div className="p-4 flex items-start gap-2 text-sm text-red-500">
+                <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+            {!loading && !error && content !== null && (
+              <textarea
+                value={content}
+                onChange={(e) => onChange(e.target.value)}
+                spellCheck={false}
+                className="w-full h-full min-h-[60dvh] resize-none bg-background text-primary font-mono text-xs leading-relaxed px-4 sm:px-6 py-4 focus:outline-none whitespace-pre"
+                style={{ tabSize: 2 }}
+              />
+            )}
+          </>
+        )}
+        {file && !isImage && !isPdf && !isText && (
+          <div className="p-8 flex flex-col items-center justify-center text-center gap-3 min-h-[40dvh]">
+            <div className="w-12 h-12 rounded-full bg-border-gray/40 flex items-center justify-center">
+              <FileText size={20} className="text-tertiary" strokeWidth={1.6} />
+            </div>
+            <div>
+              <div className="text-sm font-medium text-primary">Cannot edit this file</div>
+              <div className="text-xs text-tertiary mt-1">
+                {ext ? `.${ext}` : 'Unknown'} · {formatBytes(file.size)}
+              </div>
+            </div>
+            <button
+              onClick={download}
+              className="mt-2 inline-flex items-center gap-2 h-9 px-3 rounded-md border border-border-gray text-xs text-secondary hover:text-primary hover:bg-border-gray/30 transition-colors"
+            >
+              <Download size={12} strokeWidth={1.8} />
+              Download
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
