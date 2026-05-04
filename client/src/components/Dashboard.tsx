@@ -952,69 +952,218 @@ export default function Dashboard({ onLogout }: Props) {
     abortRef.current = controller
 
     try {
-      const apiMessages = next
+      type ApiMsg =
+        | { role: 'user' | 'system'; content: string }
+        | {
+            role: 'assistant'
+            content: string | null
+            tool_calls?: Array<{
+              id: string
+              type: 'function'
+              function: { name: string; arguments: string }
+            }>
+          }
+        | { role: 'tool'; tool_call_id: string; content: string }
+
+      const apiMessages: ApiMsg[] = next
         .filter((m) => m.role === 'user' || m.content)
-        .map((m) => ({ role: m.role, content: m.content }))
+        .map((m) => ({ role: m.role, content: m.content }) as ApiMsg)
       if (isFirstUserMessage && apiMessages[0]?.role === 'user') {
         apiMessages[0] = { ...apiMessages[0], content: firstUserContent }
       }
 
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          repo: repo.name,
-          messages: apiMessages,
-          githubConnected: !!githubToken,
-          origin: repo.origin ?? null,
-          branch: repo.branch ?? null,
-        }),
-      })
-      if (!res.ok || !res.body) {
-        const errText = await res.text().catch(() => '')
-        setMessages((prev) => {
-          const out = [...prev]
-          out[out.length - 1] = { role: 'assistant', content: `Error: ${res.status} ${errText.slice(0, 200)}` }
-          return out
+      const apiRead = async (p: string): Promise<string> => {
+        const r = await fetch(`/api/git/file?repo=${encodeURIComponent(repo.name)}&path=${encodeURIComponent(p)}`)
+        if (!r.ok) throw new Error(`read failed: ${r.status}`)
+        const j = await r.json()
+        if (j.content == null) throw new Error('file too large or binary')
+        return j.content as string
+      }
+      const apiWrite = async (p: string, content: string): Promise<number> => {
+        const r = await fetch('/api/git/file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repo: repo.name, path: p, content }),
         })
-        return
+        if (!r.ok) throw new Error(`write failed: ${r.status}`)
+        const j = await r.json()
+        return Number(j.size) || content.length
+      }
+      const onFileWritten = (p: string, content: string) => {
+        setRepo((prev) => {
+          if (!prev) return prev
+          const newFiles = new Map(prev.files)
+          const fileName = p.split('/').pop() || p
+          const fakeFile = new File([content], fileName, { type: 'text/plain' })
+          try {
+            Object.defineProperty(fakeFile, 'webkitRelativePath', { value: `${prev.name}/${p}`, configurable: true })
+          } catch {
+            // ignore
+          }
+          newFiles.set(p, fakeFile)
+          return { ...prev, files: newFiles }
+        })
+        setOpenFilePath((curr) => {
+          if (curr === p) {
+            setOpenFileContent(content)
+            setEditedContents((prevEdits) => {
+              if (!prevEdits.has(p)) return prevEdits
+              const m = new Map(prevEdits)
+              m.delete(p)
+              return m
+            })
+          }
+          return curr
+        })
       }
 
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder('utf-8')
-      let buf = ''
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        let sepIdx
-        while ((sepIdx = buf.indexOf('\n\n')) !== -1) {
-          const block = buf.slice(0, sepIdx)
-          buf = buf.slice(sepIdx + 2)
-          const eventMatch = block.match(/^event:\s*(\S+)/m)
-          const dataMatch = block.match(/^data:\s*(.+)$/m)
-          if (!eventMatch || !dataMatch) continue
-          const eventName = eventMatch[1]
-          let payload: { text?: string; message?: string } = {}
-          try { payload = JSON.parse(dataMatch[1]) } catch { continue }
-          if (eventName === 'delta' && payload.text) {
+      const formatArgsBrief = (args: Record<string, unknown>): string => {
+        if (typeof args.path === 'string') return `\`${args.path}\``
+        if (typeof args.glob === 'string') return `\`${args.glob}\``
+        return ''
+      }
+
+      const MAX_ITERS = 10
+      let stop = false
+      for (let iter = 0; iter < MAX_ITERS && !stop; iter++) {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            repo: repo.name,
+            messages: apiMessages,
+            githubConnected: !!githubToken,
+            origin: repo.origin ?? null,
+            branch: repo.branch ?? null,
+            tools: NALU_TOOLS,
+          }),
+        })
+        if (!res.ok || !res.body) {
+          const errText = await res.text().catch(() => '')
+          setMessages((prev) => {
+            const out = [...prev]
+            out[out.length - 1] = { role: 'assistant', content: `Error: ${res.status} ${errText.slice(0, 200)}` }
+            return out
+          })
+          return
+        }
+
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder('utf-8')
+        let buf = ''
+        let assistantText = ''
+        const toolAcc: Array<{ id?: string; name?: string; arguments: string }> = []
+        let finishReason: string | null = null
+
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          let sepIdx
+          while ((sepIdx = buf.indexOf('\n\n')) !== -1) {
+            const block = buf.slice(0, sepIdx)
+            buf = buf.slice(sepIdx + 2)
+            const eventMatch = block.match(/^event:\s*(\S+)/m)
+            const dataMatch = block.match(/^data:\s*(.+)$/m)
+            if (!eventMatch || !dataMatch) continue
+            const eventName = eventMatch[1]
+            let payload: {
+              text?: string
+              message?: string
+              reason?: string
+              index?: number
+              id?: string
+              name?: string
+              arguments?: string
+            } = {}
+            try { payload = JSON.parse(dataMatch[1]) } catch { continue }
+            if (eventName === 'delta' && payload.text) {
+              assistantText += payload.text
+              setMessages((prev) => {
+                const out = [...prev]
+                const last = out[out.length - 1]
+                if (last && last.role === 'assistant') {
+                  out[out.length - 1] = { ...last, content: last.content + payload.text }
+                }
+                return out
+              })
+            } else if (eventName === 'tool_call_delta') {
+              const idx = payload.index ?? 0
+              if (!toolAcc[idx]) toolAcc[idx] = { arguments: '' }
+              if (payload.id) toolAcc[idx].id = payload.id
+              if (payload.name) toolAcc[idx].name = payload.name
+              if (payload.arguments) toolAcc[idx].arguments += payload.arguments
+            } else if (eventName === 'finish') {
+              finishReason = payload.reason ?? null
+            } else if (eventName === 'error') {
+              setMessages((prev) => {
+                const out = [...prev]
+                out[out.length - 1] = { role: 'assistant', content: `Error: ${payload.message ?? 'unknown'}` }
+                return out
+              })
+              return
+            }
+          }
+        }
+
+        const calls = toolAcc.filter((t): t is { id?: string; name: string; arguments: string } => !!t && !!t.name)
+        if (finishReason === 'tool_calls' && calls.length > 0) {
+          const tool_calls = calls.map((t, i) => ({
+            id: t.id || `call_${Date.now()}_${i}`,
+            type: 'function' as const,
+            function: { name: t.name, arguments: t.arguments || '{}' },
+          }))
+          apiMessages.push({
+            role: 'assistant',
+            content: assistantText.length > 0 ? assistantText : null,
+            tool_calls,
+          })
+
+          for (const tc of tool_calls) {
+            let parsedArgs: Record<string, unknown> = {}
+            try { parsedArgs = JSON.parse(tc.function.arguments) } catch { /* ignore */ }
+            const brief = formatArgsBrief(parsedArgs)
+            const callLine = `\n\n→ \`${tc.function.name}\`${brief ? `(${brief})` : ''}`
             setMessages((prev) => {
               const out = [...prev]
               const last = out[out.length - 1]
               if (last && last.role === 'assistant') {
-                out[out.length - 1] = { ...last, content: last.content + payload.text }
+                out[out.length - 1] = { ...last, content: last.content + callLine }
               }
               return out
             })
-          } else if (eventName === 'error') {
+
+            const result = await runNaluTool(tc.function.name, parsedArgs, {
+              repo,
+              apiRead,
+              apiWrite,
+              onFileWritten,
+            })
+
+            const resultLabel = result.ok ? ' — done' : ` — failed: ${result.output.split('\n')[0].slice(0, 120)}`
             setMessages((prev) => {
               const out = [...prev]
-              out[out.length - 1] = { role: 'assistant', content: `Error: ${payload.message ?? 'unknown'}` }
+              const last = out[out.length - 1]
+              if (last && last.role === 'assistant') {
+                out[out.length - 1] = { ...last, content: last.content + resultLabel }
+              }
               return out
             })
+
+            const truncated = result.output.length > 16000
+              ? result.output.slice(0, 16000) + '\n…(truncated)'
+              : result.output
+            apiMessages.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: truncated,
+            })
           }
+          continue
         }
+
+        stop = true
       }
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
@@ -1566,6 +1715,213 @@ async function writeFileViaHandle(
   await writable.close()
   const file = await fileHandle.getFile()
   return file.size
+}
+
+async function readFileViaHandle(
+  rootHandle: FileSystemDirectoryHandle,
+  filePath: string,
+): Promise<string> {
+  const parts = filePath.split('/').filter(Boolean)
+  if (parts.length === 0) throw new Error('empty path')
+  const fileName = parts.pop()!
+  let dir = rootHandle
+  for (const segment of parts) {
+    dir = await dir.getDirectoryHandle(segment)
+  }
+  const fileHandle = await dir.getFileHandle(fileName)
+  const file = await fileHandle.getFile()
+  return await file.text()
+}
+
+interface ToolSpec {
+  type: 'function'
+  function: {
+    name: string
+    description: string
+    parameters: Record<string, unknown>
+  }
+}
+
+const NALU_TOOLS: ToolSpec[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'read_file',
+      description: 'Read the full text contents of a file in the repository. Returns the file content as a string. Use this before editing a file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Path to the file relative to the repo root.' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'write_file',
+      description: 'Write the full contents of a file. Creates the file (and parent directories) if needed. Overwrites existing content. Use for new files or full rewrites; prefer edit_file for targeted edits.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Path relative to the repo root.' },
+          content: { type: 'string', description: 'Full text content to write.' },
+        },
+        required: ['path', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'edit_file',
+      description: 'Replace one or more occurrences of a string in a file. Reads the current contents, performs the replacement, writes the result. Returns an error if old_string is not found.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Path relative to the repo root.' },
+          old_string: { type: 'string', description: 'Exact string to find. Include enough surrounding context to be unique.' },
+          new_string: { type: 'string', description: 'Replacement string.' },
+          replace_all: { type: 'boolean', description: 'If true, replace every occurrence; otherwise replace exactly one.' },
+        },
+        required: ['path', 'old_string', 'new_string'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_files',
+      description: 'List file paths in the repository. Optional glob filter (e.g. "src/**/*.ts"). Returns up to 500 paths.',
+      parameters: {
+        type: 'object',
+        properties: {
+          glob: { type: 'string', description: 'Optional glob-style filter (* matches any chars within a segment, ** matches across segments).' },
+        },
+      },
+    },
+  },
+]
+
+function globToRegex(glob: string): RegExp {
+  let out = '^'
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i]
+    if (c === '*') {
+      if (glob[i + 1] === '*') {
+        out += '.*'
+        i++
+      } else {
+        out += '[^/]*'
+      }
+    } else if (c === '?') {
+      out += '[^/]'
+    } else if ('.+^${}()|[]\\'.includes(c)) {
+      out += '\\' + c
+    } else {
+      out += c
+    }
+  }
+  return new RegExp(out + '$')
+}
+
+interface ToolRunDeps {
+  repo: RepoSnapshot
+  apiRead: (path: string) => Promise<string>
+  apiWrite: (path: string, content: string) => Promise<number>
+  onFileWritten: (path: string, content: string, size: number) => void
+}
+
+interface ToolResult {
+  ok: boolean
+  output: string
+}
+
+async function runNaluTool(
+  name: string,
+  args: Record<string, unknown>,
+  deps: ToolRunDeps,
+): Promise<ToolResult> {
+  const { repo, apiRead, apiWrite, onFileWritten } = deps
+  try {
+    if (name === 'read_file') {
+      const path = String(args.path ?? '')
+      if (!path) return { ok: false, output: 'Error: path required' }
+      let content: string
+      if (repo.dirHandle) {
+        content = await readFileViaHandle(repo.dirHandle, path)
+      } else {
+        const file = repo.files.get(path)
+        if (file) content = await file.text()
+        else content = await apiRead(path)
+      }
+      return { ok: true, output: content }
+    }
+    if (name === 'write_file') {
+      const path = String(args.path ?? '')
+      const content = String(args.content ?? '')
+      if (!path) return { ok: false, output: 'Error: path required' }
+      let size: number
+      if (repo.dirHandle) {
+        size = await writeFileViaHandle(repo.dirHandle, path, content)
+      } else {
+        size = await apiWrite(path, content)
+      }
+      onFileWritten(path, content, size)
+      return { ok: true, output: `Wrote ${path} (${size} bytes)` }
+    }
+    if (name === 'edit_file') {
+      const path = String(args.path ?? '')
+      const oldStr = String(args.old_string ?? '')
+      const newStr = String(args.new_string ?? '')
+      const replaceAll = !!args.replace_all
+      if (!path) return { ok: false, output: 'Error: path required' }
+      if (!oldStr) return { ok: false, output: 'Error: old_string required' }
+      let current: string
+      if (repo.dirHandle) {
+        current = await readFileViaHandle(repo.dirHandle, path)
+      } else {
+        const file = repo.files.get(path)
+        current = file ? await file.text() : await apiRead(path)
+      }
+      if (!current.includes(oldStr)) {
+        return { ok: false, output: `Error: old_string not found in ${path}` }
+      }
+      let updated: string
+      let count = 0
+      if (replaceAll) {
+        const segments = current.split(oldStr)
+        count = segments.length - 1
+        updated = segments.join(newStr)
+      } else {
+        const idx = current.indexOf(oldStr)
+        updated = current.slice(0, idx) + newStr + current.slice(idx + oldStr.length)
+        count = 1
+      }
+      let size: number
+      if (repo.dirHandle) {
+        size = await writeFileViaHandle(repo.dirHandle, path, updated)
+      } else {
+        size = await apiWrite(path, updated)
+      }
+      onFileWritten(path, updated, size)
+      return { ok: true, output: `Edited ${path} (replaced ${count} occurrence${count === 1 ? '' : 's'}, ${size} bytes)` }
+    }
+    if (name === 'list_files') {
+      const glob = typeof args.glob === 'string' && args.glob ? String(args.glob) : null
+      const re = glob ? globToRegex(glob) : null
+      const all = Array.from(repo.files.keys())
+      const filtered = re ? all.filter((p) => re.test(p)) : all
+      const trimmed = filtered.slice(0, 500)
+      const more = filtered.length - trimmed.length
+      const body = trimmed.join('\n')
+      return { ok: true, output: more > 0 ? `${body}\n… (${more} more)` : body }
+    }
+    return { ok: false, output: `Error: unknown tool ${name}` }
+  } catch (err) {
+    return { ok: false, output: `Error: ${(err as Error).message ?? 'tool execution failed'}` }
+  }
 }
 
 async function buildTreeFromFiles(
