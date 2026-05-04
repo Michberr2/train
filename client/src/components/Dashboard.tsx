@@ -42,6 +42,7 @@ import {
   Trash2,
   Pencil,
   Play,
+  MessageSquare,
   type LucideIcon,
 } from 'lucide-react'
 import { useTheme } from './ThemeProvider'
@@ -81,6 +82,27 @@ const PAT_KEY = 'nalu-github-pat'
 const PLUGINS_KEY = 'nalu-plugins'
 const AUTOMATIONS_KEY = 'nalu-automations'
 const CHAT_KEY_PREFIX = 'nalu-chat-'
+const SESSIONS_KEY_PREFIX = 'nalu-chats-'
+const ACTIVE_CHAT_KEY_PREFIX = 'nalu-chat-active-'
+
+interface ChatSession {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  messages: ChatMessage[]
+}
+
+function newSessionId(): string {
+  return `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function deriveTitle(msgs: ChatMessage[]): string {
+  const firstUser = msgs.find((m) => m.role === 'user')?.content?.trim()
+  if (!firstUser) return 'New chat'
+  const oneLine = firstUser.replace(/\s+/g, ' ').slice(0, 60)
+  return oneLine.length < firstUser.length ? `${oneLine}…` : oneLine
+}
 
 type PluginId =
   | 'repo-context'
@@ -279,22 +301,59 @@ export default function Dashboard({ onLogout }: Props) {
   const [showFiles, setShowFiles] = useState(!isNarrow)
   const [showLeftRail, setShowLeftRail] = useState(!isNarrow)
   const [mobileTab, setMobileTab] = useState<'chat' | 'files' | 'summary'>('chat')
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [activeChatId, setActiveChatId] = useState<string | null>(null)
   const [streaming, setStreaming] = useState(false)
 
   useEffect(() => {
-    if (!repo) return
+    if (!repo) {
+      setSessions([])
+      setActiveChatId(null)
+      return
+    }
     try {
-      const raw = localStorage.getItem(CHAT_KEY_PREFIX + repo.name)
+      const raw = localStorage.getItem(SESSIONS_KEY_PREFIX + repo.name)
+      let stored: ChatSession[] = []
       if (raw) {
-        const parsed = JSON.parse(raw) as ChatMessage[]
-        if (Array.isArray(parsed)) setMessages(parsed)
-        else setMessages([])
-      } else {
-        setMessages([])
+        const parsed = JSON.parse(raw) as ChatSession[]
+        if (Array.isArray(parsed)) stored = parsed
       }
+      // migrate legacy single-chat key
+      if (stored.length === 0) {
+        const legacyRaw = localStorage.getItem(CHAT_KEY_PREFIX + repo.name)
+        if (legacyRaw) {
+          const legacy = JSON.parse(legacyRaw) as ChatMessage[]
+          if (Array.isArray(legacy) && legacy.length > 0) {
+            const id = newSessionId()
+            stored.push({
+              id,
+              title: deriveTitle(legacy),
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              messages: legacy,
+            })
+          }
+          localStorage.removeItem(CHAT_KEY_PREFIX + repo.name)
+        }
+      }
+      // ensure there is always at least one session
+      if (stored.length === 0) {
+        stored.push({
+          id: newSessionId(),
+          title: 'New chat',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          messages: [],
+        })
+      }
+      setSessions(stored)
+      const savedActive = localStorage.getItem(ACTIVE_CHAT_KEY_PREFIX + repo.name)
+      const validActive = savedActive && stored.some((s) => s.id === savedActive)
+      setActiveChatId(validActive ? savedActive : stored[0].id)
     } catch {
-      setMessages([])
+      const id = newSessionId()
+      setSessions([{ id, title: 'New chat', createdAt: Date.now(), updatedAt: Date.now(), messages: [] }])
+      setActiveChatId(id)
     }
   }, [repo])
 
@@ -302,15 +361,37 @@ export default function Dashboard({ onLogout }: Props) {
     if (!repo) return
     if (streaming) return
     try {
-      if (messages.length === 0) {
-        localStorage.removeItem(CHAT_KEY_PREFIX + repo.name)
-      } else {
-        localStorage.setItem(CHAT_KEY_PREFIX + repo.name, JSON.stringify(messages))
+      localStorage.setItem(SESSIONS_KEY_PREFIX + repo.name, JSON.stringify(sessions))
+      if (activeChatId) {
+        localStorage.setItem(ACTIVE_CHAT_KEY_PREFIX + repo.name, activeChatId)
       }
     } catch {
       // storage full / disabled — ignore
     }
-  }, [messages, streaming, repo])
+  }, [sessions, activeChatId, streaming, repo])
+
+  const messages = useMemo<ChatMessage[]>(
+    () => sessions.find((s) => s.id === activeChatId)?.messages ?? [],
+    [sessions, activeChatId],
+  )
+
+  const setMessages = useCallback(
+    (updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
+      setSessions((prev) =>
+        prev.map((s) => {
+          if (s.id !== activeChatId) return s
+          const next = typeof updater === 'function' ? updater(s.messages) : updater
+          return {
+            ...s,
+            messages: next,
+            title: next.length === 0 ? 'New chat' : deriveTitle(next),
+            updatedAt: Date.now(),
+          }
+        }),
+      )
+    },
+    [activeChatId],
+  )
   const [showSettings, setShowSettings] = useState(false)
   const [showCommit, setShowCommit] = useState(false)
   const [showConnectGithub, setShowConnectGithub] = useState(false)
@@ -358,7 +439,8 @@ export default function Dashboard({ onLogout }: Props) {
   const closeRepo = useCallback(() => {
     abortRef.current?.abort()
     setRepo(null)
-    setMessages([])
+    setSessions([])
+    setActiveChatId(null)
     setPrompt('')
     setScanError(null)
   }, [])
@@ -716,9 +798,51 @@ export default function Dashboard({ onLogout }: Props) {
 
   const newChat = useCallback(() => {
     abortRef.current?.abort()
-    setMessages([])
+    setPrompt('')
+    const id = newSessionId()
+    const fresh: ChatSession = {
+      id,
+      title: 'New chat',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messages: [],
+    }
+    setSessions((prev) => {
+      const trimmed = prev.filter((s) => s.messages.length > 0)
+      return [fresh, ...trimmed]
+    })
+    setActiveChatId(id)
+  }, [])
+
+  const selectChat = useCallback((id: string) => {
+    abortRef.current?.abort()
+    setActiveChatId(id)
     setPrompt('')
   }, [])
+
+  const deleteChat = useCallback(
+    (id: string) => {
+      setSessions((prev) => {
+        const remaining = prev.filter((s) => s.id !== id)
+        if (remaining.length === 0) {
+          const fresh: ChatSession = {
+            id: newSessionId(),
+            title: 'New chat',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            messages: [],
+          }
+          setActiveChatId(fresh.id)
+          return [fresh]
+        }
+        if (id === activeChatId) {
+          setActiveChatId(remaining[0].id)
+        }
+        return remaining
+      })
+    },
+    [activeChatId],
+  )
 
   const visibleMessages = useMemo(() => {
     if (!searchQuery || !searchQuery.trim()) return messages
@@ -777,6 +901,10 @@ export default function Dashboard({ onLogout }: Props) {
             onSettings={() => setShowSettings(true)}
             onPlugins={() => setShowPlugins(true)}
             onAutomations={() => setShowAutomations(true)}
+            chats={sessions}
+            activeChatId={activeChatId}
+            onSelectChat={selectChat}
+            onDeleteChat={deleteChat}
           />
         )}
         <CenterPane
@@ -845,6 +973,10 @@ export default function Dashboard({ onLogout }: Props) {
             onSettings={() => { setShowLeftRail(false); setShowSettings(true) }}
             onPlugins={() => { setShowLeftRail(false); setShowPlugins(true) }}
             onAutomations={() => { setShowLeftRail(false); setShowAutomations(true) }}
+            chats={sessions}
+            activeChatId={activeChatId}
+            onSelectChat={(id) => { selectChat(id); setShowLeftRail(false); setMobileTab('chat') }}
+            onDeleteChat={deleteChat}
           />
           <button
             aria-label="Close menu"
@@ -1452,6 +1584,10 @@ function LeftRail({
   onSettings,
   onPlugins,
   onAutomations,
+  chats,
+  activeChatId,
+  onSelectChat,
+  onDeleteChat,
 }: {
   onNewChat: () => void
   repo: RepoSnapshot
@@ -1460,7 +1596,12 @@ function LeftRail({
   onSettings: () => void
   onPlugins: () => void
   onAutomations: () => void
+  chats: ChatSession[]
+  activeChatId: string | null
+  onSelectChat: (id: string) => void
+  onDeleteChat: (id: string) => void
 }) {
+  const sortedChats = [...chats].sort((a, b) => b.updatedAt - a.updatedAt)
   return (
     <aside
       className="w-64 md:w-48 lg:w-56 h-full flex-shrink-0 border-r border-border-gray bg-surface flex flex-col"
@@ -1492,8 +1633,43 @@ function LeftRail({
       </div>
 
       <RailHeader label="Chats" actionOnClick={onNewChat} />
-      <div className="flex-1 overflow-y-auto px-2 scrollbar-hide">
-        <p className="px-2 py-1 text-[11px] text-tertiary">Current session only</p>
+      <div className="flex-1 overflow-y-auto px-2 scrollbar-hide space-y-0.5">
+        {sortedChats.length === 0 ? (
+          <p className="px-2 py-1 text-[11px] text-tertiary">No chats yet</p>
+        ) : (
+          sortedChats.map((chat) => {
+            const isActive = chat.id === activeChatId
+            return (
+              <div
+                key={chat.id}
+                className={`group flex items-center gap-1 rounded-md transition-colors ${
+                  isActive
+                    ? 'bg-border-gray/40 text-primary'
+                    : 'text-secondary hover:bg-border-gray/30 hover:text-primary'
+                }`}
+              >
+                <button
+                  onClick={() => onSelectChat(chat.id)}
+                  title={chat.title}
+                  className="flex-1 min-w-0 flex items-center gap-2 px-2 h-8 text-left"
+                >
+                  <MessageSquare size={12} className="flex-shrink-0 opacity-70" />
+                  <span className="truncate text-xs">{chat.title}</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDeleteChat(chat.id)
+                  }}
+                  aria-label="Delete chat"
+                  className="opacity-0 group-hover:opacity-100 focus:opacity-100 w-6 h-6 mr-1 rounded flex items-center justify-center text-tertiary hover:text-red-400 transition-opacity"
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            )
+          })
+        )}
       </div>
 
       <div className="p-2 border-t border-border-gray">
