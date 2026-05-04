@@ -47,6 +47,8 @@ import {
   AlignCenter,
   Download,
   Image as ImageIcon,
+  Maximize2,
+  Minimize2,
   type LucideIcon,
 } from 'lucide-react'
 import { useTheme } from './ThemeProvider'
@@ -68,6 +70,7 @@ interface RepoSnapshot {
   totalSize: number
   tree: FileNode[]
   files: Map<string, File>
+  dirHandle: FileSystemDirectoryHandle | null
 }
 
 interface ChatMessage {
@@ -420,6 +423,7 @@ export default function Dashboard({ onLogout }: Props) {
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [saveErrorMsg, setSaveErrorMsg] = useState<string | null>(null)
+  const [fileFullscreen, setFileFullscreen] = useState(false)
   const editsSaveTimer = useRef<number | null>(null)
   const saveSeqRef = useRef(0)
 
@@ -456,6 +460,13 @@ export default function Dashboard({ onLogout }: Props) {
       editsSaveTimer.current = window.setTimeout(async () => {
         const seq = ++saveSeqRef.current
         try {
+          if (repo.dirHandle) {
+            await writeFileViaHandle(repo.dirHandle, savingPath, savingContent)
+            if (seq !== saveSeqRef.current) return
+            setSavedAt(Date.now())
+            setSaveStatus('saved')
+            return
+          }
           const res = await fetch('/api/git/file', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -473,7 +484,7 @@ export default function Dashboard({ onLogout }: Props) {
         } catch (err) {
           if (seq !== saveSeqRef.current) return
           setSaveStatus('error')
-          setSaveErrorMsg(err instanceof Error ? err.message : 'Network error')
+          setSaveErrorMsg(err instanceof Error ? err.message : 'Save failed')
         }
       }, 500)
     },
@@ -528,6 +539,11 @@ export default function Dashboard({ onLogout }: Props) {
     setOpenFileContent(null)
     setOpenFileError(null)
     setOpenFileLoading(false)
+    setFileFullscreen(false)
+  }, [])
+
+  const toggleFileFullscreen = useCallback(() => {
+    setFileFullscreen((v) => !v)
   }, [])
 
   const updateOpenFileContent = useCallback(
@@ -606,9 +622,47 @@ export default function Dashboard({ onLogout }: Props) {
         totalSize: stats.size,
         tree,
         files,
+        dirHandle: null,
       })
     } catch (err) {
       setScanError((err as Error).message)
+    } finally {
+      setScanning(false)
+    }
+  }, [])
+
+  const handleDirectoryPick = useCallback(async () => {
+    setScanError(null)
+    let handle: FileSystemDirectoryHandle | null = null
+    try {
+      handle = await pickDirectoryHandle()
+    } catch (err) {
+      setScanError((err as Error).message)
+      return false
+    }
+    if (!handle) return false
+    setScanning(true)
+    try {
+      const granted = await ensureWritePermission(handle)
+      if (!granted) {
+        setScanError('Write permission denied — saves will not persist to disk.')
+      }
+      const { tree, name, branch, origin, files } = await buildTreeFromHandle(handle)
+      const stats = treeStats(tree)
+      setRepo({
+        name,
+        branch,
+        origin,
+        fileCount: stats.files,
+        totalSize: stats.size,
+        tree,
+        files,
+        dirHandle: handle,
+      })
+      return true
+    } catch (err) {
+      setScanError((err as Error).message)
+      return true
     } finally {
       setScanning(false)
     }
@@ -1002,6 +1056,7 @@ export default function Dashboard({ onLogout }: Props) {
         isDark={isDark}
         toggleTheme={toggleTheme}
         onFiles={handleFiles}
+        onPickDirectory={handleDirectoryPick}
         scanning={scanning}
         error={scanError}
         onLogout={onLogout}
@@ -1038,7 +1093,7 @@ export default function Dashboard({ onLogout }: Props) {
       )}
 
       <div className="hidden md:flex flex-1 min-h-0 relative">
-        {showLeftRail && (
+        {showLeftRail && !fileFullscreen && (
           <LeftRail
             onNewChat={newChat}
             repo={repo}
@@ -1071,8 +1126,10 @@ export default function Dashboard({ onLogout }: Props) {
           saveErrorMsg={saveErrorMsg}
           onChangeFileContent={updateOpenFileContent}
           onCloseFile={closeFile}
+          fileFullscreen={fileFullscreen}
+          onToggleFileFullscreen={toggleFileFullscreen}
         />
-        {showSummary && (
+        {showSummary && !fileFullscreen && (
           <SummaryPane
             repo={repo}
             streaming={streaming}
@@ -1081,15 +1138,17 @@ export default function Dashboard({ onLogout }: Props) {
             onClose={() => setShowSummary(false)}
           />
         )}
-        {showFiles && (
+        {showFiles && !fileFullscreen && (
           <FilesPane tree={repo.tree} onClose={() => setShowFiles(false)} onOpenFile={openFile} />
         )}
-        <CollapsedEdgeRail
-          showSummary={showSummary}
-          showFiles={showFiles}
-          onShowSummary={() => setShowSummary(true)}
-          onShowFiles={() => setShowFiles(true)}
-        />
+        {!fileFullscreen && (
+          <CollapsedEdgeRail
+            showSummary={showSummary}
+            showFiles={showFiles}
+            onShowSummary={() => setShowSummary(true)}
+            onShowFiles={() => setShowFiles(true)}
+          />
+        )}
       </div>
 
       <div className="flex md:hidden flex-1 min-h-0 flex-col relative">
@@ -1113,6 +1172,8 @@ export default function Dashboard({ onLogout }: Props) {
               saveErrorMsg={saveErrorMsg}
               onChangeFileContent={updateOpenFileContent}
               onCloseFile={closeFile}
+              fileFullscreen={fileFullscreen}
+              onToggleFileFullscreen={toggleFileFullscreen}
             />
           )}
           {mobileTab === 'files' && (
@@ -1298,6 +1359,135 @@ function parseGitOrigin(configText: string): GitOrigin | null {
     }
   }
   return null
+}
+
+function pickDirectoryHandle(): Promise<FileSystemDirectoryHandle | null> {
+  const w = window as unknown as {
+    showDirectoryPicker?: (opts?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>
+  }
+  if (!w.showDirectoryPicker) return Promise.resolve(null)
+  return w
+    .showDirectoryPicker({ mode: 'readwrite' })
+    .catch((err: unknown) => {
+      if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'AbortError') {
+        return null
+      }
+      throw err
+    })
+}
+
+async function ensureWritePermission(handle: FileSystemDirectoryHandle): Promise<boolean> {
+  const h = handle as unknown as {
+    queryPermission?: (d: { mode: 'readwrite' }) => Promise<PermissionState>
+    requestPermission?: (d: { mode: 'readwrite' }) => Promise<PermissionState>
+  }
+  if (h.queryPermission && (await h.queryPermission({ mode: 'readwrite' })) === 'granted') return true
+  if (h.requestPermission && (await h.requestPermission({ mode: 'readwrite' })) === 'granted') return true
+  return false
+}
+
+async function buildTreeFromHandle(rootHandle: FileSystemDirectoryHandle): Promise<{
+  tree: FileNode[]
+  name: string
+  branch: string | null
+  origin: GitOrigin | null
+  files: Map<string, File>
+}> {
+  const files = new Map<string, File>()
+  const root: FileNode = { type: 'folder', name: rootHandle.name, path: '', children: [] }
+
+  type Frame = { handle: FileSystemDirectoryHandle; node: FileNode; basePath: string }
+  const stack: Frame[] = [{ handle: rootHandle, node: root, basePath: '' }]
+
+  while (stack.length) {
+    const { handle, node, basePath } = stack.pop()!
+    const entries = (handle as unknown as {
+      entries: () => AsyncIterable<[string, FileSystemHandle]>
+    }).entries()
+    for await (const [name, entry] of entries) {
+      if (name === '.git') continue
+      if (IGNORED_DIRS.has(name)) continue
+      const path = basePath ? `${basePath}/${name}` : name
+      if (entry.kind === 'file') {
+        try {
+          const file = await (entry as FileSystemFileHandle).getFile()
+          files.set(path, file)
+          if (node.type === 'folder') {
+            node.children.push({ type: 'file', name, path, size: file.size })
+          }
+        } catch {
+          // skip unreadable
+        }
+      } else if (entry.kind === 'directory') {
+        const folder: FileNode = { type: 'folder', name, path, children: [] }
+        if (node.type === 'folder') node.children.push(folder)
+        stack.push({ handle: entry as FileSystemDirectoryHandle, node: folder, basePath: path })
+      }
+    }
+  }
+
+  let branch: string | null = null
+  let origin: GitOrigin | null = null
+  try {
+    const gitDir = await rootHandle.getDirectoryHandle('.git')
+    try {
+      const headFh = await gitDir.getFileHandle('HEAD')
+      const text = await (await headFh.getFile()).text()
+      const m = text.match(/ref:\s+refs\/heads\/(.+)/)
+      if (m) branch = m[1].trim()
+      else if (text.trim().length === 40) branch = text.trim().slice(0, 7)
+    } catch {
+      // ignore
+    }
+    try {
+      const cfgFh = await gitDir.getFileHandle('config')
+      origin = parseGitOrigin(await (await cfgFh.getFile()).text())
+    } catch {
+      // ignore
+    }
+  } catch {
+    // not a git repo or no permission
+  }
+
+  const sortNode = (n: FileNode) => {
+    if (n.type !== 'folder') return
+    n.children.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+    n.children.forEach(sortNode)
+  }
+  sortNode(root)
+
+  return {
+    tree: root.type === 'folder' ? root.children : [],
+    name: rootHandle.name,
+    branch,
+    origin,
+    files,
+  }
+}
+
+async function writeFileViaHandle(
+  rootHandle: FileSystemDirectoryHandle,
+  filePath: string,
+  content: string,
+): Promise<number> {
+  const parts = filePath.split('/').filter(Boolean)
+  if (parts.length === 0) throw new Error('empty path')
+  const fileName = parts.pop()!
+  let dir = rootHandle
+  for (const segment of parts) {
+    dir = await dir.getDirectoryHandle(segment, { create: true })
+  }
+  const fileHandle = await dir.getFileHandle(fileName, { create: true })
+  const writable = await (fileHandle as unknown as {
+    createWritable: () => Promise<{ write: (data: string) => Promise<void>; close: () => Promise<void> }>
+  }).createWritable()
+  await writable.write(content)
+  await writable.close()
+  const file = await fileHandle.getFile()
+  return file.size
 }
 
 async function buildTreeFromFiles(
@@ -1510,6 +1700,7 @@ function RepoPicker({
   isDark,
   toggleTheme,
   onFiles,
+  onPickDirectory,
   scanning,
   error,
   onLogout,
@@ -1517,10 +1708,21 @@ function RepoPicker({
   isDark: boolean
   toggleTheme: (e?: React.MouseEvent) => void
   onFiles: (files: FileList | null) => void
+  onPickDirectory: () => Promise<boolean>
   scanning: boolean
   error: string | null
   onLogout: () => void
 }) {
+  const supportsDirectoryPicker = typeof window !== 'undefined' && 'showDirectoryPicker' in window
+
+  const handleChooseClick = async () => {
+    if (supportsDirectoryPicker) {
+      const handled = await onPickDirectory()
+      if (handled) return
+    }
+    inputRef.current?.click()
+  }
+
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
 
@@ -1620,7 +1822,7 @@ function RepoPicker({
             />
 
             <button
-              onClick={() => inputRef.current?.click()}
+              onClick={handleChooseClick}
               disabled={scanning}
               className="w-full h-12 rounded-xl bg-primary text-surface text-sm font-medium hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity flex items-center justify-center gap-2"
             >
@@ -1901,6 +2103,8 @@ function CenterPane({
   saveErrorMsg,
   onChangeFileContent,
   onCloseFile,
+  fileFullscreen,
+  onToggleFileFullscreen,
 }: {
   prompt: string
   setPrompt: (v: string) => void
@@ -1919,6 +2123,8 @@ function CenterPane({
   saveErrorMsg: string | null
   onChangeFileContent: (content: string) => void
   onCloseFile: () => void
+  fileFullscreen: boolean
+  onToggleFileFullscreen: () => void
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -1975,6 +2181,8 @@ function CenterPane({
               saveErrorMsg={saveErrorMsg}
               onChange={onChangeFileContent}
               onClose={onCloseFile}
+              fullscreen={fileFullscreen}
+              onToggleFullscreen={onToggleFileFullscreen}
             />
           ) : (
             <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 sm:px-8 py-6 sm:py-10 scrollbar-hide">
@@ -3300,6 +3508,8 @@ function FileEditorPane({
   saveErrorMsg,
   onChange,
   onClose,
+  fullscreen,
+  onToggleFullscreen,
 }: {
   path: string
   file: File | null
@@ -3311,6 +3521,8 @@ function FileEditorPane({
   saveErrorMsg: string | null
   onChange: (content: string) => void
   onClose: () => void
+  fullscreen: boolean
+  onToggleFullscreen: () => void
 }) {
   const ext = getFileExtension((file?.name || path) ?? '')
   const isImage = !!file && (IMAGE_EXTENSIONS.has(ext) || file.type.startsWith('image/'))
@@ -3395,6 +3607,15 @@ function FileEditorPane({
               <Download size={14} strokeWidth={1.6} />
             </button>
           )}
+          <button
+            onClick={onToggleFullscreen}
+            aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
+            aria-pressed={fullscreen}
+            title={fullscreen ? 'Exit full screen' : 'Full screen'}
+            className="hidden md:flex w-7 h-7 rounded-md hover:bg-border-gray/50 items-center justify-center text-secondary"
+          >
+            {fullscreen ? <Minimize2 size={14} strokeWidth={1.6} /> : <Maximize2 size={14} strokeWidth={1.6} />}
+          </button>
           <button
             onClick={onClose}
             aria-label="Close file"
