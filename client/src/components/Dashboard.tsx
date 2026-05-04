@@ -424,6 +424,15 @@ export default function Dashboard({ onLogout }: Props) {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [saveErrorMsg, setSaveErrorMsg] = useState<string | null>(null)
   const [fileFullscreen, setFileFullscreen] = useState(false)
+  const [toasts, setToasts] = useState<{ id: string; message: string; variant: 'success' | 'error' }[]>([])
+
+  const pushToast = useCallback((message: string, variant: 'success' | 'error' = 'success') => {
+    const id = `t-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    setToasts((prev) => [...prev.slice(-2), { id, message, variant }])
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id))
+    }, 2400)
+  }, [])
   const editsSaveTimer = useRef<number | null>(null)
   const saveSeqRef = useRef(0)
 
@@ -445,6 +454,49 @@ export default function Dashboard({ onLogout }: Props) {
     setEditedContents(new Map())
   }, [repo])
 
+  const performSave = useCallback(
+    async (savingPath: string, savingContent: string) => {
+      if (!repo) return
+      const seq = ++saveSeqRef.current
+      setSaveStatus('saving')
+      setSaveErrorMsg(null)
+      try {
+        if (repo.dirHandle) {
+          await writeFileViaHandle(repo.dirHandle, savingPath, savingContent)
+          if (seq !== saveSeqRef.current) return
+          setSavedAt(Date.now())
+          setSaveStatus('saved')
+          pushToast(`Saved ${savingPath}`)
+          return
+        }
+        const res = await fetch('/api/git/file', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repo: repo.name, path: savingPath, content: savingContent }),
+        })
+        if (seq !== saveSeqRef.current) return
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          const msg = data?.error || `Save failed (${res.status})`
+          setSaveStatus('error')
+          setSaveErrorMsg(msg)
+          pushToast(`Save failed: ${msg}`, 'error')
+          return
+        }
+        setSavedAt(typeof data?.savedAt === 'number' ? data.savedAt : Date.now())
+        setSaveStatus('saved')
+        pushToast(`Saved ${savingPath}`)
+      } catch (err) {
+        if (seq !== saveSeqRef.current) return
+        const msg = err instanceof Error ? err.message : 'Save failed'
+        setSaveStatus('error')
+        setSaveErrorMsg(msg)
+        pushToast(`Save failed: ${msg}`, 'error')
+      }
+    },
+    [repo, pushToast],
+  )
+
   const persistEdits = useCallback(
     (next: Map<string, string>, savingPath: string, savingContent: string) => {
       if (!repo) return
@@ -452,44 +504,29 @@ export default function Dashboard({ onLogout }: Props) {
         const obj = Object.fromEntries(next.entries())
         localStorage.setItem(`nalu-edits-${repo.name}`, JSON.stringify(obj))
       } catch {
-        // quota or serialization issue — keep going, server is source of truth
+        // quota or serialization — keep going, disk is source of truth
       }
       if (editsSaveTimer.current) window.clearTimeout(editsSaveTimer.current)
       setSaveStatus('saving')
       setSaveErrorMsg(null)
-      editsSaveTimer.current = window.setTimeout(async () => {
-        const seq = ++saveSeqRef.current
-        try {
-          if (repo.dirHandle) {
-            await writeFileViaHandle(repo.dirHandle, savingPath, savingContent)
-            if (seq !== saveSeqRef.current) return
-            setSavedAt(Date.now())
-            setSaveStatus('saved')
-            return
-          }
-          const res = await fetch('/api/git/file', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ repo: repo.name, path: savingPath, content: savingContent }),
-          })
-          if (seq !== saveSeqRef.current) return
-          const data = await res.json().catch(() => ({}))
-          if (!res.ok) {
-            setSaveStatus('error')
-            setSaveErrorMsg(data?.error || `Save failed (${res.status})`)
-            return
-          }
-          setSavedAt(typeof data?.savedAt === 'number' ? data.savedAt : Date.now())
-          setSaveStatus('saved')
-        } catch (err) {
-          if (seq !== saveSeqRef.current) return
-          setSaveStatus('error')
-          setSaveErrorMsg(err instanceof Error ? err.message : 'Save failed')
-        }
+      editsSaveTimer.current = window.setTimeout(() => {
+        editsSaveTimer.current = null
+        void performSave(savingPath, savingContent)
       }, 500)
     },
-    [repo],
+    [repo, performSave],
   )
+
+  const flushSave = useCallback(() => {
+    if (!openFilePath) return
+    const content = editedContents.get(openFilePath)
+    if (content === undefined) return
+    if (editsSaveTimer.current) {
+      window.clearTimeout(editsSaveTimer.current)
+      editsSaveTimer.current = null
+    }
+    void performSave(openFilePath, content)
+  }, [openFilePath, editedContents, performSave])
 
   const openFile = useCallback(
     (path: string) => {
@@ -1126,6 +1163,7 @@ export default function Dashboard({ onLogout }: Props) {
           saveErrorMsg={saveErrorMsg}
           onChangeFileContent={updateOpenFileContent}
           onCloseFile={closeFile}
+          onFlushSave={flushSave}
           fileFullscreen={fileFullscreen}
           onToggleFileFullscreen={toggleFileFullscreen}
         />
@@ -1172,6 +1210,7 @@ export default function Dashboard({ onLogout }: Props) {
               saveErrorMsg={saveErrorMsg}
               onChangeFileContent={updateOpenFileContent}
               onCloseFile={closeFile}
+              onFlushSave={flushSave}
               fileFullscreen={fileFullscreen}
               onToggleFileFullscreen={toggleFileFullscreen}
             />
@@ -1272,6 +1311,45 @@ export default function Dashboard({ onLogout }: Props) {
         />
       )}
 
+      <ToastStack toasts={toasts} />
+
+    </div>
+  )
+}
+
+function ToastStack({ toasts }: { toasts: { id: string; message: string; variant: 'success' | 'error' }[] }) {
+  return (
+    <div
+      className="fixed left-1/2 -translate-x-1/2 z-[60] flex flex-col gap-2 items-center pointer-events-none"
+      style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.25rem)' }}
+    >
+      {toasts.map((t) => (
+        <ToastItem key={t.id} message={t.message} variant={t.variant} />
+      ))}
+    </div>
+  )
+}
+
+function ToastItem({ message, variant }: { message: string; variant: 'success' | 'error' }) {
+  const [show, setShow] = useState(false)
+  useEffect(() => {
+    const enter = window.requestAnimationFrame(() => setShow(true))
+    const leave = window.setTimeout(() => setShow(false), 2100)
+    return () => {
+      window.cancelAnimationFrame(enter)
+      window.clearTimeout(leave)
+    }
+  }, [])
+  const Icon = variant === 'success' ? Check : AlertCircle
+  const accent = variant === 'success' ? 'text-green-500' : 'text-red-500'
+  return (
+    <div
+      className={`pointer-events-auto inline-flex items-center gap-2 px-3.5 py-2 rounded-full bg-surface border border-border-gray shadow-lg text-xs text-primary transition-all duration-200 ${
+        show ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'
+      }`}
+    >
+      <Icon size={13} strokeWidth={2} className={accent} />
+      <span className="font-medium truncate max-w-[60vw]">{message}</span>
     </div>
   )
 }
@@ -2103,6 +2181,7 @@ function CenterPane({
   saveErrorMsg,
   onChangeFileContent,
   onCloseFile,
+  onFlushSave,
   fileFullscreen,
   onToggleFileFullscreen,
 }: {
@@ -2123,6 +2202,7 @@ function CenterPane({
   saveErrorMsg: string | null
   onChangeFileContent: (content: string) => void
   onCloseFile: () => void
+  onFlushSave: () => void
   fileFullscreen: boolean
   onToggleFileFullscreen: () => void
 }) {
@@ -2181,6 +2261,7 @@ function CenterPane({
               saveErrorMsg={saveErrorMsg}
               onChange={onChangeFileContent}
               onClose={onCloseFile}
+              onFlushSave={onFlushSave}
               fullscreen={fileFullscreen}
               onToggleFullscreen={onToggleFileFullscreen}
             />
@@ -3508,6 +3589,7 @@ function FileEditorPane({
   saveErrorMsg,
   onChange,
   onClose,
+  onFlushSave,
   fullscreen,
   onToggleFullscreen,
 }: {
@@ -3521,6 +3603,7 @@ function FileEditorPane({
   saveErrorMsg: string | null
   onChange: (content: string) => void
   onClose: () => void
+  onFlushSave: () => void
   fullscreen: boolean
   onToggleFullscreen: () => void
 }) {
@@ -3656,6 +3739,12 @@ function FileEditorPane({
               <textarea
                 value={content}
                 onChange={(e) => onChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+                    e.preventDefault()
+                    onFlushSave()
+                  }
+                }}
                 spellCheck={false}
                 className="w-full h-full min-h-[60dvh] resize-none bg-background text-primary font-mono text-xs leading-relaxed px-4 sm:px-6 py-4 focus:outline-none whitespace-pre"
                 style={{ tabSize: 2 }}
