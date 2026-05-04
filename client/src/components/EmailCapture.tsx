@@ -24,6 +24,12 @@ export default function EmailCapture({ setActiveIndex, onAdminUnlock }: Props) {
     const normalized = email.toLowerCase().trim()
     const isAdmin = normalized === ADMIN_EMAIL
 
+    if (isAdmin && onAdminUnlock) {
+      onAdminUnlock(normalized)
+      setIsLoading(false)
+      return
+    }
+
     try {
       const res = await fetch('/api/waitlist', {
         method: 'POST',
@@ -35,10 +41,6 @@ export default function EmailCapture({ setActiveIndex, onAdminUnlock }: Props) {
       if (!res.ok) {
         setErrorMsg(data.error || 'Something went wrong')
         setIsLoading(false)
-        return
-      }
-      if (isAdmin && onAdminUnlock) {
-        onAdminUnlock(normalized)
         return
       }
       if (data.exists) setIsDuplicate(true)
