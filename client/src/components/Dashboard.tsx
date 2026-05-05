@@ -9,9 +9,7 @@ import {
   ChevronRight,
   GitBranch,
   GitCommit,
-  Mic,
   ArrowUp,
-  Lock,
   Sliders,
   Folder,
   FolderOpen,
@@ -2739,13 +2737,7 @@ function PromptComposer({
         className="w-full resize-none bg-transparent text-sm text-primary placeholder-tertiary focus:outline-none px-2 py-1 disabled:opacity-60"
       />
       <div className="flex items-center justify-between mt-2 pt-2 border-t border-border-gray gap-2">
-        <div className="hidden md:flex items-center gap-1 text-[11px] text-secondary min-w-0 overflow-x-auto scrollbar-hide">
-          <ComposerChip icon={Plus} />
-          <ComposerChip icon={Lock} label="Default" hasChevron />
-          <ComposerChip label="haiku-4-5" hasChevron />
-          <ComposerChip icon={Mic} />
-        </div>
-        <div className="flex md:hidden items-center gap-1 text-[11px] text-tertiary min-w-0">
+        <div className="flex items-center gap-1.5 text-[11px] text-tertiary min-w-0 overflow-hidden">
           <Box size={11} className="flex-shrink-0" />
           <span className="truncate">{repo.branch ? `${repo.name} · ${repo.branch}` : repo.name}</span>
         </div>
@@ -2773,30 +2765,7 @@ function PromptComposer({
           </button>
         </div>
       </div>
-      <div className="hidden md:flex items-center gap-1 mt-2 overflow-x-auto scrollbar-hide">
-        <ComposerChip icon={Box} label={repo.name} hasChevron />
-        <ComposerChip icon={CodeIcon} label="Local" hasChevron />
-        {repo.branch && <ComposerChip icon={GitBranch} label={repo.branch} hasChevron />}
-      </div>
     </div>
-  )
-}
-
-function ComposerChip({
-  icon: Icon,
-  label,
-  hasChevron,
-}: {
-  icon?: typeof Plus
-  label?: string
-  hasChevron?: boolean
-}) {
-  return (
-    <button className="h-7 px-2 rounded-md hover:bg-border-gray/50 flex items-center gap-1.5 text-secondary hover:text-primary transition-colors flex-shrink-0">
-      {Icon && <Icon size={12} strokeWidth={1.6} />}
-      {label && <span className="text-[11px] whitespace-nowrap">{label}</span>}
-      {hasChevron && <ChevronDown size={10} className="text-tertiary" />}
-    </button>
   )
 }
 
