@@ -5,6 +5,7 @@ import {
   listDocuments, getDocument, updateDocument, deleteDocument,
   type NaluDocument, type NaluPairing,
 } from '../lib/nalu-client'
+import NaluCodeEditor, { languageFromFilename } from './NaluCodeEditor'
 
 interface Props {
   pairing: NaluPairing
@@ -175,20 +176,18 @@ export default function NaluDocumentsPanel({ pairing, open, onClose }: Props) {
                 </ul>
               )}
 
-              {/* Editor view */}
+              {/* Editor view — Monaco gives syntax highlighting + autocomplete
+                  for free. Language is picked from the doc's `language` field
+                  (Odysseus stores it), or guessed from the title's extension. */}
               {active && (
-                <textarea
-                  value={draft}
-                  onChange={(e) => { setDraft(e.target.value); setDirty(true) }}
-                  onKeyDown={(e) => {
-                    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
-                      e.preventDefault(); handleSaveNow()
-                    }
-                  }}
-                  spellCheck={false}
-                  className="flex-1 w-full resize-none bg-black/20 border-0 px-5 py-4 font-mono text-sm text-foreground placeholder:text-foreground/40 focus:outline-none"
-                  placeholder="(empty document)"
-                />
+                <div className="flex-1 min-h-0">
+                  <NaluCodeEditor
+                    value={draft}
+                    onChange={(v) => { setDraft(v); setDirty(true) }}
+                    onSave={handleSaveNow}
+                    language={active.language || languageFromFilename(active.title)}
+                  />
+                </div>
               )}
             </div>
           </motion.aside>

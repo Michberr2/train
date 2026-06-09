@@ -65,6 +65,7 @@ import NaluEmailPanel from './NaluEmailPanel'
 import NaluCalendarPanel from './NaluCalendarPanel'
 import NaluCookbookPanel from './NaluCookbookPanel'
 import NaluDocumentsPanel from './NaluDocumentsPanel'
+import NaluTerminalPanel from './NaluTerminalPanel'
 import {
   Brain as BrainIcon,
   Paperclip,
@@ -78,6 +79,7 @@ import {
   Calendar as CalendarIcon,
   ChefHat as CookbookIcon,
   FileText as DocsIcon,
+  Terminal as TerminalIcon,
 } from 'lucide-react'
 import {
   getPairing,
@@ -170,10 +172,11 @@ type PluginId =
   | 'nalu-cookbook'
   | 'nalu-documents'
   | 'nalu-settings'
+  | 'nalu-terminal'
 
 export type NaluPanelId =
   | 'memory' | 'mcp' | 'email' | 'calendar' | 'notes' | 'tasks'
-  | 'research' | 'cookbook' | 'documents' | 'settings'
+  | 'research' | 'cookbook' | 'documents' | 'settings' | 'terminal'
 
 interface PluginDef {
   id: PluginId
@@ -344,6 +347,14 @@ const PLUGIN_DEFS: PluginDef[] = [
     icon: SettingsIconLR, iconBg: 'bg-zinc-500/15', iconColor: 'text-zinc-300',
     defaultEnabled: false, requires: 'nalu-pairing',
     kind: 'panel', panelId: 'settings',
+  },
+  {
+    id: 'nalu-terminal',
+    name: 'Shell',
+    description: 'xterm.js terminal wired to your local Nalu shell',
+    icon: TerminalIcon, iconBg: 'bg-slate-500/15', iconColor: 'text-slate-300',
+    defaultEnabled: true, featured: true, requires: 'nalu-pairing',
+    kind: 'panel', panelId: 'terminal',
   },
 ]
 
@@ -568,6 +579,7 @@ export default function Dashboard({ onLogout }: Props) {
   const [showCalendarPanel, setShowCalendarPanel] = useState(false)
   const [showCookbookPanel, setShowCookbookPanel] = useState(false)
   const [showDocsPanel, setShowDocsPanel] = useState(false)
+  const [showTerminalPanel, setShowTerminalPanel] = useState(false)
   // Files queued for the next chat send. Cleared after streamChat is invoked
   // so attachments belong to a single turn (matches the local Odysseus UI).
   const [pendingAttachments, setPendingAttachments] = useState<UploadedFile[]>([])
@@ -1681,6 +1693,7 @@ export default function Dashboard({ onLogout }: Props) {
               case 'cookbook': return setShowCookbookPanel(true)
               case 'documents': return setShowDocsPanel(true)
               case 'settings': return setShowNaluSettings(true)
+              case 'terminal': return setShowTerminalPanel(true)
             }
           }}
         />
@@ -1837,6 +1850,9 @@ export default function Dashboard({ onLogout }: Props) {
       )}
       {naluPairing && (
         <NaluDocumentsPanel pairing={naluPairing} open={showDocsPanel} onClose={() => setShowDocsPanel(false)} />
+      )}
+      {naluPairing && (
+        <NaluTerminalPanel pairing={naluPairing} open={showTerminalPanel} onClose={() => setShowTerminalPanel(false)} />
       )}
       <button
         onClick={() => {

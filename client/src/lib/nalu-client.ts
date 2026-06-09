@@ -758,6 +758,50 @@ export async function getCachedModels(p: NaluPairing): Promise<NaluCachedModel[]
   }))
 }
 
+// ---------- Shell --------------------------------------------------------
+
+/** Stream a shell command via /api/shell/stream. Returns an async iterator of
+ *  events: 'stdout'/'stderr' lines and a final 'exit'. Admin-only on the
+ *  Odysseus side (we elevated the pairing token earlier, so it works). */
+export async function* streamShell(
+  p: NaluPairing,
+  command: string,
+  opts: { signal?: AbortSignal; usePty?: boolean } = {},
+): AsyncGenerator<{ stream?: 'stdout' | 'stderr'; data?: string; exit_code?: number }> {
+  const res = await fetch(`${baseUrl(p)}/api/shell/stream`, {
+    method: 'POST',
+    headers: { ...authHeaders(p), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command, use_pty: opts.usePty ?? true }),
+    signal: opts.signal,
+  })
+  if (!res.ok || !res.body) {
+    yield {
+      stream: 'stderr',
+      data: `shell ${res.status}: ${await res.text().catch(() => '')}`,
+    }
+    yield { exit_code: 1 }
+    return
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buf = ''
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    let idx
+    while ((idx = buf.indexOf('\n\n')) !== -1) {
+      const block = buf.slice(0, idx)
+      buf = buf.slice(idx + 2)
+      const m = block.match(/^data:\s*(.+)$/m)
+      if (!m) continue
+      try {
+        yield JSON.parse(m[1]) as { stream?: 'stdout' | 'stderr'; data?: string; exit_code?: number }
+      } catch {/* skip malformed */}
+    }
+  }
+}
+
 // ---------- Documents -----------------------------------------------------
 
 export interface NaluDocument {
