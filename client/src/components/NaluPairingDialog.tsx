@@ -94,14 +94,20 @@ export default function NaluPairingDialog({ onPaired, onClose }: Props) {
 
         <div className="flex items-center gap-2 text-foreground">
           <Link2 size={18} />
-          <h2 className="text-lg font-semibold">Pair with your Nalu</h2>
+          <h2 className="text-lg font-semibold">Connect a local Nalu (optional)</h2>
         </div>
         <p className="mt-1 text-sm text-foreground/70">
-          Open the Nalu app on this Mac, visit{' '}
-          <code className="rounded bg-black/30 px-1.5 py-0.5 text-xs">
+          You're already signed in — chat works without this. Pairing a local
+          Nalu install on this Mac unlocks <strong>Memory</strong>, <strong>MCP
+          tools</strong>, <strong>Email</strong>, <strong>Calendar</strong>,
+          <strong> Cookbook</strong>, your own model picker, and shell access.
+        </p>
+        <p className="mt-2 text-xs text-foreground/55">
+          To pair: run Nalu on this Mac, visit{' '}
+          <code className="rounded bg-black/30 px-1.5 py-0.5 text-[11px]">
             https://localhost:7000/api/companion/pair
           </code>
-          , click <em>Generate pairing code</em>, then paste the JSON payload below.
+          , click <em>Generate pairing code</em>, then paste the JSON below.
         </p>
 
         <label className="mt-4 block text-xs font-medium uppercase tracking-wide text-foreground/60">

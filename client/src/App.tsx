@@ -12,7 +12,15 @@ import LearnSection from './components/LearnSection'
 import LoadingScreen from './components/LoadingScreen'
 import ControlScreenDemo from './components/ControlScreenDemo'
 import Dashboard from './components/Dashboard'
+import SignInWithGithub from './components/SignInWithGithub'
 import { getPairing } from './lib/nalu-client'
+
+interface NaluUser {
+  id: number
+  login: string
+  name: string
+  avatar: string
+}
 
 const ADMIN_KEY = 'nalu-admin'
 const TOTAL_PAGES = 5
@@ -36,6 +44,27 @@ export default function App() {
     if (typeof window === 'undefined') return null
     return localStorage.getItem(ADMIN_KEY)
   })
+  // GitHub-authenticated user. Loaded from /api/auth/me on mount; null when
+  // unauthenticated. Signed-in users skip the EmailCapture gate entirely.
+  const [naluUser, setNaluUser] = useState<NaluUser | null>(null)
+  const [authChecked, setAuthChecked] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/auth/me', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : { user: null }))
+      .then((data) => {
+        if (cancelled) return
+        if (data?.user) setNaluUser(data.user as NaluUser)
+      })
+      .catch(() => { /* silent — fall back to other entry paths */ })
+      .finally(() => { if (!cancelled) setAuthChecked(true) })
+    return () => { cancelled = true }
+  }, [])
+  const handleGithubLogout = useCallback(async () => {
+    try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }) }
+    catch { /* ignore */ }
+    setNaluUser(null)
+  }, [])
 
   const handleAdminUnlock = useCallback((email: string) => {
     localStorage.setItem(ADMIN_KEY, email)
@@ -163,14 +192,15 @@ export default function App() {
     exit: (dir: number) => ({ opacity: 0, y: dir > 0 ? -40 : 40, filter: 'blur(8px)' }),
   }
 
-  // Two valid entry paths past the guest list:
-  //  1) the legacy admin email shortcut (localStorage `nalu-admin`), or
-  //  2) an existing Nalu pairing token (localStorage `nalu-pairing`) — that
-  //     IS real auth: it was minted by the admin user via /api/companion/pair
-  //     and grants chat-scope access to the user's own local Nalu.
-  // Returning users who already paired skip the email-capture step entirely.
-  if (adminEmail || getPairing()) {
-    return <Dashboard onLogout={handleAdminLogout} />
+  // Three valid entry paths past the guest list, in order of preference:
+  //  1) a GitHub OAuth session (httpOnly nalu_session cookie) — the primary
+  //     path; users sign in with one click, no install required;
+  //  2) the legacy admin email shortcut (localStorage `nalu-admin`); or
+  //  3) an existing local Nalu pairing token (localStorage `nalu-pairing`).
+  // Returning users who already authenticated by any of these skip EmailCapture.
+  if (naluUser || adminEmail || getPairing()) {
+    const onLogout = naluUser ? handleGithubLogout : handleAdminLogout
+    return <Dashboard onLogout={onLogout} />
   }
 
   return (
@@ -211,6 +241,17 @@ export default function App() {
                   setActiveIndex={handleSetActiveIndex}
                   onAdminUnlock={handleAdminUnlock}
                 />
+                {/* Primary entry path: GitHub sign-in. No install needed —
+                 *  the Dashboard works against OpenRouter immediately. Pairing
+                 *  with a local Nalu is offered later as an upgrade. */}
+                <div className="mt-5 flex items-center gap-3">
+                  <div className="h-px flex-1 bg-foreground/10" />
+                  <span className="text-[11px] uppercase tracking-wider text-foreground/40">or</span>
+                  <div className="h-px flex-1 bg-foreground/10" />
+                </div>
+                <div className="mt-4 flex justify-center">
+                  <SignInWithGithub next="/" />
+                </div>
               </div>
             </div>
           )}
