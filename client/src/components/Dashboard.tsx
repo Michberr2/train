@@ -48,8 +48,47 @@ import {
   Maximize2,
   Minimize2,
   type LucideIcon,
+  Link2,
+  LinkIcon,
+  Unlink,
 } from 'lucide-react'
 import { useTheme } from './ThemeProvider'
+import NaluPairingDialog from './NaluPairingDialog'
+import NaluModelPicker from './NaluModelPicker'
+import NaluMemoryPanel from './NaluMemoryPanel'
+import NaluMcpPanel from './NaluMcpPanel'
+import NaluSettingsPanel from './NaluSettingsPanel'
+import NaluNotesPanel from './NaluNotesPanel'
+import NaluTasksPanel from './NaluTasksPanel'
+import NaluResearchPanel from './NaluResearchPanel'
+import NaluEmailPanel from './NaluEmailPanel'
+import NaluCalendarPanel from './NaluCalendarPanel'
+import NaluCookbookPanel from './NaluCookbookPanel'
+import NaluDocumentsPanel from './NaluDocumentsPanel'
+import {
+  Brain as BrainIcon,
+  Paperclip,
+  ImageIcon as AttachIcon,
+  Puzzle as PuzzleIcon,
+  StickyNote as NotesIcon,
+  CheckSquare as TasksIcon,
+  BookOpen as ResearchIcon,
+  Settings as SettingsIconLR,
+  Mail as MailIcon,
+  Calendar as CalendarIcon,
+  ChefHat as CookbookIcon,
+  FileText as DocsIcon,
+} from 'lucide-react'
+import {
+  getPairing,
+  clearPairing,
+  ping as pingNalu,
+  streamChat as streamNaluChat,
+  forgetSession as forgetNaluSession,
+  uploadFiles as uploadNaluFiles,
+  type NaluPairing,
+  type UploadedFile,
+} from '../lib/nalu-client'
 
 type FileNode =
   | { type: 'file'; name: string; path: string; size: number }
@@ -117,6 +156,24 @@ type PluginId =
   | 'recent-commits'
   | 'open-prs'
   | 'llm-builder'
+  // Nalu plugins (require pairing). 'context' plugins inject into the chat
+  // prompt; 'panel' plugins open a slide-out surface that talks to the user's
+  // local Odysseus. All ten Nalu surfaces live here so the Plugins modal is
+  // the one canonical place to find them.
+  | 'nalu-memory'
+  | 'nalu-mcp'
+  | 'nalu-email'
+  | 'nalu-calendar'
+  | 'nalu-notes'
+  | 'nalu-tasks'
+  | 'nalu-research'
+  | 'nalu-cookbook'
+  | 'nalu-documents'
+  | 'nalu-settings'
+
+export type NaluPanelId =
+  | 'memory' | 'mcp' | 'email' | 'calendar' | 'notes' | 'tasks'
+  | 'research' | 'cookbook' | 'documents' | 'settings'
 
 interface PluginDef {
   id: PluginId
@@ -127,7 +184,13 @@ interface PluginDef {
   iconColor: string
   defaultEnabled: boolean
   featured?: boolean
-  requires?: 'github-pat' | 'origin-remote'
+  requires?: 'github-pat' | 'origin-remote' | 'nalu-pairing'
+  /** 'context' = injects into the chat prompt at send time (the legacy kind).
+   *  'panel' = opens a Nalu slide-out surface; the toggle gates whether the
+   *  plugin is "installed" in the user's workspace, an Open button actually
+   *  reveals it. */
+  kind?: 'context' | 'panel'
+  panelId?: NaluPanelId
 }
 
 const PLUGIN_DEFS: PluginDef[] = [
@@ -200,6 +263,87 @@ const PLUGIN_DEFS: PluginDef[] = [
     iconColor: 'text-fuchsia-400',
     defaultEnabled: false,
     featured: true,
+  },
+  // ─── Nalu plugins (require local Odysseus pairing) ──────────────────────
+  {
+    id: 'nalu-memory',
+    name: 'Memory',
+    description: 'Persistent memory the agent recalls across chats',
+    icon: BrainIcon, iconBg: 'bg-pink-500/15', iconColor: 'text-pink-400',
+    defaultEnabled: true, featured: true, requires: 'nalu-pairing',
+    kind: 'panel', panelId: 'memory',
+  },
+  {
+    id: 'nalu-mcp',
+    name: 'MCP servers',
+    description: 'Manage Model Context Protocol servers and their tools',
+    icon: PuzzleIcon, iconBg: 'bg-indigo-500/15', iconColor: 'text-indigo-400',
+    defaultEnabled: true, featured: true, requires: 'nalu-pairing',
+    kind: 'panel', panelId: 'mcp',
+  },
+  {
+    id: 'nalu-email',
+    name: 'Email',
+    description: 'IMAP inbox + AI triage from your local Nalu',
+    icon: MailIcon, iconBg: 'bg-rose-500/15', iconColor: 'text-rose-400',
+    defaultEnabled: false, requires: 'nalu-pairing',
+    kind: 'panel', panelId: 'email',
+  },
+  {
+    id: 'nalu-calendar',
+    name: 'Calendar',
+    description: 'CalDAV upcoming events',
+    icon: CalendarIcon, iconBg: 'bg-cyan-500/15', iconColor: 'text-cyan-400',
+    defaultEnabled: false, requires: 'nalu-pairing',
+    kind: 'panel', panelId: 'calendar',
+  },
+  {
+    id: 'nalu-notes',
+    name: 'Notes',
+    description: 'Quick notes and reminders the agent can act on',
+    icon: NotesIcon, iconBg: 'bg-yellow-500/15', iconColor: 'text-yellow-400',
+    defaultEnabled: false, requires: 'nalu-pairing',
+    kind: 'panel', panelId: 'notes',
+  },
+  {
+    id: 'nalu-tasks',
+    name: 'Scheduled tasks',
+    description: 'Cron-style scheduled prompts that run in the background',
+    icon: TasksIcon, iconBg: 'bg-orange-500/15', iconColor: 'text-orange-400',
+    defaultEnabled: false, requires: 'nalu-pairing',
+    kind: 'panel', panelId: 'tasks',
+  },
+  {
+    id: 'nalu-research',
+    name: 'Deep Research',
+    description: 'Multi-step research runs with cited reports',
+    icon: ResearchIcon, iconBg: 'bg-purple-500/15', iconColor: 'text-purple-400',
+    defaultEnabled: false, requires: 'nalu-pairing',
+    kind: 'panel', panelId: 'research',
+  },
+  {
+    id: 'nalu-cookbook',
+    name: 'Cookbook',
+    description: 'Hardware fit + local model recommendations & cache',
+    icon: CookbookIcon, iconBg: 'bg-lime-500/15', iconColor: 'text-lime-400',
+    defaultEnabled: false, requires: 'nalu-pairing',
+    kind: 'panel', panelId: 'cookbook',
+  },
+  {
+    id: 'nalu-documents',
+    name: 'Documents',
+    description: 'AI-assisted documents with autosave and versioning',
+    icon: DocsIcon, iconBg: 'bg-teal-500/15', iconColor: 'text-teal-400',
+    defaultEnabled: false, requires: 'nalu-pairing',
+    kind: 'panel', panelId: 'documents',
+  },
+  {
+    id: 'nalu-settings',
+    name: 'Nalu settings',
+    description: 'Vision, agent rounds, and other Nalu preferences',
+    icon: SettingsIconLR, iconBg: 'bg-zinc-500/15', iconColor: 'text-zinc-300',
+    defaultEnabled: false, requires: 'nalu-pairing',
+    kind: 'panel', panelId: 'settings',
   },
 ]
 
@@ -409,6 +553,60 @@ export default function Dashboard({ onLogout }: Props) {
     [activeChatId],
   )
   const [showSettings, setShowSettings] = useState(false)
+  // Nalu local-backend pairing: when set, chat routes through the user's local
+  // Odysseus install (https://localhost:7000) instead of the legacy OpenRouter
+  // proxy. Unpaired tabs keep the previous behavior — zero regression.
+  const [naluPairing, setNaluPairing] = useState<NaluPairing | null>(() => getPairing())
+  const [showPairingDialog, setShowPairingDialog] = useState(false)
+  const [showMemoryPanel, setShowMemoryPanel] = useState(false)
+  const [showMcpPanel, setShowMcpPanel] = useState(false)
+  const [showNotesPanel, setShowNotesPanel] = useState(false)
+  const [showTasksPanel, setShowTasksPanel] = useState(false)
+  const [showResearchPanel, setShowResearchPanel] = useState(false)
+  const [showNaluSettings, setShowNaluSettings] = useState(false)
+  const [showEmailPanel, setShowEmailPanel] = useState(false)
+  const [showCalendarPanel, setShowCalendarPanel] = useState(false)
+  const [showCookbookPanel, setShowCookbookPanel] = useState(false)
+  const [showDocsPanel, setShowDocsPanel] = useState(false)
+  // Files queued for the next chat send. Cleared after streamChat is invoked
+  // so attachments belong to a single turn (matches the local Odysseus UI).
+  const [pendingAttachments, setPendingAttachments] = useState<UploadedFile[]>([])
+  const [isDragOver, setIsDragOver] = useState(false)
+  const [uploadBusy, setUploadBusy] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const handleUploadFiles = useCallback(
+    async (files: File[]) => {
+      if (!naluPairing || files.length === 0) return
+      setUploadBusy(true)
+      setUploadError(null)
+      try {
+        const uploaded = await uploadNaluFiles(naluPairing, files)
+        setPendingAttachments((prev) => [...prev, ...uploaded])
+      } catch (e) {
+        setUploadError((e as Error).message)
+      } finally {
+        setUploadBusy(false)
+      }
+    },
+    [naluPairing],
+  )
+  const [naluConnState, setNaluConnState] =
+    useState<'idle' | 'pinging' | 'connected' | 'unreachable'>('idle')
+  useEffect(() => {
+    if (!naluPairing) {
+      setNaluConnState('idle')
+      return
+    }
+    let cancelled = false
+    setNaluConnState('pinging')
+    pingNalu(naluPairing).then((r) => {
+      if (cancelled) return
+      setNaluConnState(r.ok ? 'connected' : 'unreachable')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [naluPairing])
   const [showCommit, setShowCommit] = useState(false)
   const [showConnectGithub, setShowConnectGithub] = useState(false)
   const [showPlugins, setShowPlugins] = useState(false)
@@ -949,6 +1147,11 @@ export default function Dashboard({ onLogout }: Props) {
     const controller = new AbortController()
     abortRef.current = controller
 
+    // Snapshot+clear pending attachments now so a slow-start request can't
+    // accidentally re-send them on the next message (they belong to THIS turn).
+    const attachmentsForThisTurn = pendingAttachments
+    if (attachmentsForThisTurn.length > 0) setPendingAttachments([])
+
     try {
       type ApiMsg =
         | { role: 'user' | 'system'; content: string }
@@ -1024,19 +1227,37 @@ export default function Dashboard({ onLogout }: Props) {
       const MAX_ITERS = 10
       let stop = false
       for (let iter = 0; iter < MAX_ITERS && !stop; iter++) {
-        const res = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            repo: repo.name,
-            messages: apiMessages,
-            githubConnected: !!githubToken,
-            origin: repo.origin ?? null,
-            branch: repo.branch ?? null,
-            tools: NALU_TOOLS,
-          }),
-        })
+        const res = naluPairing
+          ? await streamNaluChat(naluPairing, {
+              // Server-side history lives in Odysseus, keyed off this chatId.
+              // forgetNaluSession is called on Dashboard's deleteChat path so
+              // the mapping doesn't outlive its chat. activeChatId is always
+              // truthy here — Dashboard creates a session before send is reachable.
+              chatId: activeChatId ?? 'default',
+              messages: apiMessages as {
+                role: 'system' | 'user' | 'assistant' | 'tool'
+                content: string | null
+              }[],
+              workspace: repo.name,
+              mode: 'agent',
+              signal: controller.signal,
+              // Pending uploads belong to a single turn — pass them once and
+              // clear so the next message doesn't accidentally resend them.
+              attachmentIds: attachmentsForThisTurn.map((f) => f.id),
+            })
+          : await fetch('/api/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: controller.signal,
+              body: JSON.stringify({
+                repo: repo.name,
+                messages: apiMessages,
+                githubConnected: !!githubToken,
+                origin: repo.origin ?? null,
+                branch: repo.branch ?? null,
+                tools: NALU_TOOLS,
+              }),
+            })
         if (!res.ok || !res.body) {
           const errText = await res.text().catch(() => '')
           setMessages((prev) => {
@@ -1206,6 +1427,10 @@ export default function Dashboard({ onLogout }: Props) {
 
   const deleteChat = useCallback(
     (id: string) => {
+      // Drop any cached Odysseus session for this Dashboard chat so the next
+      // open creates a fresh server-side session instead of pulling history
+      // from a deleted one.
+      forgetNaluSession(id)
       setSessions((prev) => {
         const remaining = prev.filter((s) => s.id !== id)
         if (remaining.length === 0) {
@@ -1440,8 +1665,24 @@ export default function Dashboard({ onLogout }: Props) {
           onChange={savePlugins}
           githubConnected={!!githubToken}
           hasOrigin={!!repo.origin}
+          naluPaired={!!naluPairing}
           onClose={() => setShowPlugins(false)}
           onOpenSettings={() => { setShowPlugins(false); setShowSettings(true) }}
+          onOpenNaluPanel={(id) => {
+            setShowPlugins(false)
+            switch (id) {
+              case 'memory': return setShowMemoryPanel(true)
+              case 'mcp': return setShowMcpPanel(true)
+              case 'email': return setShowEmailPanel(true)
+              case 'calendar': return setShowCalendarPanel(true)
+              case 'notes': return setShowNotesPanel(true)
+              case 'tasks': return setShowTasksPanel(true)
+              case 'research': return setShowResearchPanel(true)
+              case 'cookbook': return setShowCookbookPanel(true)
+              case 'documents': return setShowDocsPanel(true)
+              case 'settings': return setShowNaluSettings(true)
+            }
+          }}
         />
       )}
 
@@ -1457,6 +1698,189 @@ export default function Dashboard({ onLogout }: Props) {
           onClose={() => setShowAutomations(false)}
         />
       )}
+
+      {showPairingDialog && (
+        <NaluPairingDialog
+          onPaired={(p) => {
+            setNaluPairing(p)
+            setShowPairingDialog(false)
+          }}
+          onClose={() => setShowPairingDialog(false)}
+        />
+      )}
+
+      {/* Top-right: only connection-state surfaces (Pair pill, model picker,
+       *  attach). All Nalu features now live behind the Plugins modal — one
+       *  canonical place to find them. */}
+      {naluPairing && (
+        <div className="fixed right-32 top-4 z-40 flex items-center gap-2">
+          <NaluModelPicker pairing={naluPairing} />
+          <label
+            className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-card/80 px-2.5 py-1.5 text-xs text-foreground/80 hover:bg-card/95 hover:text-foreground cursor-pointer"
+            title="Attach file(s) to your next message"
+          >
+            <Paperclip size={13} />
+            {pendingAttachments.length > 0
+              ? `${pendingAttachments.length} queued`
+              : 'Attach'}
+            <input
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? [])
+                if (files.length) handleUploadFiles(files)
+                e.target.value = '' // allow re-selecting the same file
+              }}
+            />
+          </label>
+        </div>
+      )}
+
+      {/* Global drag-drop attach when paired. The whole window is a drop target. */}
+      {naluPairing && (
+        <div
+          onDragEnter={(e) => {
+            e.preventDefault()
+            if (Array.from(e.dataTransfer.types).includes('Files')) setIsDragOver(true)
+          }}
+          onDragLeave={(e) => {
+            if (e.currentTarget === e.target) setIsDragOver(false)
+          }}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault()
+            setIsDragOver(false)
+            const files = Array.from(e.dataTransfer.files)
+            if (files.length) handleUploadFiles(files)
+          }}
+          className={`pointer-events-${isDragOver ? 'auto' : 'none'} fixed inset-0 z-30 transition-colors ${isDragOver ? 'bg-accent/10 ring-4 ring-inset ring-accent/40' : ''}`}
+        >
+          {isDragOver && (
+            <div className="flex h-full items-center justify-center">
+              <div className="rounded-2xl border border-white/10 bg-card/95 backdrop-blur-xl px-6 py-5 text-center text-foreground shadow-2xl">
+                <AttachIcon size={28} className="mx-auto mb-2 text-accent" />
+                <div className="text-sm font-medium">Drop to attach to next message</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Attachment chips strip — sits just above the composer area. */}
+      {naluPairing && (pendingAttachments.length > 0 || uploadBusy || uploadError) && (
+        <div className="fixed bottom-24 left-1/2 z-40 -translate-x-1/2 max-w-xl">
+          <div className="rounded-xl border border-white/10 bg-card/90 backdrop-blur-md px-3 py-2 shadow-lg">
+            {uploadError && (
+              <div className="mb-1 text-xs text-red-300">{uploadError}</div>
+            )}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {pendingAttachments.map((f) => (
+                <span
+                  key={f.id}
+                  className="inline-flex items-center gap-1 rounded-md bg-black/30 px-2 py-1 text-[11px] text-foreground/80"
+                >
+                  <AttachIcon size={10} />
+                  <span className="max-w-[160px] truncate">{f.name}</span>
+                  <button
+                    onClick={() =>
+                      setPendingAttachments((prev) => prev.filter((p) => p.id !== f.id))
+                    }
+                    className="ml-1 text-foreground/40 hover:text-foreground"
+                    aria-label="Remove"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              {uploadBusy && (
+                <span className="text-[11px] text-foreground/60">uploading…</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {naluPairing && (
+        <NaluMemoryPanel
+          pairing={naluPairing}
+          open={showMemoryPanel}
+          onClose={() => setShowMemoryPanel(false)}
+        />
+      )}
+      {naluPairing && (
+        <NaluMcpPanel
+          pairing={naluPairing}
+          open={showMcpPanel}
+          onClose={() => setShowMcpPanel(false)}
+        />
+      )}
+      {naluPairing && (
+        <NaluNotesPanel pairing={naluPairing} open={showNotesPanel} onClose={() => setShowNotesPanel(false)} />
+      )}
+      {naluPairing && (
+        <NaluTasksPanel pairing={naluPairing} open={showTasksPanel} onClose={() => setShowTasksPanel(false)} />
+      )}
+      {naluPairing && (
+        <NaluResearchPanel pairing={naluPairing} open={showResearchPanel} onClose={() => setShowResearchPanel(false)} />
+      )}
+      {naluPairing && (
+        <NaluSettingsPanel pairing={naluPairing} open={showNaluSettings} onClose={() => setShowNaluSettings(false)} />
+      )}
+      {naluPairing && (
+        <NaluEmailPanel pairing={naluPairing} open={showEmailPanel} onClose={() => setShowEmailPanel(false)} />
+      )}
+      {naluPairing && (
+        <NaluCalendarPanel pairing={naluPairing} open={showCalendarPanel} onClose={() => setShowCalendarPanel(false)} />
+      )}
+      {naluPairing && (
+        <NaluCookbookPanel pairing={naluPairing} open={showCookbookPanel} onClose={() => setShowCookbookPanel(false)} />
+      )}
+      {naluPairing && (
+        <NaluDocumentsPanel pairing={naluPairing} open={showDocsPanel} onClose={() => setShowDocsPanel(false)} />
+      )}
+      <button
+        onClick={() => {
+          if (naluPairing) {
+            if (confirm('Disconnect from local Nalu? Chat will fall back to OpenRouter.')) {
+              clearPairing()
+              setNaluPairing(null)
+            }
+          } else {
+            setShowPairingDialog(true)
+          }
+        }}
+        className="fixed right-4 top-4 z-40 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-card/80 backdrop-blur-md px-3 py-1.5 text-xs font-medium text-foreground/80 hover:bg-card/95 hover:text-foreground shadow-md"
+        title={
+          naluPairing
+            ? `Connected to ${naluPairing.host}:${naluPairing.port}`
+            : 'Pair with local Nalu to enable agent + vision + memory'
+        }
+      >
+        {naluPairing && naluConnState === 'connected' && (
+          <>
+            <LinkIcon size={13} className="text-emerald-400" />
+            Nalu ●
+          </>
+        )}
+        {naluPairing && naluConnState === 'pinging' && (
+          <>
+            <Link2 size={13} className="text-amber-400" />
+            Pinging…
+          </>
+        )}
+        {naluPairing && naluConnState === 'unreachable' && (
+          <>
+            <Unlink size={13} className="text-red-400" />
+            Unreachable
+          </>
+        )}
+        {!naluPairing && (
+          <>
+            <Link2 size={13} className="text-foreground/50" />
+            Pair Nalu
+          </>
+        )}
+      </button>
 
       <ToastStack toasts={toasts} />
 
@@ -3587,15 +4011,19 @@ function PluginsModal({
   onChange,
   githubConnected,
   hasOrigin,
+  naluPaired,
   onClose,
   onOpenSettings,
+  onOpenNaluPanel,
 }: {
   plugins: Record<string, boolean>
   onChange: (next: Record<string, boolean>) => void
   githubConnected: boolean
   hasOrigin: boolean
+  naluPaired: boolean
   onClose: () => void
   onOpenSettings: () => void
+  onOpenNaluPanel: (id: NaluPanelId) => void
 }) {
   const [query, setQuery] = useState('')
 
@@ -3617,6 +4045,9 @@ function PluginsModal({
     }
     if (def.id === 'github-status' && !hasOrigin) {
       return 'No origin remote'
+    }
+    if (def.requires === 'nalu-pairing' && !naluPaired) {
+      return 'Pair Nalu'
     }
     return null
   }
@@ -3647,17 +4078,35 @@ function PluginsModal({
             </button>
           )}
         </div>
-        <button
-          onClick={() => toggle(def.id)}
-          aria-label={enabled ? `Disable ${def.name}` : `Enable ${def.name}`}
-          className={`w-7 h-7 rounded-md border flex items-center justify-center transition-colors flex-shrink-0 ${
-            enabled
-              ? 'bg-accent-blue/15 border-accent-blue text-accent-blue'
-              : 'bg-transparent border-border-gray text-tertiary hover:text-primary hover:border-primary/40'
-          }`}
-        >
-          {enabled ? <Check size={14} /> : <Plus size={14} />}
-        </button>
+        {def.kind === 'panel' && def.panelId ? (
+          <button
+            onClick={() => {
+              if (!enabled) toggle(def.id)
+              if (!warn) onOpenNaluPanel(def.panelId!)
+            }}
+            disabled={!!warn}
+            className={`px-2.5 h-7 rounded-md border text-[11px] font-medium flex items-center justify-center transition-colors flex-shrink-0 ${
+              warn
+                ? 'bg-transparent border-border-gray text-tertiary cursor-not-allowed'
+                : 'bg-accent-blue/15 border-accent-blue text-accent-blue hover:bg-accent-blue/25'
+            }`}
+            aria-label={`Open ${def.name}`}
+          >
+            Open
+          </button>
+        ) : (
+          <button
+            onClick={() => toggle(def.id)}
+            aria-label={enabled ? `Disable ${def.name}` : `Enable ${def.name}`}
+            className={`w-7 h-7 rounded-md border flex items-center justify-center transition-colors flex-shrink-0 ${
+              enabled
+                ? 'bg-accent-blue/15 border-accent-blue text-accent-blue'
+                : 'bg-transparent border-border-gray text-tertiary hover:text-primary hover:border-primary/40'
+            }`}
+          >
+            {enabled ? <Check size={14} /> : <Plus size={14} />}
+          </button>
+        )}
       </div>
     )
   }

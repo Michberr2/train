@@ -12,6 +12,7 @@ import LearnSection from './components/LearnSection'
 import LoadingScreen from './components/LoadingScreen'
 import ControlScreenDemo from './components/ControlScreenDemo'
 import Dashboard from './components/Dashboard'
+import { getPairing } from './lib/nalu-client'
 
 const ADMIN_KEY = 'nalu-admin'
 const TOTAL_PAGES = 5
@@ -162,7 +163,13 @@ export default function App() {
     exit: (dir: number) => ({ opacity: 0, y: dir > 0 ? -40 : 40, filter: 'blur(8px)' }),
   }
 
-  if (adminEmail) {
+  // Two valid entry paths past the guest list:
+  //  1) the legacy admin email shortcut (localStorage `nalu-admin`), or
+  //  2) an existing Nalu pairing token (localStorage `nalu-pairing`) — that
+  //     IS real auth: it was minted by the admin user via /api/companion/pair
+  //     and grants chat-scope access to the user's own local Nalu.
+  // Returning users who already paired skip the email-capture step entirely.
+  if (adminEmail || getPairing()) {
     return <Dashboard onLogout={handleAdminLogout} />
   }
 
