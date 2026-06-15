@@ -1735,10 +1735,12 @@ export default function Dashboard({ onLogout }: Props) {
         />
       )}
 
-      {/* Top-right user pill — avatar + name + sign-out. Always visible so
-       *  the user can leave the Dashboard without hunting through the rail. */}
-      <div className="fixed right-4 top-4 z-40 flex items-center gap-2">
-        {naluUser && (
+      {/* Top-right user pill — only shown for GitHub-signed visitors.
+       *  Admin-email and pairing-token entries use the rail's logout button
+       *  instead (LeftRail already has one); no need for a header chip when
+       *  there's no real identity to display. */}
+      {naluUser && (
+        <div className="fixed right-4 top-4 z-40 flex items-center gap-2">
           <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-card/80 backdrop-blur-md px-2.5 py-1 text-xs text-foreground/90 shadow-md">
             {naluUser.avatar && (
               <img
@@ -1750,33 +1752,15 @@ export default function Dashboard({ onLogout }: Props) {
             )}
             <span className="max-w-[120px] truncate">{naluUser.name || naluUser.login}</span>
           </div>
-        )}
-        <a
-          href={naluUser ? '/api/auth/logout' : '/api/auth/github?next=/'}
-          onClick={(e) => {
-            // For the legacy admin-email entry path we don't have a server
-            // session to clear, so just trigger the in-app logout.
-            if (!naluUser) return
-            // For GitHub-signed users, let the anchor navigate so the
-            // Set-Cookie header from /api/auth/logout takes effect.
-            void e // explicit
-          }}
-          className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-card/80 backdrop-blur-md px-3 py-1 text-xs font-medium text-foreground/80 hover:bg-card/95 hover:text-foreground shadow-md"
-        >
-          <LogOut size={12} />
-          {naluUser ? 'Sign out' : 'Sign in'}
-        </a>
-        {!naluUser && (
-          // Legacy admin-email path can clear via the prop's local handler.
-          <button
-            onClick={onLogout}
-            className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-card/80 backdrop-blur-md px-3 py-1 text-xs text-foreground/60 hover:text-foreground shadow-md"
-            title="Clear local admin unlock"
+          <a
+            href="/api/auth/logout"
+            className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-card/80 backdrop-blur-md px-3 py-1 text-xs font-medium text-foreground/80 hover:bg-card/95 hover:text-foreground shadow-md"
           >
-            Clear
-          </button>
-        )}
-      </div>
+            <LogOut size={12} />
+            Sign out
+          </a>
+        </div>
+      )}
 
       {/* Top-right second row: connection-state surfaces (Pair pill, model
        *  picker, attach). All Nalu features now live behind the Plugins
