@@ -451,6 +451,19 @@ interface Props {
 }
 
 export default function Dashboard({ onLogout }: Props) {
+  // Fetch the current signed-in user (if any) so we can show an avatar +
+  // sign-out pill top-right. /api/auth/me returns 401 cleanly when unsigned.
+  const [naluUser, setNaluUser] = useState<{
+    id: number; login: string; name: string; avatar: string
+  } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/auth/me', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : { user: null }))
+      .then((data) => { if (!cancelled && data?.user) setNaluUser(data.user) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
   const { isDark, toggleTheme } = useTheme()
   const [repo, setRepo] = useState<RepoSnapshot | null>(null)
   const [scanning, setScanning] = useState(false)
@@ -1722,11 +1735,54 @@ export default function Dashboard({ onLogout }: Props) {
         />
       )}
 
-      {/* Top-right: only connection-state surfaces (Pair pill, model picker,
-       *  attach). All Nalu features now live behind the Plugins modal — one
-       *  canonical place to find them. */}
+      {/* Top-right user pill — avatar + name + sign-out. Always visible so
+       *  the user can leave the Dashboard without hunting through the rail. */}
+      <div className="fixed right-4 top-4 z-40 flex items-center gap-2">
+        {naluUser && (
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-card/80 backdrop-blur-md px-2.5 py-1 text-xs text-foreground/90 shadow-md">
+            {naluUser.avatar && (
+              <img
+                src={naluUser.avatar}
+                alt={naluUser.login}
+                className="h-5 w-5 rounded-full"
+                referrerPolicy="no-referrer"
+              />
+            )}
+            <span className="max-w-[120px] truncate">{naluUser.name || naluUser.login}</span>
+          </div>
+        )}
+        <a
+          href={naluUser ? '/api/auth/logout' : '/api/auth/github?next=/'}
+          onClick={(e) => {
+            // For the legacy admin-email entry path we don't have a server
+            // session to clear, so just trigger the in-app logout.
+            if (!naluUser) return
+            // For GitHub-signed users, let the anchor navigate so the
+            // Set-Cookie header from /api/auth/logout takes effect.
+            void e // explicit
+          }}
+          className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-card/80 backdrop-blur-md px-3 py-1 text-xs font-medium text-foreground/80 hover:bg-card/95 hover:text-foreground shadow-md"
+        >
+          <LogOut size={12} />
+          {naluUser ? 'Sign out' : 'Sign in'}
+        </a>
+        {!naluUser && (
+          // Legacy admin-email path can clear via the prop's local handler.
+          <button
+            onClick={onLogout}
+            className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-card/80 backdrop-blur-md px-3 py-1 text-xs text-foreground/60 hover:text-foreground shadow-md"
+            title="Clear local admin unlock"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      {/* Top-right second row: connection-state surfaces (Pair pill, model
+       *  picker, attach). All Nalu features now live behind the Plugins
+       *  modal — one canonical place to find them. */}
       {naluPairing && (
-        <div className="fixed right-32 top-4 z-40 flex items-center gap-2">
+        <div className="fixed right-4 top-14 z-40 flex items-center gap-2">
           <NaluModelPicker pairing={naluPairing} />
           <label
             className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-card/80 px-2.5 py-1.5 text-xs text-foreground/80 hover:bg-card/95 hover:text-foreground cursor-pointer"
@@ -1865,7 +1921,7 @@ export default function Dashboard({ onLogout }: Props) {
             setShowPairingDialog(true)
           }
         }}
-        className="fixed right-4 top-4 z-40 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-card/80 backdrop-blur-md px-3 py-1.5 text-xs font-medium text-foreground/80 hover:bg-card/95 hover:text-foreground shadow-md"
+        className="fixed right-4 bottom-4 z-40 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-card/80 backdrop-blur-md px-3 py-1.5 text-xs font-medium text-foreground/80 hover:bg-card/95 hover:text-foreground shadow-md"
         title={
           naluPairing
             ? `Connected to ${naluPairing.host}:${naluPairing.port}`

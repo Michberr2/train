@@ -19,6 +19,7 @@
     "concurrently": "^8.2.2"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
     "pg": "^8.20.0"
   }
 }

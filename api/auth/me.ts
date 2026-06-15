@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import crypto from 'node:crypto'
+import { findUserById } from '../_db.js'
 
 // Return the current user from the signed session cookie, or 401.
 // Used by App.tsx on load to decide whether to render the Dashboard.
@@ -34,7 +35,7 @@ function parseCookies(req: VercelRequest): Record<string, string> {
   return out
 }
 
-export default function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   const sessionSecret = process.env.NALU_SESSION_SECRET || process.env.GITHUB_CLIENT_SECRET
   if (!sessionSecret) {
     res.status(500).json({ error: 'session not configured' })
@@ -53,6 +54,27 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
   }
   try {
     const session = JSON.parse(Buffer.from(value, 'base64url').toString('utf-8'))
+    // Try to enrich from Neon so the avatar/name reflect any later changes.
+    // Fall back to the cookie's snapshot if the DB is unreachable.
+    try {
+      const row = await findUserById(session.id)
+      if (row) {
+        res.status(200).json({
+          user: {
+            id: row.id,
+            login: row.login,
+            name: row.name || row.login,
+            avatar: row.avatar_url || '',
+            email: row.email || '',
+            loginCount: row.login_count,
+            createdAt: row.created_at,
+          },
+        })
+        return
+      }
+    } catch (e) {
+      console.error('[auth/me] findUserById failed:', (e as Error).message)
+    }
     res.status(200).json({ user: session })
   } catch {
     res.status(401).json({ user: null })

@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import crypto from 'node:crypto'
+import { upsertGithubUser } from '../../_db.js'
 
 // GitHub OAuth callback. Verifies `state` against the cookie, exchanges the
 // `code` for an access token, fetches the user identity, then sets a signed
@@ -102,6 +103,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     name?: string
     email?: string
     avatar_url?: string
+  }
+
+  // Persist to Neon. Failure here shouldn't block the login — it logs and we
+  // still set the cookie so the user gets in. (Schema is auto-created.)
+  try {
+    await upsertGithubUser({
+      id: user.id,
+      login: user.login,
+      name: user.name,
+      email: user.email,
+      avatar_url: user.avatar_url,
+    })
+  } catch (e) {
+    console.error('[auth/callback] upsertGithubUser failed:', (e as Error).message)
   }
 
   // Build a session payload — no access token here; we only need identity.

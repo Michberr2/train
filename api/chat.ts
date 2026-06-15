@@ -19,10 +19,20 @@ interface ChatMessage {
   name?: string
 }
 
-const BASE_PROMPT = `You are Nalu, an open-source AI coding assistant operating in a web workspace.
+// Two prompts: one when the backend can function-call (read/write/edit/list),
+// and a no-tools variant that's HONEST about not being able to touch files.
+// Mixing the two — claiming tools while none are wired — makes the model
+// hallucinate filenames and contents, which is what was happening on the free
+// HuggingFace backend.
+const TOOLS_PROMPT = `You are Nalu, an open-source AI coding assistant operating in a web workspace.
 Be concise, technical, and direct. When discussing code, reference file paths with backticks.
 
 You have tools that let you read, write, edit, and list files in the user's repository. Use them whenever the user asks you to make a change. Prefer \`edit_file\` for small, targeted edits. Use \`write_file\` for new files or full rewrites. Always read a file before editing it unless you are creating it. After making edits, briefly summarize what you changed.`
+
+const NO_TOOLS_PROMPT = `You are Nalu, an open-source AI assistant.
+Be concise, technical, and direct. When discussing code, reference file paths with backticks.
+
+You DO NOT have file access tools on this backend — you can't read, list, write, or edit any files on the user's machine. If the user asks you to do something that needs file access (read a file, edit code, list a directory, look at their repo), say so plainly: "I can't access files from here — paste the snippet and I'll help." Never invent filenames, directory contents, or file bodies. If the user pastes code, work from that text.`
 
 interface PromptContext {
   repo?: string
@@ -31,9 +41,17 @@ interface PromptContext {
   branch?: string | null
 }
 
-function buildSystemPrompt(ctx: PromptContext): string {
-  const lines: string[] = [BASE_PROMPT]
-  if (ctx.repo) lines.push(`The user is currently working in the \`${ctx.repo}\` folder.`)
+function buildSystemPrompt(ctx: PromptContext, hasTools: boolean): string {
+  const lines: string[] = [hasTools ? TOOLS_PROMPT : NO_TOOLS_PROMPT]
+  if (ctx.repo) {
+    lines.push(
+      hasTools
+        ? `The user is currently working in the \`${ctx.repo}\` folder.`
+        // Don't claim "working in a folder" when we can't actually see it;
+        // the model would otherwise hallucinate contents from the folder name.
+        : `The user mentioned working in a folder called \`${ctx.repo}\` (you cannot see its contents).`,
+    )
+  }
   if (ctx.branch) lines.push(`Current branch: \`${ctx.branch}\`.`)
   if (ctx.githubConnected) {
     lines.push(
@@ -42,8 +60,6 @@ function buildSystemPrompt(ctx: PromptContext): string {
     if (ctx.origin) {
       lines.push(`Origin remote: \`${ctx.origin.owner}/${ctx.origin.repo}\`.`)
     }
-  } else {
-    lines.push('The user has not connected GitHub yet.')
   }
   return lines.join('\n')
 }
@@ -117,15 +133,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return
   }
 
+  // Backend's tool support drives the system prompt — claiming tools when we
+  // can't deliver them is what makes the model hallucinate file contents.
+  const effectiveTools = backend.supportsTools && Array.isArray(tools) && tools.length > 0
   const fullMessages: ChatMessage[] = [
     {
       role: 'system',
-      content: buildSystemPrompt({
-        repo: typeof repo === 'string' ? repo : undefined,
-        githubConnected: !!githubConnected,
-        origin: origin && typeof origin === 'object' && origin.owner && origin.repo ? origin : null,
-        branch: typeof branch === 'string' ? branch : null,
-      }),
+      content: buildSystemPrompt(
+        {
+          repo: typeof repo === 'string' ? repo : undefined,
+          githubConnected: !!githubConnected,
+          origin: origin && typeof origin === 'object' && origin.owner && origin.repo ? origin : null,
+          branch: typeof branch === 'string' ? branch : null,
+        },
+        effectiveTools,
+      ),
     },
     ...messages.filter((m: ChatMessage) => {
       if (!m || m.role === 'system') return false
