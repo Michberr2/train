@@ -48,7 +48,44 @@ function buildSystemPrompt(ctx: PromptContext): string {
   return lines.join('\n')
 }
 
-const DEFAULT_MODEL = process.env.OPENROUTER_MODEL || 'anthropic/claude-haiku-4-5'
+// Two OpenAI-compatible providers, used in order of preference:
+// 1) HuggingFace Router (HUGGINGFACE_API_TOKEN) — free/cheap, default
+// 2) OpenRouter (OPENROUTER_API_KEY) — fallback if HF token missing
+// Either one can be overridden via OPENROUTER_MODEL / HF_MODEL env vars.
+const HF_DEFAULT_MODEL = process.env.HF_MODEL || 'meta-llama/Llama-3.1-8B-Instruct:novita'
+const OPENROUTER_DEFAULT_MODEL = process.env.OPENROUTER_MODEL || 'anthropic/claude-haiku-4-5'
+
+interface ChatBackend {
+  url: string
+  apiKey: string
+  defaultModel: string
+  referer: string
+  title: string
+}
+
+function pickBackend(): ChatBackend | null {
+  const hfKey = process.env.HUGGINGFACE_API_TOKEN
+  if (hfKey) {
+    return {
+      url: 'https://router.huggingface.co/v1/chat/completions',
+      apiKey: hfKey,
+      defaultModel: HF_DEFAULT_MODEL,
+      referer: 'https://n4lu.com',
+      title: 'Nalu',
+    }
+  }
+  const orKey = process.env.OPENROUTER_API_KEY
+  if (orKey) {
+    return {
+      url: 'https://openrouter.ai/api/v1/chat/completions',
+      apiKey: orKey,
+      defaultModel: OPENROUTER_DEFAULT_MODEL,
+      referer: 'https://n4lu.ai',
+      title: 'Nalu Workspace',
+    }
+  }
+  return null
+}
 
 export const config = {
   // Streaming on Vercel needs the Node runtime (not edge) so we can write
@@ -62,9 +99,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.status(405).json({ error: 'method_not_allowed' })
     return
   }
-  const apiKey = process.env.OPENROUTER_API_KEY
-  if (!apiKey) {
-    res.status(500).json({ error: 'OPENROUTER_API_KEY not set' })
+  const backend = pickBackend()
+  if (!backend) {
+    res.status(500).json({ error: 'No chat backend configured (set HUGGINGFACE_API_TOKEN or OPENROUTER_API_KEY)' })
     return
   }
 
@@ -95,6 +132,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache, no-transform')
   res.setHeader('Connection', 'keep-alive')
+  // Critical: without flushHeaders, Vercel's Node runtime buffers writes
+  // until the function exits, so the client sees nothing until the very
+  // end — looks like the chat is hung. Flushing makes the SSE deltas
+  // actually stream as they arrive.
+  res.flushHeaders?.()
 
   const send = (event: string, data: unknown) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
@@ -104,17 +146,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.on('close', () => controller.abort())
 
   try {
-    const upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const upstream = await fetch(backend.url, {
       method: 'POST',
       signal: controller.signal,
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${backend.apiKey}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://n4lu.ai',
-        'X-Title': 'Nalu Workspace',
+        'HTTP-Referer': backend.referer,
+        'X-Title': backend.title,
       },
       body: JSON.stringify({
-        model: model || DEFAULT_MODEL,
+        model: model || backend.defaultModel,
         messages: fullMessages,
         stream: true,
         ...(Array.isArray(tools) && tools.length > 0 ? { tools, tool_choice: tool_choice ?? 'auto' } : {}),
