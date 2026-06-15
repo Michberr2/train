@@ -88,6 +88,7 @@ import {
   streamChat as streamNaluChat,
   forgetSession as forgetNaluSession,
   uploadFiles as uploadNaluFiles,
+  streamShell as streamNaluShell,
   type NaluPairing,
   type UploadedFile,
 } from '../lib/nalu-client'
@@ -1383,6 +1384,7 @@ export default function Dashboard({ onLogout }: Props) {
               apiRead,
               apiWrite,
               onFileWritten,
+              pairing: naluPairing,
             })
 
             const resultLabel = result.ok ? ' — done' : ` — failed: ${result.output.split('\n')[0].slice(0, 120)}`
@@ -2280,6 +2282,38 @@ const NALU_TOOLS: ToolSpec[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'grep_repo',
+      description: 'Search the open repository for a regex pattern across all text files. Returns matching lines with path:line: prefixes. Much cheaper than reading every file when looking for a symbol, string, or definition.',
+      parameters: {
+        type: 'object',
+        properties: {
+          pattern: { type: 'string', description: 'JavaScript-compatible regex pattern.' },
+          flags: { type: 'string', description: 'Optional regex flags (default "i" for case-insensitive).' },
+          glob: { type: 'string', description: 'Optional glob filter to restrict which files are searched (e.g. "src/**/*.ts").' },
+          max_results: { type: 'number', description: 'Cap on matches returned (default 100).' },
+        },
+        required: ['pattern'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_command',
+      description: 'Run a shell command on the user\'s machine and return its stdout/stderr/exit_code. Requires the user to be paired with a local Nalu install. Use for builds, tests, package installs, dev servers, git operations — anything that needs a terminal.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'The shell command to execute.' },
+          cwd: { type: 'string', description: 'Optional working directory (relative to the user\'s home). Defaults to the paired install\'s default.' },
+        },
+        required: ['command'],
+      },
+    },
+  },
 ]
 
 function globToRegex(glob: string): RegExp {
@@ -2309,6 +2343,9 @@ interface ToolRunDeps {
   apiRead: (path: string) => Promise<string>
   apiWrite: (path: string, content: string) => Promise<number>
   onFileWritten: (path: string, content: string, size: number) => void
+  /** Local-Nalu pairing for run_command. Null = unpaired; run_command will
+   *  return a helpful "needs pairing" message instead of trying to execute. */
+  pairing: NaluPairing | null
 }
 
 interface ToolResult {
@@ -2321,7 +2358,7 @@ async function runNaluTool(
   args: Record<string, unknown>,
   deps: ToolRunDeps,
 ): Promise<ToolResult> {
-  const { repo, apiRead, apiWrite, onFileWritten } = deps
+  const { repo, apiRead, apiWrite, onFileWritten, pairing } = deps
   try {
     if (name === 'read_file') {
       const path = String(args.path ?? '')
@@ -2385,6 +2422,62 @@ async function runNaluTool(
       }
       onFileWritten(path, updated, size)
       return { ok: true, output: `Edited ${path} (replaced ${count} occurrence${count === 1 ? '' : 's'}, ${size} bytes)` }
+    }
+    if (name === 'grep_repo') {
+      const pattern = String(args.pattern ?? '')
+      if (!pattern) return { ok: false, output: 'Error: pattern required' }
+      const flags = typeof args.flags === 'string' ? String(args.flags) : 'i'
+      const glob = typeof args.glob === 'string' && args.glob ? String(args.glob) : null
+      const cap = typeof args.max_results === 'number' && args.max_results > 0 ? args.max_results : 100
+      let re: RegExp
+      try {
+        re = new RegExp(pattern, flags.includes('g') ? flags : flags + 'g')
+      } catch (e) {
+        return { ok: false, output: `Error: invalid regex — ${(e as Error).message}` }
+      }
+      const globRe = glob ? globToRegex(glob) : null
+      const paths = Array.from(repo.files.keys()).filter((p) => !globRe || globRe.test(p))
+      const matches: string[] = []
+      for (const path of paths) {
+        if (matches.length >= cap) break
+        const file = repo.files.get(path)!
+        // Heuristic: skip binaries by extension. Reading and decoding random
+        // binaries (images, PDFs, .pyc) blows the heap and produces noise.
+        if (/\.(png|jpg|jpeg|gif|ico|webp|svg|pdf|zip|tar|gz|wasm|so|dylib|dll|exe|pyc|class|woff2?|ttf|otf|eot|mp4|mp3)$/i.test(path)) continue
+        if (file.size > 1_000_000) continue
+        let text: string
+        try { text = await file.text() } catch { continue }
+        const lines = text.split('\n')
+        for (let i = 0; i < lines.length && matches.length < cap; i++) {
+          if (re.test(lines[i])) matches.push(`${path}:${i + 1}: ${lines[i].slice(0, 240)}`)
+        }
+      }
+      if (matches.length === 0) return { ok: true, output: '(no matches)' }
+      return { ok: true, output: matches.join('\n') }
+    }
+    if (name === 'run_command') {
+      const command = String(args.command ?? '').trim()
+      if (!command) return { ok: false, output: 'Error: command required' }
+      if (!pairing) {
+        return {
+          ok: false,
+          output:
+            'Command execution requires pairing with a local Nalu install on this machine — the browser can\'t spawn processes on its own. Click the "Pair Nalu" pill at the bottom-right to connect, then retry. Pairing takes ~30 seconds and unlocks shell, builds, tests, and dev servers.',
+        }
+      }
+      try {
+        const out: string[] = []
+        let exit: number | null = null
+        for await (const ev of streamNaluShell(pairing, command)) {
+          if (ev.data) out.push(ev.data)
+          if (typeof ev.exit_code === 'number') exit = ev.exit_code
+        }
+        const text = out.join('').slice(0, 32_000) // cap to keep prompt manageable
+        const suffix = exit === null || exit === 0 ? '' : `\n[exit ${exit}]`
+        return { ok: exit === 0, output: text + suffix }
+      } catch (e) {
+        return { ok: false, output: `run_command failed: ${(e as Error).message}` }
+      }
     }
     if (name === 'list_files') {
       const glob = typeof args.glob === 'string' && args.glob ? String(args.glob) : null
