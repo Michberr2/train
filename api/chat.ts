@@ -68,7 +68,12 @@ function buildSystemPrompt(ctx: PromptContext, hasTools: boolean): string {
 // 1) HuggingFace Router (HUGGINGFACE_API_TOKEN) — free/cheap, default
 // 2) OpenRouter (OPENROUTER_API_KEY) — fallback if HF token missing
 // Either one can be overridden via OPENROUTER_MODEL / HF_MODEL env vars.
-const HF_DEFAULT_MODEL = process.env.HF_MODEL || 'meta-llama/Llama-3.1-8B-Instruct:novita'
+//
+// Default HF model is Llama 3.3 70B via Novita — that combo DOES support
+// function calling (verified by probing the live router). The earlier
+// 3.1-8B default did not, which is why Dashboard's tools were getting
+// rejected. 70B has the side benefit of much better tool-use reasoning.
+const HF_DEFAULT_MODEL = process.env.HF_MODEL || 'meta-llama/Llama-3.3-70B-Instruct:novita'
 const OPENROUTER_DEFAULT_MODEL = process.env.OPENROUTER_MODEL || 'anthropic/claude-haiku-4-5'
 
 interface ChatBackend {
@@ -86,13 +91,17 @@ interface ChatBackend {
 function pickBackend(): ChatBackend | null {
   const hfKey = process.env.HUGGINGFACE_API_TOKEN
   if (hfKey) {
+    // Llama 3.3 70B on Novita supports tool calls. If you override HF_MODEL
+    // to a model that DOESN'T (e.g. the old 3.1-8B), also set
+    // HF_DISABLE_TOOLS=1 to fall back to plain-prose mode.
+    const disableTools = String(process.env.HF_DISABLE_TOOLS || '').toLowerCase() === '1'
     return {
       url: 'https://router.huggingface.co/v1/chat/completions',
       apiKey: hfKey,
       defaultModel: HF_DEFAULT_MODEL,
       referer: 'https://n4lu.com',
       title: 'Nalu',
-      supportsTools: false,
+      supportsTools: !disableTools,
     }
   }
   const orKey = process.env.OPENROUTER_API_KEY
