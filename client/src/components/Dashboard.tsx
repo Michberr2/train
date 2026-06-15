@@ -2273,11 +2273,11 @@ const NALU_TOOLS: ToolSpec[] = [
     type: 'function',
     function: {
       name: 'list_files',
-      description: 'List file paths in the repository. Optional glob filter (e.g. "src/**/*.ts"). Returns up to 500 paths.',
+      description: 'List file paths in the open repository. Examples: omit glob → list everything; glob "extensions" → list files under extensions/ (folder name is auto-expanded to extensions/**); glob "src/**/*.ts" → all .ts files under src. Returns up to 500 paths plus a total count, or an error explaining what IS available if nothing matches.',
       parameters: {
         type: 'object',
         properties: {
-          glob: { type: 'string', description: 'Optional glob-style filter (* matches any chars within a segment, ** matches across segments).' },
+          glob: { type: 'string', description: 'Optional glob. A bare folder name like "extensions" lists its children; use "src/**/*.ts" for typed filters.' },
         },
       },
     },
@@ -2480,14 +2480,44 @@ async function runNaluTool(
       }
     }
     if (name === 'list_files') {
-      const glob = typeof args.glob === 'string' && args.glob ? String(args.glob) : null
-      const re = glob ? globToRegex(glob) : null
       const all = Array.from(repo.files.keys())
+      if (all.length === 0) {
+        return {
+          ok: false,
+          output:
+            'No folder is open in this Dashboard. Click "Open Folder" in the left rail (or "Switch repo" if one is already loaded) and grant the browser access, then retry.',
+        }
+      }
+      const rawGlob = typeof args.glob === 'string' && args.glob ? String(args.glob) : null
+      // The model often passes a bare folder name like "extensions" expecting
+      // "show me what's inside". Expand wildcard-less globs to <name>/**.
+      // Anything with * or ? in it is used verbatim.
+      const glob = rawGlob && !/[*?]/.test(rawGlob)
+        ? rawGlob.replace(/\/+$/, '') + '/**'
+        : rawGlob
+      const re = glob ? globToRegex(glob) : null
       const filtered = re ? all.filter((p) => re.test(p)) : all
+      if (filtered.length === 0) {
+        // Helpful empty: surface what IS available so the model can correct.
+        const topDirs = Array.from(
+          new Set(all.map((p) => p.split('/')[0]).filter(Boolean)),
+        )
+          .sort()
+          .slice(0, 40)
+        return {
+          ok: false,
+          output: `No files match glob ${JSON.stringify(rawGlob)} (expanded to ${JSON.stringify(glob)}). The repo is open and contains ${all.length} file${all.length === 1 ? '' : 's'}. Top-level entries: ${topDirs.join(', ')}.`,
+        }
+      }
       const trimmed = filtered.slice(0, 500)
       const more = filtered.length - trimmed.length
       const body = trimmed.join('\n')
-      return { ok: true, output: more > 0 ? `${body}\n… (${more} more)` : body }
+      return {
+        ok: true,
+        output: more > 0
+          ? `${body}\n… (${more} more, total ${filtered.length})`
+          : `${body}\n(${filtered.length} file${filtered.length === 1 ? '' : 's'})`,
+      }
     }
     return { ok: false, output: `Error: unknown tool ${name}` }
   } catch (err) {
