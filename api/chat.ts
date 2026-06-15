@@ -61,6 +61,10 @@ interface ChatBackend {
   defaultModel: string
   referer: string
   title: string
+  /** false = backend's free model can't function-call; we drop `tools` from the
+   *  outbound request and let the model just chat. (Otherwise Novita Llama
+   *  returns 400 "model features function calling not support".) */
+  supportsTools: boolean
 }
 
 function pickBackend(): ChatBackend | null {
@@ -72,6 +76,7 @@ function pickBackend(): ChatBackend | null {
       defaultModel: HF_DEFAULT_MODEL,
       referer: 'https://n4lu.com',
       title: 'Nalu',
+      supportsTools: false,
     }
   }
   const orKey = process.env.OPENROUTER_API_KEY
@@ -82,6 +87,7 @@ function pickBackend(): ChatBackend | null {
       defaultModel: OPENROUTER_DEFAULT_MODEL,
       referer: 'https://n4lu.ai',
       title: 'Nalu Workspace',
+      supportsTools: true,
     }
   }
   return null
@@ -157,9 +163,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
       body: JSON.stringify({
         model: model || backend.defaultModel,
-        messages: fullMessages,
+        // Tool messages reference tool calls the model made on a previous
+        // turn — without those calls in history, the backend rejects the
+        // request. Strip them along with the orphaned assistant tool_calls
+        // when the backend can't function-call, so the model still sees the
+        // user's question and replies in plain prose.
+        messages: backend.supportsTools
+          ? fullMessages
+          : fullMessages
+              .filter((m) => m.role !== 'tool')
+              .map((m) =>
+                m.role === 'assistant' && m.tool_calls
+                  ? { role: m.role, content: m.content ?? '' }
+                  : m,
+              ),
         stream: true,
-        ...(Array.isArray(tools) && tools.length > 0 ? { tools, tool_choice: tool_choice ?? 'auto' } : {}),
+        ...(backend.supportsTools && Array.isArray(tools) && tools.length > 0
+          ? { tools, tool_choice: tool_choice ?? 'auto' }
+          : {}),
       }),
     })
 
