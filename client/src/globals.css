@@ -122,4 +122,6 @@
 /* Loader — a light sweep across the progress fill so it always looks alive. */
 @keyframes nalu-sweep { 0% { transform: translateX(-130%) } 100% { transform: translateX(320%) } }
 .nalu-sweep { animation: nalu-sweep 1.5s cubic-bezier(.4,0,.2,1) infinite; }
-@media (prefers-reduced-motion: reduce) { .nalu-sweep { animation: none; } }
+@keyframes nalu-fadein { from { opacity: 0; transform: translateY(3px) } to { opacity: 1; transform: none } }
+.nalu-fadein { animation: nalu-fadein .35s ease both; }
+@media (prefers-reduced-motion: reduce) { .nalu-sweep, .nalu-fadein { animation: none; } }
