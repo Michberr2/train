@@ -14,6 +14,12 @@ type Place = {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type GMaps = any
 let mapsPromise: Promise<GMaps> | null = null
+// Remove a loaded (but rejected) Maps SDK so we can retry with a different key.
+function teardownMaps() {
+  document.querySelectorAll('script[src*="maps.googleapis.com/maps/api/js"]').forEach((s) => s.remove())
+  try { delete (window as unknown as { google?: unknown }).google } catch { /* */ }
+  mapsPromise = null
+}
 function loadMaps(key: string): Promise<GMaps> {
   const w = window as unknown as { google?: { maps?: unknown } }
   if (w.google?.maps) return Promise.resolve((w as { google: GMaps }).google)
@@ -82,8 +88,14 @@ function makeOverlay(g: GMaps, def: LayerDef): GMaps {
   })
 }
 
+const MAP_KEYS = [
+  (import.meta.env.VITE_GOOGLE_MAPS_KEY as string) || '',
+  (import.meta.env.VITE_GOOGLE_MAPS_KEY2 as string) || '',
+].filter(Boolean)
+
 export default function MapPanel() {
-  const key = (import.meta.env.VITE_GOOGLE_MAPS_KEY as string) || ''
+  const [keyIdx, setKeyIdx] = useState(0)
+  const key = MAP_KEYS[keyIdx] || ''
   const mapEl = useRef<HTMLDivElement>(null)
   const mapRef = useRef<GMaps>(null)
   const infoRef = useRef<GMaps>(null)
@@ -98,10 +110,20 @@ export default function MapPanel() {
   const [active, setActive] = useState<Record<string, boolean>>({})
   const overlaysRef = useRef<Record<string, GMaps>>({})
 
-  // Google calls this global on any key/billing/restriction auth failure.
+  // Google calls this global on any key/billing/restriction auth failure. If a
+  // second key is configured, tear down and retry with it (handles swapped keys);
+  // only then surface the setup guidance.
   useEffect(() => {
-    ;(window as unknown as { gm_authFailure?: () => void }).gm_authFailure = () => setAuthErr(true)
-  }, [])
+    ;(window as unknown as { gm_authFailure?: () => void }).gm_authFailure = () => {
+      if (keyIdx + 1 < MAP_KEYS.length) {
+        teardownMaps()
+        setReady(false)
+        setKeyIdx((i) => i + 1)
+      } else {
+        setAuthErr(true)
+      }
+    }
+  }, [keyIdx])
 
   const toggleLayer = (key: string) => {
     const g = (window as unknown as { google?: GMaps }).google
