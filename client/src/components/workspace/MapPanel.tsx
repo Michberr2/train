@@ -93,9 +93,15 @@ export default function MapPanel() {
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
   const [ready, setReady] = useState(false)
+  const [authErr, setAuthErr] = useState(false)
   const [sel, setSel] = useState<string | null>(null)
   const [active, setActive] = useState<Record<string, boolean>>({})
   const overlaysRef = useRef<Record<string, GMaps>>({})
+
+  // Google calls this global on any key/billing/restriction auth failure.
+  useEffect(() => {
+    ;(window as unknown as { gm_authFailure?: () => void }).gm_authFailure = () => setAuthErr(true)
+  }, [])
 
   const toggleLayer = (key: string) => {
     const g = (window as unknown as { google?: GMaps }).google
@@ -284,7 +290,21 @@ export default function MapPanel() {
           </div>
         )}
 
-        {!ready && !err && (
+        {authErr && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0b0e16]/95 p-6">
+            <div className="max-w-md text-[13px] leading-relaxed text-[#cfcfcf]">
+              <div className="mb-2 text-sm font-medium text-amber-300">Google rejected the Maps key</div>
+              The key is loaded correctly, so this is a Google Cloud setup issue. In the Cloud Console for this project, make sure:
+              <ul className="ml-4 mt-2 list-disc space-y-1 text-[#b8b8b8]">
+                <li><b>Billing is enabled</b> on the project (Maps requires a billing account — this is the most common cause).</li>
+                <li><b>Maps JavaScript API</b> is enabled.</li>
+                <li>The key’s restrictions allow the <b>Maps JavaScript API</b> and the referrer <b>https://n4lu.ai/*</b> and <b>https://n4lu.com/*</b> (or temporarily set “None”).</li>
+              </ul>
+              <div className="mt-2 text-[11px] text-[#8e8e8e]">Changes take ~2–3 minutes to propagate. Then reload this page.</div>
+            </div>
+          </div>
+        )}
+        {!ready && !err && !authErr && (
           <div className="absolute inset-0 flex items-center justify-center text-sm text-[#8e8e8e]"><Loader2 size={18} className="mr-2 animate-spin" /> Loading map…</div>
         )}
         {err && !ready && (
