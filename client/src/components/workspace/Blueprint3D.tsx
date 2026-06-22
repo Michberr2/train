@@ -204,6 +204,9 @@ export default function Blueprint3D({ floors, mode, storeKey, startWalk, initial
   const selectedRef = useRef(selected); selectedRef.current = selected
   const furnishRef = useRef(furnishing); furnishRef.current = furnishing
   const palRef = useRef<Pal | null>(null)
+  // Color-bearing building materials, so colour edits update IN PLACE instead of
+  // tearing down and rebuilding the whole WebGL renderer on every picker change.
+  const matsRef = useRef<Record<'wall' | 'inner' | 'slab' | 'trim' | 'water' | 'build', THREE.MeshStandardMaterial> | null>(null)
 
   const list = (floors || []).filter((f) => f && Array.isArray(f.shapes) && f.shapes.length)
   const vbw = Math.max(40, ...list.map((f) => f.viewBox?.w || 40))
@@ -258,6 +261,7 @@ export default function Blueprint3D({ floors, mode, storeKey, startWalk, initial
     const furnMat = new THREE.MeshStandardMaterial({ color: 0x9a8a72, roughness: 0.82 })
     const buildMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(colors.wall).multiplyScalar(0.92), roughness: 0.75 })
     const hardMat = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.95 })
+    matsRef.current = { wall: wallMat, inner: innerMat, slab: slabMat, trim: trimMat, water: waterMat, build: buildMat }
 
     const wall = (ax: number, az: number, bx: number, bz: number, y0: number, t: number, m: THREE.Material) => {
       const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz)
@@ -544,13 +548,30 @@ export default function Blueprint3D({ floors, mode, storeKey, startWalk, initial
       renderer.domElement.removeEventListener('pointerup', onUp)
       if (lockClick) renderer.domElement.removeEventListener('click', lockClick)
       plc?.dispose()
-      renderer.dispose()
       scene.traverse((o) => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose() })
+      // Explicitly release the WebGL context (dispose() alone leaks it) — without
+      // this, repeated rebuilds exhaust the browser's ~16-context limit and the
+      // 3D view stops rendering ("breaks").
+      try { renderer.forceContextLoss() } catch { /* */ }
+      renderer.dispose()
       if (renderer.domElement.parentElement === mount) mount.removeChild(renderer.domElement)
       rootRef.current = null; furnGroupRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [floors, mode, colors, walk])
+  }, [floors, mode, walk])
+
+  // Apply colour edits in place — no renderer rebuild (prevents context churn).
+  useEffect(() => {
+    const m = matsRef.current
+    if (!m) return
+    m.wall.color.set(colors.wall)
+    m.inner.color.set(new THREE.Color(colors.wall).multiplyScalar(0.96))
+    m.slab.color.set(colors.floor)
+    m.trim.color.set(colors.accent)
+    m.water.color.set(colors.water)
+    m.build.color.set(new THREE.Color(colors.wall).multiplyScalar(0.92))
+    if (palRef.current) palRef.current.accent.color.set(colors.accent)
+  }, [colors])
 
   // ---- furniture (re-rendered without rebuilding the building) ----
   useEffect(() => {
