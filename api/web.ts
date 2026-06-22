@@ -233,6 +233,57 @@ async function research(query: string, depth = 4): Promise<{ text: string; sourc
   return { text, sources }
 }
 
+// Google Places Text Search — natural-language "find stuff on the map" (homes,
+// land, businesses, schools, parks…). Returns located results for the map view.
+const MAPS_KEY = env('GOOGLE_PLACES_KEY') || env('GOOGLE_MAPS_KEY') || env('VITE_GOOGLE_MAPS_KEY') || ''
+const PRICE_LEVELS: Record<string, number> = {
+  PRICE_LEVEL_FREE: 0, PRICE_LEVEL_INEXPENSIVE: 1, PRICE_LEVEL_MODERATE: 2,
+  PRICE_LEVEL_EXPENSIVE: 3, PRICE_LEVEL_VERY_EXPENSIVE: 4,
+}
+async function placesSearch(query: string, near: string): Promise<unknown> {
+  if (!MAPS_KEY) return { error: 'Maps is not configured.', results: [] }
+  const q = near ? `${query} in ${near}` : query
+  try {
+    // Places API (New) — text search. Key in header, fields via field mask.
+    const r = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': MAPS_KEY,
+        'X-Goog-FieldMask':
+          'places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.priceLevel,places.types,places.currentOpeningHours.openNow',
+      },
+      body: JSON.stringify({ textQuery: q, maxResultCount: 20 }),
+    })
+    const d = (await r.json()) as {
+      error?: { status?: string; message?: string }
+      places?: Array<Record<string, unknown>>
+    }
+    if (d.error) return { error: `${d.error.status || ''}${d.error.message ? `: ${d.error.message}` : ''}`.trim(), results: [] }
+    const results = (d.places || []).slice(0, 20).map((p) => {
+      const loc = p.location as { latitude?: number; longitude?: number } | undefined
+      const dn = p.displayName as { text?: string } | undefined
+      const pl = p.priceLevel as string | undefined
+      return {
+        name: dn?.text || '',
+        address: (p.formattedAddress as string) || '',
+        lat: loc?.latitude ?? null,
+        lng: loc?.longitude ?? null,
+        rating: (p.rating as number) ?? null,
+        userRatings: (p.userRatingCount as number) ?? null,
+        priceLevel: pl && pl in PRICE_LEVELS ? PRICE_LEVELS[pl] : null,
+        types: (p.types as string[]) || [],
+        placeId: (p.id as string) || '',
+        openNow: (p.currentOpeningHours as { openNow?: boolean } | undefined)?.openNow ?? null,
+        photoUrl: null, // photos would require exposing the server key — omitted
+      }
+    })
+    return { results, status: 'OK' }
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'places error', results: [] }
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -269,6 +320,10 @@ export default async function handler(req: any, res: any) {
     if (action === 'research') {
       const depth = typeof body.depth === 'number' ? body.depth : 4
       res.status(200).json(await research(query, depth))
+      return
+    }
+    if (action === 'places') {
+      res.status(200).json(await placesSearch(query, typeof body.near === 'string' ? body.near : ''))
       return
     }
     res.status(200).json(await search(query))

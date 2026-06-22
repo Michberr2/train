@@ -30,6 +30,7 @@ import {
   Download,
   ChevronLeft,
   Shield,
+  MapPin,
 } from 'lucide-react'
 import { streamChat, type WireMessage } from './agentApi'
 import { lazy, Suspense } from 'react'
@@ -63,6 +64,7 @@ import {
   type ActiveRepo,
 } from './github'
 import StudioPanel from './StudioPanel'
+import MapPanel from './MapPanel'
 import ProjectsPanel from './ProjectsPanel'
 import SkillsPanel from './SkillsPanel'
 import PluginsPanel from './PluginsPanel'
@@ -98,7 +100,7 @@ interface Project {
   createdAt: number
 }
 
-type View = 'chat' | 'studio' | 'projects' | 'skills' | 'plugins' | 'automations' | 'settings'
+type View = 'chat' | 'studio' | 'map' | 'projects' | 'skills' | 'plugins' | 'automations' | 'settings'
 
 const CHATS_KEY = 'nalu-chats'
 const ACTIVE_KEY = 'nalu-active-chat'
@@ -110,10 +112,12 @@ const DEFAULT_MODEL = 'nalu-catalina'
 const NAV_ITEMS: { view: View; label: string; icon: LucideIcon }[] = [
   { view: 'chat', label: 'Chats', icon: MessageSquare },
   { view: 'studio', label: 'Studio', icon: Palette },
+  { view: 'map', label: 'Map', icon: MapPin },
 ]
 
 const VIEW_TITLES: Record<Exclude<View, 'chat'>, string> = {
   studio: 'Studio',
+  map: 'Map',
   projects: 'Projects',
   skills: 'Skills',
   plugins: 'Plugins',
@@ -1323,6 +1327,7 @@ export default function Workspace({ user, onLogout }: Props) {
             }}
           />
         )}
+        {view === 'map' && <MapPanel />}
         {view === 'projects' && <ProjectsPanel />}
         {view === 'skills' && <SkillsPanel />}
         {view === 'plugins' && <PluginsPanel />}
