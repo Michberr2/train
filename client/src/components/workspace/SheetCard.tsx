@@ -1,8 +1,7 @@
-import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { FileSpreadsheet, Download } from 'lucide-react'
-import { getBrand, toRgb } from './brandKit'
+import { getBrand, toRgb, type BrandKit } from './brandKit'
 
 export type SheetData = {
   name?: string
@@ -14,35 +13,53 @@ export type SheetDoc = {
   sheets?: SheetData[]
 }
 
-// Build a real .xlsx workbook, turning "=..." strings into live Excel formulas.
-function buildWorkbook(doc: SheetDoc): XLSX.WorkBook {
-  const wb = XLSX.utils.book_new()
+// Build a real .xlsx workbook with exceljs — live formulas ("=..." strings),
+// PLUS the active brand applied (header fill = brand primary, brand heading/body
+// fonts) so the Excel file matches the design on screen. Lazy-imported so it
+// only loads when the user downloads.
+async function downloadWorkbook(doc: SheetDoc, fileName: string, brand: BrandKit | null): Promise<void> {
+  const ExcelJS = (await import('exceljs')).default
+  const wb = new ExcelJS.Workbook()
+  const headArgb = 'FF' + (brand?.primary || '0F1B2D')
+  const headFont = brand?.headingFont || 'Calibri'
+  const bodyFont = brand?.bodyFont || 'Calibri'
   const sheets = doc.sheets && doc.sheets.length ? doc.sheets : [{ name: 'Sheet1', columns: [], rows: [] }]
   sheets.forEach((s, i) => {
-    const aoa: (string | number)[][] = [s.columns || [], ...(s.rows || [])]
-    const ws = XLSX.utils.aoa_to_sheet(aoa)
-    const ref = ws['!ref']
-    if (ref) {
-      const range = XLSX.utils.decode_range(ref)
-      for (let R = range.s.r; R <= range.e.r; R++) {
-        for (let C = range.s.c; C <= range.e.c; C++) {
-          const addr = XLSX.utils.encode_cell({ r: R, c: C })
-          const cell = ws[addr] as XLSX.CellObject | undefined
-          if (cell && typeof cell.v === 'string' && cell.v.startsWith('=')) {
-            ws[addr] = { t: 'n', f: cell.v.slice(1) } as XLSX.CellObject
-          }
-        }
-      }
+    const ws = wb.addWorksheet((s.name || `Sheet${i + 1}`).slice(0, 31))
+    const cols = s.columns || []
+    if (cols.length) {
+      const hr = ws.addRow(cols)
+      hr.height = 18
+      hr.eachCell((cell) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: headArgb } }
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, name: headFont, size: 11 }
+        cell.alignment = { vertical: 'middle' }
+      })
     }
-    // sensible column widths
-    const widths = (s.columns || []).map((_, c) => {
-      const lens = [String((s.columns || [])[c] || '').length, ...(s.rows || []).map((r) => String(r[c] ?? '').length)]
-      return { wch: Math.min(40, Math.max(10, ...lens) + 2) }
+    for (const r of s.rows || []) {
+      const row = ws.addRow(
+        r.map((c) => (typeof c === 'string' && c.startsWith('=') ? { formula: c.slice(1) } : c)),
+      )
+      row.eachCell((cell) => {
+        cell.font = { name: bodyFont, size: 10 }
+      })
+    }
+    cols.forEach((_, c) => {
+      const lens = [String(cols[c] || '').length, ...(s.rows || []).map((r) => String(r[c] ?? '').length)]
+      ws.getColumn(c + 1).width = Math.min(42, Math.max(10, ...lens) + 2)
     })
-    if (widths.length) ws['!cols'] = widths
-    XLSX.utils.book_append_sheet(wb, ws, (s.name || `Sheet${i + 1}`).slice(0, 31))
+    if (cols.length) ws.views = [{ state: 'frozen', ySplit: 1 }]
   })
-  return wb
+  const buf = await wb.xlsx.writeBuffer()
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 3000)
 }
 
 export default function SheetCard({ data }: { data: SheetDoc }) {
@@ -53,7 +70,7 @@ export default function SheetCard({ data }: { data: SheetDoc }) {
   const brand = getBrand()
   const headBg = '#' + (brand?.primary || '0F1B2D')
 
-  const downloadXlsx = () => XLSX.writeFile(buildWorkbook(data), `${title}.xlsx`)
+  const downloadXlsx = () => void downloadWorkbook(data, `${title}.xlsx`, brand)
 
   const downloadPdf = () => {
     const [hr, hg, hb] = toRgb(brand?.primary || '0F1B2D')

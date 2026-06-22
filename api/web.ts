@@ -208,6 +208,31 @@ async function fetchPage(url: string): Promise<{ text: string }> {
   return { text }
 }
 
+// Deep research: search, then READ the top sources in parallel and return a
+// consolidated, source-cited brief — far richer than a single search snippet,
+// in one tool call (so "look across the web for everything" is one step).
+async function research(query: string, depth = 4): Promise<{ text: string; sources: { title: string; url: string }[] }> {
+  const { results } = await search(query)
+  const top = results.slice(0, Math.max(2, Math.min(6, depth)))
+  if (!top.length) return { text: `No web results for "${query}".`, sources: [] }
+  const pages = await Promise.all(
+    top.map(async (r) => {
+      try {
+        const { text } = await fetchPage(r.url)
+        return { ...r, body: text.replace(/\s+/g, ' ').trim().slice(0, 2200) }
+      } catch {
+        return { ...r, body: '' }
+      }
+    }),
+  )
+  const sections = pages.map(
+    (p, i) => `[${i + 1}] ${p.title}\n${p.url}\n${p.body || p.snippet || '(could not read this page)'}`,
+  )
+  const sources = pages.map((p) => ({ title: p.title, url: p.url }))
+  const text = `DEEP RESEARCH on "${query}" — ${pages.length} sources read:\n\n${sections.join('\n\n———\n\n')}\n\nSynthesize the findings above and cite sources by their [n] / URL.`
+  return { text, sources }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -239,6 +264,11 @@ export default async function handler(req: any, res: any) {
     const query = typeof body.query === 'string' ? body.query.trim() : ''
     if (!query) {
       res.status(400).json({ error: 'query required' })
+      return
+    }
+    if (action === 'research') {
+      const depth = typeof body.depth === 'number' ? body.depth : 4
+      res.status(200).json(await research(query, depth))
       return
     }
     res.status(200).json(await search(query))

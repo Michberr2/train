@@ -61,6 +61,7 @@ import {
   commitFiles,
   type ActiveRepo,
 } from './github'
+import StudioPanel from './StudioPanel'
 import ProjectsPanel from './ProjectsPanel'
 import SkillsPanel from './SkillsPanel'
 import PluginsPanel from './PluginsPanel'
@@ -96,7 +97,7 @@ interface Project {
   createdAt: number
 }
 
-type View = 'chat' | 'projects' | 'skills' | 'plugins' | 'automations' | 'settings'
+type View = 'chat' | 'studio' | 'projects' | 'skills' | 'plugins' | 'automations' | 'settings'
 
 const CHATS_KEY = 'nalu-chats'
 const ACTIVE_KEY = 'nalu-active-chat'
@@ -105,18 +106,13 @@ const MODEL_KEY = 'nalu-model'
 // (kept server-side), so the browser/console never references it.
 const DEFAULT_MODEL = 'nalu-catalina'
 
-const SUGGESTIONS = [
-  'Explain a code snippet I paste',
-  'Draft a function and walk me through it',
-  'Summarize a GitHub repo structure',
-  'Help me debug an error message',
-]
-
 const NAV_ITEMS: { view: View; label: string; icon: LucideIcon }[] = [
   { view: 'chat', label: 'Chats', icon: MessageSquare },
+  { view: 'studio', label: 'Studio', icon: Palette },
 ]
 
 const VIEW_TITLES: Record<Exclude<View, 'chat'>, string> = {
+  studio: 'Studio',
   projects: 'Projects',
   skills: 'Skills',
   plugins: 'Plugins',
@@ -594,14 +590,20 @@ export default function Workspace({ user, onLogout }: Props) {
       let accDesign: DesignArtifact | undefined
       let accDeck: Deck | undefined
       let accLoading: 'image' | 'sheet' | 'doc' | 'video' | 'cad' | 'design' | 'slides' | undefined
-      const flush = () =>
+      // Smooth typewriter reveal for STREAMING TEXT: `acc` holds all received
+      // text; `shown` eases up toward acc.length a few percent per frame, so the
+      // display is decoupled from bursty network chunks and text flows in
+      // smoothly + quickly instead of jumping in blocks.
+      let shown = 0
+      let revealRaf = 0
+      const renderMsg = (content: string) =>
         setChats((cs) =>
           cs.map((c) => {
             if (c.id !== chatId) return c
             const msgs = c.messages.slice()
             msgs[msgs.length - 1] = {
               role: 'assistant',
-              content: acc,
+              content,
               sheet: accSheet,
               doc: accDoc,
               video: accVideo,
@@ -613,17 +615,22 @@ export default function Workspace({ user, onLogout }: Props) {
             return { ...c, messages: msgs }
           }),
         )
-
-      // Coalesce streamed tokens to one render per animation frame so text flows
-      // smoothly instead of janky per-token re-renders.
-      let flushPending = false
+      // flush() shows the FULL text — used by the non-streaming card paths and as
+      // the final render; it also stops any in-flight reveal so nothing is left
+      // half-typed.
+      const flush = () => {
+        shown = acc.length
+        if (revealRaf) { cancelAnimationFrame(revealRaf); revealRaf = 0 }
+        renderMsg(acc)
+      }
+      const reveal = () => {
+        const gap = acc.length - shown
+        if (gap > 0) shown = Math.min(acc.length, shown + Math.max(3, Math.ceil(gap * 0.28)))
+        renderMsg(shown >= acc.length ? acc : acc.slice(0, shown))
+        revealRaf = shown < acc.length ? requestAnimationFrame(reveal) : 0
+      }
       const scheduleFlush = () => {
-        if (flushPending) return
-        flushPending = true
-        requestAnimationFrame(() => {
-          flushPending = false
-          flush()
-        })
+        if (!revealRaf) revealRaf = requestAnimationFrame(reveal)
       }
 
       // Document: build a designed Word/PDF document (business plan, report, …).
@@ -878,7 +885,9 @@ export default function Workspace({ user, onLogout }: Props) {
           ]
         : wire.map((m) => ({ role: m.role, content: m.content }))
       let sawAny = false
-      for (let round = 0; round < 8 && !ctrl.signal.aborted; round++) {
+      // Up to 12 tool rounds so the agent can do genuinely deep, multi-step
+      // research (search → read sources → refine → read more) before answering.
+      for (let round = 0; round < 12 && !ctrl.signal.aborted; round++) {
         const { text, toolCalls } = await streamChat(
           conv,
           model,
@@ -1271,6 +1280,15 @@ export default function Workspace({ user, onLogout }: Props) {
           </div>
         )}
 
+        {view === 'studio' && (
+          <StudioPanel
+            onGenerate={(prompt) => {
+              setView('chat')
+              closeSidebarOnMobile()
+              void send(prompt)
+            }}
+          />
+        )}
         {view === 'projects' && <ProjectsPanel />}
         {view === 'skills' && <SkillsPanel />}
         {view === 'plugins' && <PluginsPanel />}
@@ -1299,17 +1317,6 @@ export default function Workspace({ user, onLogout }: Props) {
                   attachments={(active?.attachments || []).filter((a) => pendingIds.includes(a.id))}
                   onRemoveAttachment={removeAttachment}
                 />
-                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {SUGGESTIONS.map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => void send(s)}
-                      className="text-left text-sm rounded-xl border border-white/[0.18] hover:border-white/20 hover:bg-white/5 px-3.5 py-3 text-[#afafaf] transition-colors"
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
               </div>
             </div>
           ) : (
@@ -1890,6 +1897,9 @@ function Composer({
             <span className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/[0.06] px-2 py-1 text-[11px] text-[#9a9a9a]">
               <Loader2 size={11} className="animate-spin" /> reading…
             </span>
+          )}
+          {attachments.length > 0 && !attaching && (
+            <span className="w-full text-[10px] text-[#6e6e6e]">Kept in this chat for Nalu to reference — cleared from your prompt when you send.</span>
           )}
         </div>
       )}

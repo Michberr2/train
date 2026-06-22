@@ -900,6 +900,82 @@ function genLogoOptions(name: string, initials: string, serif: boolean): LogoOpt
   ]
 }
 
+// AI logo IMAGES (FLUX via keyless Pollinations) — richer designed marks à la
+// Nutlope/logocreator + Arindam200/logo-ai: style presets + brand color + name.
+const LOGO_STYLES: { key: string; label: string; desc: string }[] = [
+  { key: 'minimal', label: 'Minimal', desc: 'minimalist, simple, timeless, refined, elegant negative space' },
+  { key: 'modern', label: 'Modern', desc: 'modern, flat geometric design, clean lines, forward-thinking' },
+  { key: 'tech', label: 'Tech', desc: 'sleek, futuristic, technological, sharp, precise, high-tech' },
+  { key: 'corporate', label: 'Corporate', desc: 'professional, trustworthy, balanced, corporate, refined' },
+  { key: 'luxury', label: 'Luxury', desc: 'elegant, luxurious, premium, sophisticated, refined gold detailing' },
+  { key: 'playful', label: 'Playful', desc: 'playful, friendly, rounded shapes, bright bold colors, fun' },
+  { key: 'abstract', label: 'Abstract', desc: 'abstract, artistic, creative, unique geometric symbol' },
+  { key: 'flashy', label: 'Flashy', desc: 'bold, vibrant, eye-catching, dynamic, striking, energetic' },
+]
+function logoImgUrl(name: string, styleDesc: string, primaryHex: string, seed: number): string {
+  const prompt = `A single iconic logo, high-quality award-winning professional brand design, simple memorable mark, only a few clean vector shapes, ${styleDesc}. Primary brand color #${primaryHex}, on a plain solid white background. The brand name is "${name}" — include the brand name in clean modern typography. Centered, crisp, vector, no mockup, no extra text, no watermark.`
+  return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true&model=flux&seed=${seed}`
+}
+function LogoImages({ name, brand }: { name: string; brand: string }) {
+  const [style, setStyle] = useState('minimal')
+  const [round, setRound] = useState(0)
+  const desc = LOGO_STYLES.find((s) => s.key === style)?.desc || ''
+  const primary = brand.replace(/^#/, '')
+  const seeds = [0, 1, 2].map((n) => 1 + n + round * 3 + style.length * 13)
+  const download = async (url: string, i: number) => {
+    try {
+      const r = await fetch(url)
+      const b = await r.blob()
+      const u = URL.createObjectURL(b)
+      const a = document.createElement('a')
+      a.href = u
+      a.download = `${slug(name, 'nalu-logo')}-${style}-${i + 1}.png`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(u), 4000)
+    } catch {
+      window.open(url, '_blank', 'noopener')
+    }
+  }
+  return (
+    <div className="border-t border-white/[0.08] px-4 py-3">
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8e8e8e]">AI logo images</span>
+        {LOGO_STYLES.map((s) => (
+          <button
+            key={s.key}
+            onClick={() => setStyle(s.key)}
+            className={`rounded px-1.5 py-0.5 text-[10px] ${style === s.key ? 'bg-amber-500/25 text-amber-100' : 'bg-white/10 text-[#bdbdbd] hover:bg-white/20'}`}
+          >
+            {s.label}
+          </button>
+        ))}
+        <button onClick={() => setRound((r) => r + 1)} className="ml-auto rounded px-1.5 py-0.5 text-[10px] text-[#9a9a9a] hover:bg-white/10 hover:text-white">
+          Regenerate
+        </button>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        {seeds.map((sd, i) => {
+          const url = logoImgUrl(name, desc, primary, sd)
+          return (
+            <div key={`${round}-${i}`} className="group relative overflow-hidden rounded-xl border border-white/10 bg-white">
+              <img src={url} alt={`${name} logo`} loading="lazy" className="aspect-square w-full object-contain" onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0.15' }} />
+              <button
+                onClick={() => void download(url, i)}
+                className="absolute bottom-1.5 right-1.5 rounded-md bg-black/55 px-2 py-1 text-[10px] font-medium text-white opacity-0 backdrop-blur transition-opacity group-hover:opacity-100"
+              >
+                Download
+              </button>
+            </div>
+          )
+        })}
+      </div>
+      <div className="mt-1.5 text-[10px] text-[#6f6f6f]">Generated with FLUX (free) · pick a style or regenerate for new options · uses your brand color.</div>
+    </div>
+  )
+}
+
 export function LogoCard({ art }: { art: LogoArt }) {
   // Prefer code-generated options (reliably clean). Legacy artifacts that carry
   // freehand LLM SVG options still render via the same path.
@@ -1025,6 +1101,8 @@ export function LogoCard({ art }: { art: LogoArt }) {
           </div>
         </div>
       </div>
+
+      <LogoImages name={name} brand={brand} />
 
       {colors.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-t border-white/[0.08] px-4 py-3">

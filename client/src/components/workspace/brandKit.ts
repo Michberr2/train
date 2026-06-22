@@ -135,6 +135,79 @@ export function useBrand(): BrandKit | null {
   }, [raw])
 }
 
+// ── Saved palette library ────────────────────────────────────────────────────
+// A library of saved palettes (colors + fonts) the user can switch between from
+// the bar at the bottom of the screen. Uses the `nalu-` prefix so it syncs to
+// the server (Neon) and follows the account across devices.
+export type SavedPalette = BrandKit & { id: string }
+const PALETTES_KEY = 'nalu-palettes'
+const pListeners = new Set<() => void>()
+function pEmit() {
+  pListeners.forEach((l) => l())
+}
+function pSubscribe(cb: () => void): () => void {
+  pListeners.add(cb)
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === PALETTES_KEY) cb()
+  }
+  window.addEventListener('storage', onStorage)
+  return () => {
+    pListeners.delete(cb)
+    window.removeEventListener('storage', onStorage)
+  }
+}
+export function getPalettes(): SavedPalette[] {
+  try {
+    const raw = localStorage.getItem(PALETTES_KEY)
+    const a = raw ? JSON.parse(raw) : []
+    return Array.isArray(a) ? a : []
+  } catch {
+    return []
+  }
+}
+function setPalettes(list: SavedPalette[]): void {
+  try {
+    localStorage.setItem(PALETTES_KEY, JSON.stringify(list.slice(0, 30)))
+  } catch {
+    /* ignore */
+  }
+  pEmit()
+}
+const sigOf = (b: BrandKit) => `${b.primary}-${b.accent}-${b.dark}-${b.text}`.toLowerCase()
+/** Save a palette (defaults to the active brand) into the library. */
+export function savePalette(b: BrandKit): SavedPalette {
+  const id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+  const item: SavedPalette = { ...b, id, name: b.name || 'Palette' }
+  // de-dup by the four core colors so saving twice doesn't pile up
+  const rest = getPalettes().filter((p) => sigOf(p) !== sigOf(b))
+  setPalettes([item, ...rest])
+  return item
+}
+export function deletePalette(id: string): void {
+  setPalettes(getPalettes().filter((p) => p.id !== id))
+}
+/** Live React subscription to the saved-palette library. */
+export function usePalettes(): SavedPalette[] {
+  const raw = useSyncExternalStore(
+    pSubscribe,
+    () => {
+      try {
+        return localStorage.getItem(PALETTES_KEY)
+      } catch {
+        return null
+      }
+    },
+    () => null,
+  )
+  return useMemo(() => {
+    try {
+      return raw ? (JSON.parse(raw) as SavedPalette[]) : []
+    } catch {
+      return []
+    }
+  }, [raw])
+}
+
 type PColor = { role?: string; hex: string }
 
 function fromColors(colors: PColor[], name?: string, fonts?: { heading?: string; body?: string }): BrandKit | null {
