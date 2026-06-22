@@ -18,13 +18,21 @@
   .dark {
     --color-background: 13 13 13;
     --color-surface: 26 26 26;
-    --color-primary: 240 240 240;
+    --color-primary: 255 255 255;
     --color-secondary: 160 160 160;
     --color-tertiary: 120 120 120;
-    --color-nav-text: 106 106 106;
+    --color-nav-text: 176 176 176;
     --color-accent-blue: 107 159 255;
     --color-border-gray: 42 42 42;
     --color-curve-line: 51 51 51;
+  }
+
+  html,
+  body {
+    /* Stray decorative elements (hero curves, orbit graphics) can extend a few
+       px past the viewport — never let that create a horizontal scrollbar. */
+    overflow-x: hidden;
+    max-width: 100%;
   }
 
   body {
@@ -96,4 +104,17 @@
 .theme-transitioning *::before,
 .theme-transitioning *::after {
   transition: color 500ms ease, background-color 500ms ease, border-color 500ms ease, box-shadow 500ms ease, fill 500ms ease, stroke 500ms ease !important;
+}
+
+/* KaTeX math: keep long display formulas scrollable, inherit light text */
+.markdown-body .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.markdown-body .katex { color: #ededed; }
+
+/* Streaming caret — a soft gold blink trailing the live answer. */
+@keyframes nalu-blink { 0%, 100% { opacity: 1 } 50% { opacity: 0 } }
+.streaming-caret::after {
+  content: '▍';
+  color: #af8c56;
+  margin-left: 1px;
+  animation: nalu-blink 1s steps(1) infinite;
 }

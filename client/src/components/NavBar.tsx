@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Sun, Moon, MousePointer2 } from 'lucide-react'
 import { useTheme } from './ThemeProvider'
+import { useAuth } from './AuthProvider'
 
 interface NavBarProps {
   activeIndex: number
@@ -21,6 +22,7 @@ const navItems = [
 export default function NavBar({ activeIndex, setActiveIndex, onControlScreen, controlActive }: NavBarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const { isDark, toggleTheme } = useTheme()
+  const { user, signOut, openAuth } = useAuth()
 
   const handleNavClick = (index: number) => {
     setActiveIndex(index)
@@ -87,6 +89,27 @@ export default function NavBar({ activeIndex, setActiveIndex, onControlScreen, c
             <MousePointer2 size={14} className="rotate-[-12deg]" fill="currentColor" strokeWidth={1.4} />
             Control Screen
           </motion.button>
+        )}
+
+        {user ? (
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:inline-flex items-center h-11 px-3 rounded-lg bg-border-gray/60 border border-border-gray text-primary text-xs font-medium max-w-[140px] truncate">
+              {user.displayName}
+            </span>
+            <button
+              onClick={signOut}
+              className="inline-flex items-center h-11 px-3.5 rounded-lg bg-border-gray/60 border border-border-gray text-primary text-xs font-medium hover:bg-border-gray transition-colors"
+            >
+              Sign out
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => openAuth('signin')}
+            className="inline-flex items-center h-11 px-3.5 rounded-lg bg-border-gray/60 border border-border-gray text-primary text-xs font-medium hover:bg-border-gray transition-colors"
+          >
+            Sign in
+          </button>
         )}
 
         <button

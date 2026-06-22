@@ -9,10 +9,25 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@types/three": "^0.184.1",
+    "docx": "^9.7.1",
+    "fabric": "^6.9.1",
     "framer-motion": "^10.16.5",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
+    "jszip": "^3.10.1",
+    "katex": "^0.17.0",
     "lucide-react": "^0.292.0",
+    "pdfjs-dist": "^4.10.38",
+    "pptxgenjs": "^4.0.1",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "react-markdown": "^9.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "three": "^0.184.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",

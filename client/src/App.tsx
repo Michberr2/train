@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import NavBar from './components/NavBar'
 import HeroSection from './components/HeroSection'
-import EmailCapture from './components/EmailCapture'
+import AuthPanel from './components/AuthPanel'
 import BallAndLine from './components/BallAndLine'
 import WolfHead from './components/WolfHead'
 import PlatformSection from './components/PlatformSection'
@@ -11,6 +11,8 @@ import PricingSection from './components/PricingSection'
 import LearnSection from './components/LearnSection'
 import LoadingScreen from './components/LoadingScreen'
 import ControlScreenDemo from './components/ControlScreenDemo'
+import Workspace from './components/workspace/Workspace'
+import { useAuth } from './components/AuthProvider'
 
 const TOTAL_PAGES = 5
 const LOADING_MIN_MS = 1200
@@ -25,6 +27,7 @@ const PRELOAD_IMAGES = [
 ]
 
 export default function App() {
+  const { user, signOut } = useAuth()
   const [activeIndex, setActiveIndex] = useState(0)
   const [direction, setDirection] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
@@ -146,10 +149,10 @@ export default function App() {
     exit: (dir: number) => ({ opacity: 0, y: dir > 0 ? -40 : 40, filter: 'blur(8px)' }),
   }
 
-  // EmailCapture still calls onAdminUnlock with the entered email — we just
-  // ignore it now that there's no Dashboard to unlock. Could remove the
-  // prop, but keeping it lets EmailCapture stay 100% unchanged.
-  const noop = useCallback(() => {}, [])
+  // Signed in → the Nalu (Codex-style) workspace. Signed out → the landing pages.
+  if (user) {
+    return <Workspace user={user} onLogout={signOut} />
+  }
 
   return (
     <>
@@ -185,10 +188,7 @@ export default function App() {
               <div className="h-28 md:h-32 flex-shrink-0" />
               <div className="flex-1 flex flex-col items-center justify-center max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
                 <HeroSection />
-                <EmailCapture
-                  setActiveIndex={handleSetActiveIndex}
-                  onAdminUnlock={noop}
-                />
+                <AuthPanel setActiveIndex={handleSetActiveIndex} />
               </div>
             </div>
           )}
@@ -211,6 +211,13 @@ export default function App() {
           />
         ))}
       </div>
+
+        <a
+          href="/privacy.html"
+          className="absolute bottom-5 right-5 z-20 text-[11px] text-nav-text/70 hover:text-primary transition-colors"
+        >
+          Privacy
+        </a>
 
         <WolfHead />
         <BallAndLine />

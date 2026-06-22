@@ -4,5 +4,13 @@ build
 .env
 .env.local
 *.log
+*.tsbuildinfo
 .DS_Store
 .vercel
+.env*.local
+
+# Playwright test studio
+node_modules/
+tests/.report/
+test-results/
+playwright-report/

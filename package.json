@@ -7,6 +7,17 @@
   ],
   "scripts": {
     "dev": "npm --workspace client run dev",
-    "build": "npm --workspace client run build"
+    "build": "npm --workspace client run build",
+    "studio": "playwright test",
+    "studio:smoke": "playwright test --grep @smoke",
+    "studio:full": "STUDIO_FULL=1 playwright test",
+    "studio:report": "playwright show-report tests/.report"
+  },
+  "dependencies": {
+    "pg": "^8.21.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.11.3",
+    "@playwright/test": "^1.49.0"
   }
 }
