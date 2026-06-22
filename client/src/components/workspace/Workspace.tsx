@@ -175,8 +175,12 @@ function isSheetPrompt(text: string): boolean {
 
 // Detect "write me a business plan / report / proposal" → route to the doc builder.
 const DOC_INTENT =
-  /\b(business plan|marketing plan|project plan|word document|word doc|\.docx|report|proposal|white ?paper|cover letter|résumé|resume|\bcv\b|memo|press release|essay|document)\b|^\/(doc|word)\b|\b(write|draft|create|build|make|generate)\b[^.?!]*\b(plan|report|proposal|essay|letter|document|memo|brief|whitepaper)\b/i
+  /\b(business plan|marketing plan|project plan|word document|word doc|google doc|\.docx|report|proposal|white ?paper|cover letter|résumé|resume|\bcv\b|memo|press release|essay|write-?up|one ?pager|document)\b|^\/(doc|word)\b|\b(write|draft|create|build|make|generate|do|put together|prepare|whip up)\b[^.?!]*\b(plan|report|proposal|essay|letter|documents?|docs?|memos?|brief|white ?paper|whitepaper|pdf|article|write-?up|one ?pager)\b/i
+// A leading question word ("what is a business plan", "explain the report") is an
+// explanation ask, not a build request — keep those in normal chat.
+const QUESTION_LEAD = /^\s*(what|explain|tell me|how (?:do|does|can|to)|why|define|who\b|when\b|where\b|can you explain)/i
 function isDocPrompt(text: string): boolean {
+  if (QUESTION_LEAD.test(text)) return false
   return DOC_INTENT.test(text)
 }
 
