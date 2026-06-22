@@ -31,6 +31,7 @@ import {
   ChevronLeft,
   Shield,
   MapPin,
+  Sparkles,
 } from 'lucide-react'
 import { streamChat, type WireMessage } from './agentApi'
 import { lazy, Suspense } from 'react'
@@ -242,6 +243,30 @@ function designKind(text: string): DesignKind | null {
   if (MOTION_INTENT.test(text)) return 'motion'
   if (CANVAS_INTENT.test(text)) return 'canvas'
   if (isDesignPrompt(text)) return /\b(poster|infographic)\b/i.test(text) ? 'poster' : 'webpage'
+  return null
+}
+
+// Live intent detection for the prompt bar — mirrors send()'s exact routing
+// order (doc → slides → cad → designKind → sheet → video → image) so the chip
+// shown as you type matches what will actually be built.
+const KIND_LABEL: Record<string, string> = {
+  webpage: 'Website', poster: 'Poster', canvas: 'Canvas', palette: 'Palette',
+  brand: 'Brand book', blueprint: 'Blueprint', logo: 'Logo', shopping: 'Shopping list', motion: 'Motion graphic',
+}
+export function detectIntent(text: string): string | null {
+  const t = text.trim()
+  if (t.length < 4) return null
+  if (isDocPrompt(t) && !isSheetPrompt(t)) return 'Document'
+  if (isSlidesPrompt(t)) return 'PowerPoint'
+  if (isCadPrompt(t)) return '3D model'
+  const k = designKind(t)
+  if (k) {
+    if (k === 'blueprint' && WALKTHROUGH_INTENT.test(t) && !BLUEPRINT_INTENT.test(t)) return '3D walkthrough'
+    return KIND_LABEL[k] || 'Design'
+  }
+  if (isSheetPrompt(t)) return 'Spreadsheet'
+  if (isVideoPrompt(t)) return 'Video'
+  if (isImagePrompt(t)) return 'Image'
   return null
 }
 
@@ -1918,8 +1943,18 @@ function Composer({
   onRemoveAttachment: (id: string) => void
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
+  const intent = detectIntent(input)
   return (
-    <div className="rounded-2xl border border-white/[0.14] bg-white/[0.11] backdrop-blur-2xl px-3 py-2.5 focus-within:border-white/20 transition-colors">
+    <div className={`rounded-2xl border bg-white/[0.11] backdrop-blur-2xl px-3 py-2.5 transition-colors ${intent ? 'border-[#AF8C56]/55 shadow-[0_0_0_1px_rgba(175,140,86,0.25)]' : 'border-white/[0.14] focus-within:border-white/20'}`}>
+      {/* Live intent — highlights what this prompt will build. */}
+      {intent && (
+        <div className="mb-2 flex items-center gap-1.5">
+          <span className="flex items-center gap-1.5 rounded-full border border-[#AF8C56]/40 bg-[#AF8C56]/15 px-2.5 py-1 text-[11px] font-medium text-[#e2c896]">
+            <Sparkles size={11} /> Creating: {intent}
+          </span>
+          <span className="text-[10px] text-[#6e7686]">press Enter to build</span>
+        </div>
+      )}
       {/* Attached files — shown right in the prompt so you can see they're there. */}
       {(attachments.length > 0 || attaching) && (
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
