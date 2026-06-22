@@ -29,16 +29,14 @@ where each Block is one of:
   {"type":"table","columns":[string],"rows":[[string]]}
   {"type":"chart","chart":{"type":"bar|line|pie","title":string,"labels":[string],"series":[{"name":string,"values":[number]}]}}
 
-DEPTH — this is critical. Produce a LONG, comprehensive, consulting-grade document, not a summary:
-- Include 1–2 "chart" blocks visualizing real statistics (market sizing, growth, revenue projections, segment share, KPIs) with specific, internally-consistent numbers — place each chart near the section that discusses it.
-- Aim for 6–9 major (level-1) sections, each with 1–2 sub-sections where it helps.
-- Write 2–4 full, substantive paragraphs per sub-section — real analysis, specific numbers, named examples, concrete detail. NEVER one-liners, never filler, never lorem ipsum.
-- Include MULTIPLE tables with real data: financial projections (3–5 year P&L), unit economics, market sizing (TAM/SAM/SOM), competitor comparison, timelines/milestones, KPIs, pricing tiers, risk register.
-- Use bullets for crisp lists, but prefer rich paragraphs for analysis.
-- Open with a real Executive Summary (3–5 paragraphs).
-- A business plan must cover: Executive Summary, Company Overview, Problem & Opportunity, Market Analysis (with sizing), Product/Service, Business Model & Pricing, Go-to-Market & Sales, Operations, Technology, Management & Org, Competitive Landscape, Financial Plan (projections + assumptions), Funding Ask & Use of Funds, Milestones & Roadmap, Risks & Mitigations.
-- Adapt the section set to whatever document type is asked (report, proposal, white paper, memo) but keep the same depth bar.
-- "subtitle" may be an empty string. Be exhaustive, specific, and genuinely useful — this should read like a $25k consulting deliverable.`
+DEPTH — thorough and professional, but COMPLETE and never cut off (this matters more than length):
+- 5–7 major (level-1) sections. Open with a concise Executive Summary (2–3 paragraphs).
+- 1–3 substantive paragraphs per section — real analysis with specific numbers and named examples. No one-liners, no filler, no lorem ipsum.
+- Include exactly 1 "chart" block (real, internally-consistent numbers) and 2–3 "table" blocks with real data (e.g. financial projections, market sizing, competitor comparison, milestones, KPIs).
+- Use bullets for crisp lists; prefer rich paragraphs for analysis.
+- Adapt sections to the document type. A business plan typically covers: Executive Summary, Market & Opportunity, Product/Service, Business Model & Pricing, Go-to-Market, Financial Plan, Milestones, Risks.
+- "subtitle" may be an empty string.
+CRITICAL: the output MUST be a single COMPLETE, valid minified JSON object — finish every block and close all brackets/quotes. If you are running long, wrap up and close the JSON rather than getting cut off. Favor a complete document over an extra section.`
 
 function repairJson(s: string): string {
   let inStr = false
@@ -101,28 +99,32 @@ export default async function handler(req: any, res: any) {
     return
   }
 
-  try {
+  // Generate once; if the JSON can't be parsed (rare truncation), retry once
+  // with a slightly tighter nudge — so docs don't intermittently fail.
+  const gen = async (extra: string): Promise<{ title?: string; subtitle?: string; cover?: string; blocks?: unknown[] } | null> => {
     const upstream = await fetch(`${LLM_BASE}/chat/completions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${LLM_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: LLM_MODEL,
         stream: false,
-        max_tokens: 8000,
+        max_tokens: 11000, // headroom so a full document never truncates
         messages: [
-          { role: 'system', content: SYSTEM },
+          { role: 'system', content: SYSTEM + extra },
           { role: 'user', content: prompt },
         ],
       }),
     })
-    if (!upstream.ok) {
-      const t = await upstream.text().catch(() => '')
-      res.status(502).json({ error: `Doc upstream ${upstream.status}: ${t.slice(0, 200)}` })
-      return
-    }
+    if (!upstream.ok) throw new Error(`Doc upstream ${upstream.status}: ${(await upstream.text().catch(() => '')).slice(0, 200)}`)
     const d = (await upstream.json()) as { choices?: Array<{ message?: { content?: string } }> }
-    const content = d?.choices?.[0]?.message?.content || ''
-    const parsed = extractJson(content) as { title?: string; subtitle?: string; cover?: string; blocks?: unknown[] } | null
+    return extractJson(d?.choices?.[0]?.message?.content || '') as { title?: string; subtitle?: string; cover?: string; blocks?: unknown[] } | null
+  }
+
+  try {
+    let parsed = await gen('')
+    if (!parsed || !Array.isArray(parsed.blocks) || parsed.blocks.length === 0) {
+      parsed = await gen('\n\nIMPORTANT: keep it focused (5–6 sections) and ensure the JSON is COMPLETE and valid — do not get cut off.')
+    }
     if (!parsed || !Array.isArray(parsed.blocks) || parsed.blocks.length === 0) {
       res.status(502).json({ error: 'Could not build the document. Try rephrasing.' })
       return
