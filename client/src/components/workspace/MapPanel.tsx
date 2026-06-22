@@ -71,10 +71,11 @@ function tileToBbox3857(x: number, y: number, z: number): [number, number, numbe
   const s = (2 * R) / n
   return [-R + x * s, R - (y + 1) * s, -R + (x + 1) * s, R - y * s]
 }
-type LayerDef = { key: string; label: string; desc: string; base: string; layers: string; opacity: number }
+type LayerDef = { key: string; label: string; desc: string; base: string; layers: string; opacity: number; minZoom: number }
 const LAYERS: LayerDef[] = [
-  { key: 'flood', label: 'FEMA flood zones', desc: 'National Flood Hazard Layer', base: 'https://hazards.fema.gov/gis/nfhl/rest/services/public/NFHL/MapServer', layers: '28', opacity: 0.55 },
-  { key: 'wetlands', label: 'Wetlands', desc: 'USFWS National Wetlands Inventory', base: 'https://www.fws.gov/wetlandsmapservice/rest/services/Wetlands/MapServer', layers: '0', opacity: 0.6 },
+  // FEMA NFHL flood hazard zones — the key regulatory layer for real estate.
+  // Only renders zoomed in (minScale ~1:36k), so we auto-zoom when toggled on.
+  { key: 'flood', label: 'FEMA flood zones', desc: 'National Flood Hazard Layer · zoom into a neighborhood', base: 'https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer', layers: '28', opacity: 0.6, minZoom: 13 },
 ]
 function makeOverlay(g: GMaps, def: LayerDef): GMaps {
   return new g.maps.ImageMapType({
@@ -135,6 +136,8 @@ export default function MapPanel() {
       const ov = makeOverlay(g, def)
       overlaysRef.current[key] = ov
       mapRef.current.overlayMapTypes.push(ov)
+      // The layer is scale-dependent — zoom in so it's actually visible.
+      if (mapRef.current.getZoom() < def.minZoom) mapRef.current.setZoom(def.minZoom)
     } else {
       const ov = overlaysRef.current[key]
       const idx = mapRef.current.overlayMapTypes.getArray().indexOf(ov)
