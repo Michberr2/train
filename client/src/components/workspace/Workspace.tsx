@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Trash2,
   FolderGit2,
+  FolderInput,
   type LucideIcon,
 } from 'lucide-react'
 import {
@@ -456,6 +457,13 @@ export default function Workspace({ user, onLogout }: Props) {
   const deleteChat = useCallback((id: string) => {
     setChats((cs) => cs.filter((c) => c.id !== id))
     setActiveId((cur) => (cur === id ? null : cur))
+  }, [])
+
+  // Move a chat into a project (or out, projectId = null).
+  const [chatMenu, setChatMenu] = useState<string | null>(null) // which chat's "move" menu is open
+  const moveChatToProject = useCallback((chatId: string, projectId: string | null) => {
+    setChats((cs) => cs.map((c) => (c.id === chatId ? { ...c, projectId: projectId ?? undefined } : c)))
+    setChatMenu(null)
   }, [])
 
   // ---- Attachments + Notes (per chat, referenced by the AI) ----------------
@@ -1121,16 +1129,42 @@ export default function Workspace({ user, onLogout }: Props) {
                   >
                     <MessageSquare size={14} className="text-[#8e8e8e] shrink-0" />
                     <span className="truncate flex-1">{c.title}</span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        deleteChat(c.id)
-                      }}
-                      className="opacity-0 group-hover:opacity-100 text-[#8e8e8e] hover:text-white transition-opacity"
-                      aria-label="Delete chat"
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                    <div className="relative flex items-center gap-1">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setChatMenu((m) => (m === c.id ? null : c.id)) }}
+                        className={`shrink-0 text-[#8e8e8e] hover:text-white transition-opacity ${chatMenu === c.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                        title="Move to project"
+                        aria-label="Move to project"
+                      >
+                        <FolderInput size={13} />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteChat(c.id) }}
+                        className="opacity-0 group-hover:opacity-100 text-[#8e8e8e] hover:text-white transition-opacity shrink-0"
+                        aria-label="Delete chat"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                      {chatMenu === c.id && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setChatMenu(null) }} />
+                          <div className="absolute right-0 top-6 z-50 w-44 overflow-hidden rounded-lg border border-white/15 bg-[#13151b] py-1 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                            <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-[#6e6e6e]">Move to</div>
+                            <button onClick={() => moveChatToProject(c.id, null)}
+                              className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-white/10 ${!c.projectId ? 'text-[#c9b891]' : 'text-[#cfcfcf]'}`}>
+                              <MessageSquare size={12} /> No project
+                            </button>
+                            {projects.map((p) => (
+                              <button key={p.id} onClick={() => moveChatToProject(c.id, p.id)}
+                                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-white/10 ${c.projectId === p.id ? 'text-[#c9b891]' : 'text-[#cfcfcf]'}`}>
+                                <FolderGit2 size={12} className="text-[#c9b891]" /> <span className="truncate">{p.name}</span>
+                              </button>
+                            ))}
+                            {projects.length === 0 && <div className="px-3 py-1.5 text-[11px] text-[#6e6e6e]">No projects yet</div>}
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
                   {/* When this chat is active, its files + notes live right under it. */}
                   {c.id === activeId && (

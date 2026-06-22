@@ -68,7 +68,35 @@ export function installSync(): void {
   }
 }
 
-/** Hydrate localStorage from the server (server is source of truth on login). */
+// Chats/projects are MERGED (union) with whatever is already local, never
+// blindly overwritten — so a not-yet-synced chat (e.g. created seconds before a
+// hard refresh) is never wiped by a staler server copy. The richer version of a
+// chat (more messages) wins.
+const origGet = localStorage.getItem.bind(localStorage)
+const safeArr = (s: string | null): Record<string, unknown>[] => {
+  try { const a = s ? JSON.parse(s) : []; return Array.isArray(a) ? a : [] } catch { return [] }
+}
+function mergeChats(localStr: string | null, serverStr: string): string {
+  const byId = new Map<string, Record<string, unknown>>()
+  for (const c of safeArr(serverStr)) if (c && c.id) byId.set(String(c.id), c)
+  for (const c of safeArr(localStr)) {
+    if (!c || !c.id) continue
+    const ex = byId.get(String(c.id))
+    const lm = Array.isArray(c.messages) ? c.messages.length : 0
+    const em = ex && Array.isArray(ex.messages) ? ex.messages.length : -1
+    if (!ex || lm >= em) byId.set(String(c.id), c) // local (usually newer) wins ties
+  }
+  const merged = [...byId.values()].sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+  return JSON.stringify(merged)
+}
+function mergeProjects(localStr: string | null, serverStr: string): string {
+  const byId = new Map<string, Record<string, unknown>>()
+  for (const p of safeArr(serverStr)) if (p && p.id) byId.set(String(p.id), p)
+  for (const p of safeArr(localStr)) if (p && p.id) byId.set(String(p.id), p) // local wins (renames)
+  return JSON.stringify([...byId.values()])
+}
+
+/** Hydrate localStorage from the server, MERGING chats/projects so nothing is lost. */
 export async function loadFromServer(): Promise<void> {
   const token = getToken()
   if (!token) return
@@ -82,10 +110,18 @@ export async function loadFromServer(): Promise<void> {
     if (json?.data && typeof json.data === 'object') {
       for (const [k, v] of Object.entries(json.data)) {
         if (v == null) continue
-        origSet(k, typeof v === 'string' ? v : JSON.stringify(v))
+        const sv = typeof v === 'string' ? v : JSON.stringify(v)
+        if (k === 'nalu-chats') origSet(k, mergeChats(origGet(k), sv))
+        else if (k === 'nalu-chat-projects') origSet(k, mergeProjects(origGet(k), sv))
+        else origSet(k, sv)
       }
     }
     hydrated = true // server is now the confirmed source of truth — safe to sync
+    // Converge the server to the merged superset (in case local had unsynced chats).
+    for (const k of ['nalu-chats', 'nalu-chat-projects']) {
+      const v = origGet(k)
+      if (v) schedule(k, v)
+    }
   } catch {
     // offline / first run — proceed with whatever's local, but keep `hydrated`
     // false so we don't overwrite the server with a possibly-empty local state.
