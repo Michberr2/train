@@ -913,8 +913,39 @@ const LOGO_STYLES: { key: string; label: string; desc: string }[] = [
   { key: 'flashy', label: 'Flashy', desc: 'bold, vibrant, eye-catching, dynamic, striking, energetic' },
 ]
 function logoImgUrl(name: string, styleDesc: string, primaryHex: string, seed: number): string {
-  const prompt = `A single iconic logo, high-quality award-winning professional brand design, simple memorable mark, only a few clean vector shapes, ${styleDesc}. Primary brand color #${primaryHex}, on a plain solid white background. The brand name is "${name}" — include the brand name in clean modern typography. Centered, crisp, vector, no mockup, no extra text, no watermark.`
+  // Prompt tuned for clean, real-looking logos (à la logocreator): few shapes,
+  // flat vector, the brand name, on white.
+  const prompt = `professional logo design, a single ${styleDesc} logo for a brand called "${name}", flat vector, simple iconic memorable mark with the brand name "${name}" in clean modern typography, primary color #${primaryHex}, solid white background, centered, high quality, award-winning, for print and digital, no mockup, no watermark, no photo`
   return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true&model=flux&seed=${seed}`
+}
+// One generated logo with its own loading state (FLUX takes a few seconds per
+// new seed) so it reads as "designing", never as a broken blank box.
+function LogoImg({ url, alt, onDownload }: { url: string; alt: string; onDownload: () => void }) {
+  const [state, setState] = useState<'loading' | 'done' | 'error'>('loading')
+  return (
+    <div className="group relative aspect-square overflow-hidden rounded-xl border border-white/10 bg-white">
+      {state !== 'done' && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-white">
+          {state === 'loading' ? (
+            <>
+              <span className="h-6 w-6 animate-spin rounded-full border-2 border-black/15 border-t-[#AF8C56]" />
+              <span className="text-[10px] text-black/40">Designing…</span>
+            </>
+          ) : (
+            <span className="text-[10px] text-black/40">Tap Regenerate</span>
+          )}
+        </div>
+      )}
+      <img src={url} alt={alt} loading="lazy" onLoad={() => setState('done')} onError={() => setState('error')}
+        className={`h-full w-full object-contain ${state === 'done' ? 'opacity-100' : 'opacity-0'}`} />
+      {state === 'done' && (
+        <button onClick={onDownload}
+          className="absolute bottom-1.5 right-1.5 rounded-md bg-black/55 px-2 py-1 text-[10px] font-medium text-white opacity-0 backdrop-blur transition-opacity group-hover:opacity-100">
+          Download
+        </button>
+      )}
+    </div>
+  )
 }
 function LogoImages({ name, brand }: { name: string; brand: string }) {
   const [style, setStyle] = useState('minimal')
@@ -958,20 +989,10 @@ function LogoImages({ name, brand }: { name: string; brand: string }) {
       <div className="grid grid-cols-3 gap-3">
         {seeds.map((sd, i) => {
           const url = logoImgUrl(name, desc, primary, sd)
-          return (
-            <div key={`${round}-${i}`} className="group relative overflow-hidden rounded-xl border border-white/10 bg-white">
-              <img src={url} alt={`${name} logo`} loading="lazy" className="aspect-square w-full object-contain" onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = '0.15' }} />
-              <button
-                onClick={() => void download(url, i)}
-                className="absolute bottom-1.5 right-1.5 rounded-md bg-black/55 px-2 py-1 text-[10px] font-medium text-white opacity-0 backdrop-blur transition-opacity group-hover:opacity-100"
-              >
-                Download
-              </button>
-            </div>
-          )
+          return <LogoImg key={`${round}-${style}-${i}`} url={url} alt={`${name} logo`} onDownload={() => void download(url, i)} />
         })}
       </div>
-      <div className="mt-1.5 text-[10px] text-[#6f6f6f]">Generated with FLUX (free) · pick a style or regenerate for new options · uses your brand color.</div>
+      <div className="mt-1.5 text-[10px] text-[#6f6f6f]">Real designed logos generated with FLUX (free) — first render takes a few seconds. Pick a style or Regenerate for new options; uses your brand color.</div>
     </div>
   )
 }
