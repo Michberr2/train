@@ -284,6 +284,32 @@ async function placesSearch(query: string, near: string): Promise<unknown> {
   }
 }
 
+// Proxy a generated image (Pollinations/FLUX) SERVER-SIDE with retries + backoff,
+// returning the bytes as a data URL — so logo images reliably succeed instead of
+// the client hammering a rate-limited service. Restricted to the image host.
+async function proxyImage(url: string): Promise<{ dataUrl?: string; error?: string }> {
+  if (!/^https:\/\/image\.pollinations\.ai\//.test(url)) return { error: 'unsupported image url' }
+  for (let attempt = 0; attempt < 8; attempt++) {
+    // Later attempts swap FLUX → the faster/more-available "turbo" model as a fallback.
+    const u = attempt >= 3 ? url.replace(/model=flux/i, 'model=turbo') : url
+    try {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), 40000)
+      const r = await fetch(u, { headers: { 'User-Agent': UA }, signal: ctrl.signal })
+      clearTimeout(t)
+      const ct = r.headers.get('content-type') || ''
+      if (r.ok && ct.startsWith('image/')) {
+        const buf = Buffer.from(await r.arrayBuffer())
+        if (buf.length > 1500) return { dataUrl: `data:${ct};base64,${buf.toString('base64')}` }
+      }
+    } catch {
+      /* transient — retry */
+    }
+    await new Promise((res) => setTimeout(res, 700 * (attempt + 1))) // growing backoff
+  }
+  return { error: 'image generation failed after retries' }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -310,6 +336,10 @@ export default async function handler(req: any, res: any) {
         return
       }
       res.status(200).json(await fetchPage(url))
+      return
+    }
+    if (action === 'proxyimg') {
+      res.status(200).json(await proxyImage(typeof body.url === 'string' ? body.url : ''))
       return
     }
     const query = typeof body.query === 'string' ? body.query.trim() : ''

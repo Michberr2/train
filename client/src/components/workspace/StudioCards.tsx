@@ -918,20 +918,48 @@ function logoImgUrl(name: string, styleDesc: string, primaryHex: string, seed: n
   const prompt = `professional logo design, a single ${styleDesc} logo for a brand called "${name}", flat vector, simple iconic memorable mark with the brand name "${name}" in clean modern typography, primary color #${primaryHex}, solid white background, centered, high quality, award-winning, for print and digital, no mockup, no watermark, no photo`
   return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true&model=flux&seed=${seed}`
 }
-// One generated logo with its own loading state (FLUX takes a few seconds per
-// new seed) so it reads as "designing", never as a broken blank box.
-function LogoImg({ url, alt, onDownload, delay }: { url: string; alt: string; onDownload: () => void; delay: number }) {
-  const [state, setState] = useState<'loading' | 'done' | 'error'>('loading')
-  const [tries, setTries] = useState(0)
-  const [go, setGo] = useState(delay === 0)
-  // Stagger the initial load a touch so 3 FLUX requests don't burst at once.
-  useEffect(() => { if (delay) { const t = setTimeout(() => setGo(true), delay); return () => clearTimeout(t) } }, [delay])
-  const src = go ? (tries === 0 ? url : `${url}&r=${tries}`) : ''
-  const onErr = () => {
-    if (tries < 3) { setState('loading'); setTimeout(() => setTries((t) => t + 1), 1500) } // self-heal transient failures
-    else setState('error')
+// Serial gate: only ONE logo-image request is ever in flight (across all slots),
+// so FLUX never gets a concurrent burst that triggers rate-limiting. Each request
+// goes through the SERVER proxy (which retries FLUX/turbo with backoff and
+// returns the bytes), so it reliably resolves to a real image.
+let imgGate: Promise<unknown> = Promise.resolve()
+async function fetchLogoImage(url: string): Promise<string> {
+  const run = async (): Promise<string> => {
+    for (let t = 0; t < 2; t++) {
+      try {
+        const r = await fetch('/api/web', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'proxyimg', url: t === 0 ? url : `${url}&r=${t}` }),
+        })
+        const d = (await r.json()) as { dataUrl?: string }
+        if (d.dataUrl) return d.dataUrl
+      } catch { /* retry */ }
+    }
+    return ''
   }
-  const retry = () => { setState('loading'); setTries((t) => t + 1) }
+  const p = imgGate.then(run, run)
+  imgGate = p.then(() => {}, () => {}) // keep the chain alive regardless of outcome
+  return p
+}
+
+function LogoImg({ url, alt, filename }: { url: string; alt: string; filename: string }) {
+  const [state, setState] = useState<'loading' | 'done' | 'error'>('loading')
+  const [data, setData] = useState('')
+  const [nonce, setNonce] = useState(0)
+  useEffect(() => {
+    let alive = true
+    setState('loading')
+    fetchLogoImage(url).then((d) => {
+      if (!alive) return
+      if (d) { setData(d); setState('done') } else setState('error')
+    })
+    return () => { alive = false }
+  }, [url, nonce])
+  const download = () => {
+    const a = document.createElement('a')
+    a.href = data; a.download = filename
+    document.body.appendChild(a); a.click(); a.remove()
+  }
   return (
     <div className="group relative aspect-square overflow-hidden rounded-xl border border-white/10 bg-white">
       {state !== 'done' && (
@@ -942,16 +970,13 @@ function LogoImg({ url, alt, onDownload, delay }: { url: string; alt: string; on
               <span className="text-[10px] text-black/40">Designing…</span>
             </>
           ) : (
-            <button onClick={retry} className="rounded-md bg-black/5 px-2 py-1 text-[10px] text-black/50 hover:bg-black/10">Retry</button>
+            <button onClick={() => setNonce((n) => n + 1)} className="rounded-md bg-black/5 px-2 py-1 text-[10px] text-black/50 hover:bg-black/10">Retry</button>
           )}
         </div>
       )}
-      {src && (
-        <img key={tries} src={src} alt={alt} loading="lazy" onLoad={() => setState('done')} onError={onErr}
-          className={`h-full w-full object-contain ${state === 'done' ? 'opacity-100' : 'opacity-0'}`} />
-      )}
+      {state === 'done' && <img src={data} alt={alt} className="h-full w-full object-contain" />}
       {state === 'done' && (
-        <button onClick={onDownload}
+        <button onClick={download}
           className="absolute bottom-1.5 right-1.5 rounded-md bg-black/55 px-2 py-1 text-[10px] font-medium text-white opacity-0 backdrop-blur transition-opacity group-hover:opacity-100">
           Download
         </button>
@@ -965,22 +990,6 @@ function LogoImages({ name, brand }: { name: string; brand: string }) {
   const desc = LOGO_STYLES.find((s) => s.key === style)?.desc || ''
   const primary = brand.replace(/^#/, '')
   const seeds = [0, 1, 2].map((n) => 1 + n + round * 3 + style.length * 13)
-  const download = async (url: string, i: number) => {
-    try {
-      const r = await fetch(url)
-      const b = await r.blob()
-      const u = URL.createObjectURL(b)
-      const a = document.createElement('a')
-      a.href = u
-      a.download = `${slug(name, 'nalu-logo')}-${style}-${i + 1}.png`
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      setTimeout(() => URL.revokeObjectURL(u), 4000)
-    } catch {
-      window.open(url, '_blank', 'noopener')
-    }
-  }
   return (
     <div className="border-t border-white/[0.08] px-4 py-3">
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
@@ -1001,7 +1010,7 @@ function LogoImages({ name, brand }: { name: string; brand: string }) {
       <div className="grid grid-cols-3 gap-3">
         {seeds.map((sd, i) => {
           const url = logoImgUrl(name, desc, primary, sd)
-          return <LogoImg key={`${round}-${style}-${i}`} url={url} alt={`${name} logo`} delay={i * 700} onDownload={() => void download(url, i)} />
+          return <LogoImg key={`${round}-${style}-${i}`} url={url} alt={`${name} logo`} filename={`${slug(name, 'nalu-logo')}-${style}-${i + 1}.png`} />
         })}
       </div>
       <div className="mt-1.5 text-[10px] text-[#6f6f6f]">Real designed logos generated with FLUX (free) — first render takes a few seconds. Pick a style or Regenerate for new options; uses your brand color.</div>
