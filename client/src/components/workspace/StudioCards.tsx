@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, lazy, Suspense } from 'react'
+import { useMemo, useRef, useState, useEffect, lazy, Suspense } from 'react'
 import { Palette, Sparkles, Ruler, Download, Copy, Check, FileJson, FileCode2, Image as ImageIcon, FileText, Star, Box, PencilRuler, ShoppingBag, ExternalLink, Footprints } from 'lucide-react'
 import CardErrorBoundary from './CardErrorBoundary'
 
@@ -920,8 +920,18 @@ function logoImgUrl(name: string, styleDesc: string, primaryHex: string, seed: n
 }
 // One generated logo with its own loading state (FLUX takes a few seconds per
 // new seed) so it reads as "designing", never as a broken blank box.
-function LogoImg({ url, alt, onDownload }: { url: string; alt: string; onDownload: () => void }) {
+function LogoImg({ url, alt, onDownload, delay }: { url: string; alt: string; onDownload: () => void; delay: number }) {
   const [state, setState] = useState<'loading' | 'done' | 'error'>('loading')
+  const [tries, setTries] = useState(0)
+  const [go, setGo] = useState(delay === 0)
+  // Stagger the initial load a touch so 3 FLUX requests don't burst at once.
+  useEffect(() => { if (delay) { const t = setTimeout(() => setGo(true), delay); return () => clearTimeout(t) } }, [delay])
+  const src = go ? (tries === 0 ? url : `${url}&r=${tries}`) : ''
+  const onErr = () => {
+    if (tries < 3) { setState('loading'); setTimeout(() => setTries((t) => t + 1), 1500) } // self-heal transient failures
+    else setState('error')
+  }
+  const retry = () => { setState('loading'); setTries((t) => t + 1) }
   return (
     <div className="group relative aspect-square overflow-hidden rounded-xl border border-white/10 bg-white">
       {state !== 'done' && (
@@ -932,12 +942,14 @@ function LogoImg({ url, alt, onDownload }: { url: string; alt: string; onDownloa
               <span className="text-[10px] text-black/40">Designing…</span>
             </>
           ) : (
-            <span className="text-[10px] text-black/40">Tap Regenerate</span>
+            <button onClick={retry} className="rounded-md bg-black/5 px-2 py-1 text-[10px] text-black/50 hover:bg-black/10">Retry</button>
           )}
         </div>
       )}
-      <img src={url} alt={alt} loading="lazy" onLoad={() => setState('done')} onError={() => setState('error')}
-        className={`h-full w-full object-contain ${state === 'done' ? 'opacity-100' : 'opacity-0'}`} />
+      {src && (
+        <img key={tries} src={src} alt={alt} loading="lazy" onLoad={() => setState('done')} onError={onErr}
+          className={`h-full w-full object-contain ${state === 'done' ? 'opacity-100' : 'opacity-0'}`} />
+      )}
       {state === 'done' && (
         <button onClick={onDownload}
           className="absolute bottom-1.5 right-1.5 rounded-md bg-black/55 px-2 py-1 text-[10px] font-medium text-white opacity-0 backdrop-blur transition-opacity group-hover:opacity-100">
@@ -989,7 +1001,7 @@ function LogoImages({ name, brand }: { name: string; brand: string }) {
       <div className="grid grid-cols-3 gap-3">
         {seeds.map((sd, i) => {
           const url = logoImgUrl(name, desc, primary, sd)
-          return <LogoImg key={`${round}-${style}-${i}`} url={url} alt={`${name} logo`} onDownload={() => void download(url, i)} />
+          return <LogoImg key={`${round}-${style}-${i}`} url={url} alt={`${name} logo`} delay={i * 700} onDownload={() => void download(url, i)} />
         })}
       </div>
       <div className="mt-1.5 text-[10px] text-[#6f6f6f]">Real designed logos generated with FLUX (free) — first render takes a few seconds. Pick a style or Regenerate for new options; uses your brand color.</div>
