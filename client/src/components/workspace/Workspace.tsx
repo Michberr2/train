@@ -158,27 +158,28 @@ interface Props {
   onLogout: () => void
 }
 
-// Detect "make me an image" style asks so we route them to the image endpoint
-// (Nalu Image / CogView) instead of the text chat.
+// A leading question word ("what is a business plan", "explain the report") is an
+// explanation ask, not a build request — keep those in normal chat.
+const QUESTION_LEAD = /^\s*(what(?:'s| is| are)?|explain|tell me|how (?:do|does|can|to)|why|define|who\b|when\b|where\b|can you (?:explain|tell)|difference between)/i
+
+// Detect "make me an image" style asks → route to the image endpoint.
 const IMAGE_INTENT =
-  /\b(generate|create|make|draw|design|render|paint|sketch|produce)\b[^.?!]*\b(image|picture|photo|photograph|logo|icon|illustration|art|artwork|drawing|wallpaper|graphic|poster|portrait|painting|avatar|banner)\b|\b(image|picture|photo|logo|illustration|drawing|painting|portrait) of\b|^\/(image|img|draw)\b/i
+  /\b(generate|create|make|draw|render|paint|sketch|produce|whip up)\b[^.?!]*\b(images?|pictures?|photos?|photographs?|illustrations?|artwork|drawings?|wallpapers?|portraits?|paintings?|avatars?|headshots?|backgrounds?)\b|\b(image|picture|photo|illustration|drawing|painting|portrait|render) of\b|^\/(image|img|draw)\b/i
 function isImagePrompt(text: string): boolean {
   return IMAGE_INTENT.test(text)
 }
 
-// Detect "build me a spreadsheet" style asks → route to the spreadsheet builder.
+// Detect "build me a spreadsheet / excel" style asks → spreadsheet builder.
 const SHEET_INTENT =
-  /\b(spreadsheet|excel|xlsx|\.xls|google ?sheets?|pivot table)\b|^\/(sheet|excel|xls)\b|\b(make|build|create|generate)\b[^.?!]*\b(table|tracker|budget|roster|schedule|inventory|ledger|gantt)\b/i
+  /\b(spread ?sheets?|excels?|xlsx?|\.xls|google ?sheets?|pivot tables?|work ?books?|balance sheets?|cap tables?|time ?sheets?)\b|^\/(sheet|excel|xls)\b|\b(make|build|create|generate|do|put together|whip up|prepare|need|want|give me)\b[^.?!]*\b(spread ?sheets?|sheets?|tables?|trackers?|budgets?|rosters?|schedules?|inventory|ledgers?|gantt|workbooks?|financial models?|calculators?|p ?& ?l|income statements?)\b/i
 function isSheetPrompt(text: string): boolean {
+  if (QUESTION_LEAD.test(text)) return false
   return SHEET_INTENT.test(text)
 }
 
-// Detect "write me a business plan / report / proposal" → route to the doc builder.
+// Detect "write me a business plan / doc / report" → route to the doc builder.
 const DOC_INTENT =
-  /\b(business plan|marketing plan|project plan|word document|word doc|google doc|\.docx|report|proposal|white ?paper|cover letter|résumé|resume|\bcv\b|memo|press release|essay|write-?up|one ?pager|document)\b|^\/(doc|word)\b|\b(write|draft|create|build|make|generate|do|put together|prepare|whip up)\b[^.?!]*\b(plan|report|proposal|essay|letter|documents?|docs?|memos?|brief|white ?paper|whitepaper|pdf|article|write-?up|one ?pager)\b/i
-// A leading question word ("what is a business plan", "explain the report") is an
-// explanation ask, not a build request — keep those in normal chat.
-const QUESTION_LEAD = /^\s*(what|explain|tell me|how (?:do|does|can|to)|why|define|who\b|when\b|where\b|can you explain)/i
+  /\b(business plans?|marketing plans?|project plans?|word documents?|word docs?|google docs?|\.docx|reports?|proposals?|white ?papers?|cover letters?|résumés?|resumes?|\bcvs?\b|memos?|press releases?|essays?|write-?ups?|one ?pagers?|documents?)\b|^\/(doc|word)\b|\b(write|draft|create|build|make|generate|do|put together|prepare|whip up|need|want|give me)\b[^.?!]*\b(plans?|reports?|proposals?|essays?|letters?|documents?|docs?|memos?|briefs?|white ?papers?|whitepapers?|pdfs?|articles?|write-?ups?|one ?pagers?)\b/i
 function isDocPrompt(text: string): boolean {
   if (QUESTION_LEAD.test(text)) return false
   return DOC_INTENT.test(text)
@@ -186,22 +187,25 @@ function isDocPrompt(text: string): boolean {
 
 // Detect "make me a video" style asks → route to the video endpoint.
 const VIDEO_INTENT =
-  /\b(generate|create|make|produce|render)\b[^.?!]*\b(video|animation|clip|movie|reel)\b|\banimate\b|^\/video\b/i
+  /\b(generate|create|make|produce|render|do|whip up)\b[^.?!]*\b(videos?|animations?|clips?|movies?|reels?|gifs?)\b|\banimate\b|\bvideo of\b|^\/video\b/i
 function isVideoPrompt(text: string): boolean {
+  if (QUESTION_LEAD.test(text)) return false
   return VIDEO_INTENT.test(text)
 }
 
-// CAD / 3D-model intent → inline Nalu CAD viewer.
+// CAD / 3D-model / AutoCAD intent → inline Nalu CAD viewer.
 const CAD_INTENT =
-  /\b(autocad|open ?scad|cad model|cad part|cad design|3d model|3d-?print|3d print|stl file|\.stl\b)\b|^\/cad\b|\b(design|model|make|build|create|3d)\b[^.?!]*\b(bracket|gear|flange|enclosure|housing|mount|bolt|nut|screw|gadget|widget|knob|hook|stand|holder|adapter|spacer|case|clip|gear|part)\b/i
+  /\b(auto ?cad|open ?scad|\bcad\b|cad (?:model|part|design|file)|3d models?|3d-?print(?:ed|able)?|3d print|stl files?|\.stl\b|parametric (?:part|model|design))\b|^\/cad\b|\b(design|model|make|build|create|3d ?print)\b[^.?!]*\b(brackets?|gears?|flanges?|enclosures?|housings?|mounts?|bolts?|nuts?|screws?|gadgets?|widgets?|knobs?|hooks?|stands?|holders?|adapters?|spacers?|cases?|clips?|parts?|fixtures?|jigs?|vases?|containers?)\b/i
 function isCadPrompt(text: string): boolean {
+  if (QUESTION_LEAD.test(text)) return false
   return CAD_INTENT.test(text)
 }
 
 // Web/UI design intent → inline Nalu Design (live HTML artifact).
 const DESIGN_INTENT =
-  /\b(website|web ?page|landing page|web ?app|html page|web design|user interface|dashboard ui|web component|infographic|poster)\b|^\/design\b|\b(design|build|create|make|code)\b[^.?!]*\b(website|landing page|web ?page|web ?app|ui|interface|dashboard|html|web component|hero section|pricing page)\b/i
+  /\b(web ?sites?|web ?pages?|landing pages?|web ?apps?|html pages?|web design|user interface|dashboard ui|web components?|infographics?|posters?|home ?pages?)\b|^\/design\b|\b(design|build|create|make|code|develop)\b[^.?!]*\b(web ?site|landing page|web ?page|web ?app|\bui\b|interface|dashboard|html|web component|hero section|pricing page|home ?page|\bsite\b)\b/i
 function isDesignPrompt(text: string): boolean {
+  if (QUESTION_LEAD.test(text)) return false
   return DESIGN_INTENT.test(text)
 }
 
@@ -209,11 +213,11 @@ function isDesignPrompt(text: string): boolean {
 // Every creative ask resolves to one DesignKind sent to /api/design as
 // {prompt, kind}; the server trusts the client's kind (no guessing).
 const PALETTE_INTENT =
-  /\b(colou?r ?palette|colou?r ?scheme|swatch(es)?|colou?r ?theme|hex(?: codes?)?)\b|^\/palette\b/i
+  /\b(colou?r ?palettes?|colou?r ?schemes?|swatch(?:es)?|colou?r ?themes?|colou?r ?combos?|colou?r ?combinations?|hex(?: codes?)?)\b|^\/palette\b/i
 const BRAND_INTENT =
-  /\b(brand(?:ing)? guidelines?|brand identity|brand kit|style ?guide|visual identity|brand book)\b|^\/brand\b/i
+  /\b(brand(?:ing)? guidelines?|brand identit(?:y|ies)|brand kits?|style ?guides?|visual identit(?:y|ies)|brand books?|brand guides?)\b|^\/brand\b/i
 const BLUEPRINT_INTENT =
-  /\b(blueprint|floor ?plan|technical drawing|schematic|annotated (?:diagram|drawing)|elevation|wireframe diagram)\b|^\/blueprint\b/i
+  /\b(blue ?prints?|floor ?plans?|floorplans?|house plans?|site plans?|building plans?|technical drawings?|schematics?|annotated (?:diagram|drawing)|elevations?|wireframe diagram)\b|^\/blueprint\b/i
 // House / interior-design / walkthrough asks → a blueprint (which carries the
 // 3D model + first-person walkthrough + furnish tools). Catches "make a
 // walkthrough of a mansion", "design my house", "3d home tour", etc. The
@@ -221,7 +225,7 @@ const BLUEPRINT_INTENT =
 const WALKTHROUGH_INTENT =
   /\b(walk\s?through|walk-through|house\s?tour|home\s?tour|interior design|3d\s?(?:house|home|tour|walk))\b|\b(design|build|make|create|model|render|lay\s?out)\b(?![^.?!]*\b(website|web ?app|web ?page|home ?page|landing page|app|logo|poster|deck|slide)\b)[^.?!]{0,40}\b(house|home|mansion|villa|apartment|condo|bungalow|cottage|floor ?plan|bedroom|kitchen|bathroom|living room)\b|^\/(walkthrough|house|home|tour)\b/i
 const LOGO_INTENT =
-  /\b(logo|logotype|wordmark|brand ?mark|app ?icon|monogram|emblem)\b|^\/logo\b/i
+  /\b(logos?|logotypes?|word ?marks?|brand ?marks?|logo ?marks?|app ?icons?|monograms?|emblems?|logo design|favicons?|lockups?)\b|^\/logo\b/i
 const SHOP_INTENT =
   /\b(shop(?:ping)?(?: for| list)?|buy|purchase|where (?:can|do) i (?:get|buy)|add to cart|furnish(?:ing)? (?:list|my)|outfit (?:my|the)|things i (?:need|should buy))\b[^.?!]*\b(room|house|home|apartment|bedroom|kitchen|living|bathroom|office|desk|setup|outfit|nursery|patio|furniture|items?)\b|^\/shop\b/i
 const CANVAS_INTENT =
@@ -233,8 +237,12 @@ const MOTION_INTENT =
 /** Resolve a creative ask to a DesignKind, or null to fall through to the agent
  *  loop. Order: logo → palette → brand → blueprint → canvas → poster/webpage. */
 function designKind(text: string): DesignKind | null {
+  // A plain "what is a logo / explain palettes" question stays in chat.
+  if (QUESTION_LEAD.test(text)) return null
   // Specific, high-confidence creative kinds win first.
   if (SHOP_INTENT.test(text)) return 'shopping'
+  // Motion before logo so "animated logo reveal" is a motion graphic, not a logo.
+  if (MOTION_INTENT.test(text)) return 'motion'
   if (LOGO_INTENT.test(text)) return 'logo'
   if (PALETTE_INTENT.test(text)) return 'palette'
   if (BRAND_INTENT.test(text)) return 'brand'
@@ -244,7 +252,6 @@ function designKind(text: string): DesignKind | null {
   // "excel budget for my house" or "powerpoint about my mansion" route correctly.
   if (isSheetPrompt(text) || isSlidesPrompt(text) || isDocPrompt(text)) return null
   if (WALKTHROUGH_INTENT.test(text)) return 'blueprint'
-  if (MOTION_INTENT.test(text)) return 'motion'
   if (CANVAS_INTENT.test(text)) return 'canvas'
   if (isDesignPrompt(text)) return /\b(poster|infographic)\b/i.test(text) ? 'poster' : 'webpage'
   return null
@@ -287,8 +294,9 @@ function normalizeArtifact(kind: DesignKind, raw: unknown): DesignArtifact {
 
 // Presentation intent → inline Nalu Slides (PowerPoint / PDF).
 const SLIDES_INTENT =
-  /\b(pitch deck|slide deck|presentation|power ?point|pptx?|slides|keynote|deck)\b|^\/(slides|deck|ppt)\b|\b(make|build|create|design|generate)\b[^.?!]*\b(deck|presentation|slides|pitch)\b/i
+  /\b(pitch decks?|slide ?decks?|presentations?|power ?points?|pptx?|slide ?shows?|slides?|keynotes?|google slides|decks?)\b|^\/(slides|deck|ppt)\b|\b(make|build|create|design|generate|do|put together|whip up|prepare)\b[^.?!]*\b(decks?|presentations?|slides?|pitch|slideshow)\b/i
 function isSlidesPrompt(text: string): boolean {
+  if (QUESTION_LEAD.test(text)) return false
   return SLIDES_INTENT.test(text)
 }
 
