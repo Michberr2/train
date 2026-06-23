@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -134,7 +134,10 @@ const components: Components = {
   td: ({ children }) => <td className="border border-white/[0.14] px-3 py-1.5">{children}</td>,
 }
 
-export default function Markdown({ children }: { children: string }) {
+// Memoized: while a message streams, only IT re-parses each frame — every other
+// message in the conversation skips re-parsing (same string), so streaming stays
+// smooth even in long chats.
+function MarkdownBase({ children }: { children: string }) {
   return (
     <div className="markdown-body text-[15px] text-[#dcdcdc] break-words">
       <ReactMarkdown
@@ -147,3 +150,4 @@ export default function Markdown({ children }: { children: string }) {
     </div>
   )
 }
+export default memo(MarkdownBase)

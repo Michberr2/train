@@ -674,7 +674,12 @@ export default function Workspace({ user, onLogout }: Props) {
       }
       const reveal = () => {
         const gap = acc.length - shown
-        if (gap > 0) shown = Math.min(acc.length, shown + Math.max(3, Math.ceil(gap * 0.28)))
+        // Small, steady steps → smooth typing. Reveal ~16% of the buffer per frame
+        // (min 2 chars), with a higher floor when far behind so it never lags.
+        if (gap > 0) {
+          const step = gap > 220 ? Math.ceil(gap * 0.5) : Math.max(2, Math.ceil(gap * 0.16))
+          shown = Math.min(acc.length, shown + step)
+        }
         renderMsg(shown >= acc.length ? acc : acc.slice(0, shown))
         revealRaf = shown < acc.length ? requestAnimationFrame(reveal) : 0
       }
