@@ -1618,6 +1618,26 @@ function AttachmentDrawer({
 }) {
   const [sel, setSel] = useState(0)
   const [previewMi, setPreviewMi] = useState<number | null>(null)
+  // Drag-to-resize width (persisted + synced via the nalu- prefix).
+  const [width, setWidth] = useState(() => {
+    const v = Number(localStorage.getItem('nalu-drawer-width'))
+    return v >= 280 && v <= 760 ? v : 320
+  })
+  useEffect(() => { try { localStorage.setItem('nalu-drawer-width', String(Math.round(width))) } catch { /* */ } }, [width])
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault()
+    const onMove = (ev: PointerEvent) => setWidth(Math.min(760, Math.max(280, window.innerWidth - ev.clientX)))
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
   const a = attachments[Math.min(sel, attachments.length - 1)]
   const blobFor = (f: Attachment): Blob => {
     if (f.dataUrl) {
@@ -1662,7 +1682,15 @@ function AttachmentDrawer({
     )
   }
   return (
-    <aside className="hidden w-80 shrink-0 flex-col border-l border-white/[0.14] bg-white/[0.06] backdrop-blur-2xl md:flex">
+    <aside className="relative hidden shrink-0 flex-col border-l border-white/[0.14] bg-white/[0.06] backdrop-blur-2xl md:flex" style={{ width }}>
+      {/* Drag handle — widen/narrow the drawer. */}
+      <div
+        onPointerDown={startResize}
+        className="group absolute left-0 top-0 z-30 h-full w-2 -translate-x-1/2 cursor-col-resize"
+        title="Drag to resize"
+      >
+        <div className="mx-auto h-full w-px bg-white/10 transition-colors group-hover:w-0.5 group-hover:bg-[#AF8C56]/70" />
+      </div>
       <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2.5">
         {previewMi !== null ? (
           <>
