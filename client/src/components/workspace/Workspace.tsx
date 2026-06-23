@@ -213,7 +213,7 @@ function isDesignPrompt(text: string): boolean {
 // Every creative ask resolves to one DesignKind sent to /api/design as
 // {prompt, kind}; the server trusts the client's kind (no guessing).
 const PALETTE_INTENT =
-  /\b(colou?r ?palettes?|colou?r ?schemes?|swatch(?:es)?|colou?r ?themes?|colou?r ?combos?|colou?r ?combinations?|hex(?: codes?)?)\b|^\/palette\b/i
+  /\b(colou?r ?palettes?|colou?r ?schemes?|swatch(?:es)?|colou?r ?themes?|colou?r ?combos?|colou?r ?combinations?|\bpalettes?\b|hex(?: codes?)?)\b|^\/palette\b/i
 const BRAND_INTENT =
   /\b(brand(?:ing)? guidelines?|brand identit(?:y|ies)|brand kits?|style ?guides?|visual identit(?:y|ies)|brand books?|brand guides?)\b|^\/brand\b/i
 const BLUEPRINT_INTENT =
