@@ -54,7 +54,7 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: () =
       aria-label={label}
       onClick={onChange}
       className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-400/40 ${
-        checked ? 'border-emerald-400/40 bg-emerald-500/80' : 'border-white/[0.18] bg-white/10'
+        checked ? 'border-emerald-400/40 bg-emerald-500/80' : 'border-glass/[0.18] bg-glass/10'
       }`}
     >
       <span
@@ -89,16 +89,16 @@ export default function SkillsPanel() {
   const enabledCount = skills.filter((s) => s.enabled).length;
 
   return (
-    <div className="flex h-full flex-col bg-white/[0.09] backdrop-blur-2xl font-sans text-[#ededed]">
-      <header className="flex items-center gap-3 border-b border-white/[0.18] px-6 py-4">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/5">
+    <div className="flex h-full flex-col bg-glass/[0.09] backdrop-blur-2xl font-sans text-ink">
+      <header className="flex items-center gap-3 border-b border-glass/[0.18] px-6 py-4">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-glass/5">
           <Wand2 className="h-5 w-5 text-emerald-300" />
         </div>
         <div className="min-w-0">
-          <h1 className="text-base font-semibold text-[#ededed]">Skills</h1>
-          <p className="truncate text-sm text-[#8e8e8e]">Give Nalu superpowers</p>
+          <h1 className="text-base font-semibold text-ink">Skills</h1>
+          <p className="truncate text-sm text-dim">Give Nalu superpowers</p>
         </div>
-        <span className="ml-auto rounded-full bg-white/5 px-3 py-1 text-xs text-[#afafaf]">
+        <span className="ml-auto rounded-full bg-glass/5 px-3 py-1 text-xs text-dim">
           {enabledCount} of {skills.length} on
         </span>
       </header>
@@ -108,18 +108,18 @@ export default function SkillsPanel() {
           {skills.map((skill) => (
             <li
               key={skill.id}
-              className="flex items-center gap-4 rounded-xl border border-white/[0.18] bg-white/[0.11] backdrop-blur-2xl px-4 py-3 transition-colors hover:bg-white/5"
+              className="flex items-center gap-4 rounded-xl border border-glass/[0.18] bg-glass/[0.11] backdrop-blur-2xl px-4 py-3 transition-colors hover:bg-glass/5"
             >
               <div
-                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] ${
+                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-glass/[0.06] ${
                   skill.enabled ? '' : 'opacity-40 grayscale'
                 }`}
               >
                 <img src={`${ICON_BASE}${skill.icon}.svg`} alt="" className="h-[22px] w-[22px]" loading="lazy" />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-[#ededed]">{skill.name}</div>
-                <div className="truncate text-sm text-[#8e8e8e]">{skill.description}</div>
+                <div className="text-sm font-medium text-ink">{skill.name}</div>
+                <div className="truncate text-sm text-dim">{skill.description}</div>
               </div>
               <Toggle checked={skill.enabled} onChange={() => toggle(skill.id)} label={`Toggle ${skill.name}`} />
             </li>

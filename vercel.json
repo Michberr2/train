@@ -9,7 +9,10 @@
     "api/slides.ts": { "maxDuration": 300 },
     "api/design.ts": { "maxDuration": 300 },
     "api/video.ts": { "maxDuration": 300 },
-    "api/browser.ts": { "maxDuration": 300 }
+    "api/browser.ts": { "maxDuration": 300 },
+    "api/cad.ts": { "maxDuration": 300 },
+    "api/web.ts": { "maxDuration": 300 },
+    "api/image.ts": { "maxDuration": 300 }
   },
   "rewrites": [
     { "source": "/((?!api/|openscad/|privacy).*)", "destination": "/index.html" }

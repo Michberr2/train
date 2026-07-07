@@ -24,28 +24,28 @@ export default function NaluBrowserPanel({
   const [showSetup, setShowSetup] = useState(false)
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-[#0b0c10]">
+    <div className="fixed inset-0 z-50 flex flex-col bg-canvas">
       {/* Header */}
-      <div className="flex items-center gap-2.5 border-b border-white/10 px-4 py-2.5">
+      <div className="flex items-center gap-2.5 border-b border-glass/10 px-4 py-2.5">
         <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500/15 text-cyan-300">
           <MonitorPlay size={15} />
         </span>
-        <span className="text-sm font-semibold text-[#ededed]">Nalu Browser</span>
-        <span className="hidden text-[11px] text-[#8e8e8e] sm:inline">runs on your machine · no key</span>
+        <span className="text-sm font-semibold text-ink">Nalu Browser</span>
+        <span className="hidden text-[11px] text-dim sm:inline">runs on your machine · no key</span>
         <button
           onClick={() => setShowSetup((s) => !s)}
-          className="ml-auto rounded-lg bg-white/10 px-3 py-1.5 text-xs text-[#ededed] hover:bg-white/20"
+          className="ml-auto rounded-lg bg-glass/10 px-3 py-1.5 text-xs text-ink hover:bg-glass/20"
         >
           {showSetup ? 'Hide setup' : 'Blank / not working?'}
         </button>
-        <button onClick={onClose} className="rounded-lg bg-white/10 px-3 py-1.5 text-sm text-[#ededed] hover:bg-white/20">
+        <button onClick={onClose} className="rounded-lg bg-glass/10 px-3 py-1.5 text-sm text-ink hover:bg-glass/20">
           <X size={15} />
         </button>
       </div>
 
       {showSetup && (
-        <div className="border-b border-white/10 bg-black/30 px-4 py-3 text-xs text-[#cfcfcf]">
-          <p className="mb-2 text-[#9a9a9a]">
+        <div className="border-b border-glass/10 bg-black/30 px-4 py-3 text-xs text-ink">
+          <p className="mb-2 text-dim">
             If the screen below is blank, start the local browser once (no API key, no separate window). In a terminal, from
             the project folder:
           </p>
@@ -58,7 +58,7 @@ brew install mkcert nss && mkcert -install
 
 python scripts/serve-browser.py`}
           </pre>
-          <p className="mt-2 text-[#8e8e8e]">
+          <p className="mt-2 text-dim">
             The browser then appears right here. Type a task and watch it work — or click &amp; type on the screen yourself for
             a password / 2FA. (Your keystrokes go only to your machine.)
           </p>
@@ -69,7 +69,7 @@ python scripts/serve-browser.py`}
       <iframe
         title="Nalu Browser"
         src={src}
-        className="w-full flex-1 border-0 bg-[#0c0e14]"
+        className="w-full flex-1 border-0 bg-canvas"
         allow="clipboard-read; clipboard-write"
       />
     </div>

@@ -19,7 +19,8 @@ export type BrandKit = {
 
 // One global Brand Kit for the whole app — stored in localStorage, so it persists
 // across EVERY chat and every session (not per-chat). The "routine" primary brand.
-const KEY = 'nalu.brandkit.v1'
+// v2 — re-seeds the Four Seasons × Hillpointe house palette over any stale v1 default.
+const KEY = 'nalu.brandkit.v2'
 
 // The Nalu house brand — quiet luxury (Four Seasons / Hillpointe). This is the
 // always-present default so every doc / deck / sheet / design is premium out of
@@ -27,12 +28,12 @@ const KEY = 'nalu.brandkit.v1'
 // generated designs still pick their own elegant display serif.
 export const DEFAULT_BRAND: BrandKit = {
   name: 'Nalu',
-  primary: '0F1B2D', // midnight navy
-  accent: 'AF8C56', // muted gold
-  dark: '0F1B2D',
-  text: '2A2A2A',
+  primary: '14345A', // Hillpointe brand navy (--hp-primary)
+  accent: 'AF8C56', // Hillpointe antique gold (--hp-accent) — shared with Four Seasons' gold
+  dark: '0F1B2D', // deep navy-black for dark title backgrounds
+  text: '1F1F1F', // Four Seasons --color-text-primary (crisp near-black body)
   onDark: 'FFFFFF',
-  subtle: 'C9B891', // soft gold for subtitles on dark
+  subtle: 'E4B96F', // light antique gold for subtitles on dark
 }
 
 // Live subscription so the BrandBar / cards update the instant the brand changes
@@ -160,7 +161,7 @@ export function getPalettes(): SavedPalette[] {
   try {
     const raw = localStorage.getItem(PALETTES_KEY)
     const a = raw ? JSON.parse(raw) : []
-    return Array.isArray(a) ? a : []
+    return notTrashed(Array.isArray(a) ? a : [])
   } catch {
     return []
   }
@@ -174,16 +175,40 @@ function setPalettes(list: SavedPalette[]): void {
   pEmit()
 }
 const sigOf = (b: BrandKit) => `${b.primary}-${b.accent}-${b.dark}-${b.text}`.toLowerCase()
+
+// TOMBSTONES — a deleted palette stays deleted FOREVER, even if a stale server
+// copy or another tab tries to resurrect it during sync hydration.
+const TRASH_KEY = 'nalu-palettes-trash'
+type Tomb = { id?: string; sig?: string }
+function getTrash(): Tomb[] {
+  try { const a = JSON.parse(localStorage.getItem(TRASH_KEY) || '[]'); return Array.isArray(a) ? a : [] } catch { return [] }
+}
+function addTrash(t: Tomb): void {
+  try { localStorage.setItem(TRASH_KEY, JSON.stringify([t, ...getTrash()].slice(0, 200))) } catch { /* */ }
+}
+function unTrash(sig: string): void {
+  try { localStorage.setItem(TRASH_KEY, JSON.stringify(getTrash().filter((t) => t.sig !== sig))) } catch { /* */ }
+}
+function notTrashed(list: SavedPalette[]): SavedPalette[] {
+  const trash = getTrash()
+  if (!trash.length) return list
+  const ids = new Set(trash.map((t) => t.id).filter(Boolean))
+  const sigs = new Set(trash.map((t) => t.sig).filter(Boolean))
+  return list.filter((p) => !ids.has(p.id) && !sigs.has(sigOf(p)))
+}
 /** Save a palette (defaults to the active brand) into the library. */
 export function savePalette(b: BrandKit): SavedPalette {
   const id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
   const item: SavedPalette = { ...b, id, name: b.name || 'Palette' }
+  unTrash(sigOf(b)) // an explicit re-save un-deletes this color combo
   // de-dup by the four core colors so saving twice doesn't pile up
   const rest = getPalettes().filter((p) => sigOf(p) !== sigOf(b))
   setPalettes([item, ...rest])
   return item
 }
 export function deletePalette(id: string): void {
+  const gone = getPalettes().find((p) => p.id === id)
+  if (gone) addTrash({ id, sig: sigOf(gone) }) // tombstone: never comes back
   setPalettes(getPalettes().filter((p) => p.id !== id))
 }
 /** Live React subscription to the saved-palette library. */
@@ -201,7 +226,7 @@ export function usePalettes(): SavedPalette[] {
   )
   return useMemo(() => {
     try {
-      return raw ? (JSON.parse(raw) as SavedPalette[]) : []
+      return notTrashed(raw ? (JSON.parse(raw) as SavedPalette[]) : [])
     } catch {
       return []
     }
@@ -210,7 +235,7 @@ export function usePalettes(): SavedPalette[] {
 
 type PColor = { role?: string; hex: string }
 
-function fromColors(colors: PColor[], name?: string, fonts?: { heading?: string; body?: string }): BrandKit | null {
+export function fromColors(colors: PColor[], name?: string, fonts?: { heading?: string; body?: string }): BrandKit | null {
   const valid = colors.filter((c) => /^#?[0-9a-fA-F]{6}$/.test((c.hex || '').replace(/^#/, '')))
   if (!valid.length) return null
   const byRole = (r: string) => valid.find((c) => (c.role || '').toLowerCase() === r)?.hex

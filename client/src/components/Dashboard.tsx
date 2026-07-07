@@ -838,8 +838,6 @@ export default function Dashboard({ onLogout }: Props) {
             }
             const all = { ...(json.dependencies ?? {}), ...(json.devDependencies ?? {}) }
             const NPM_LLM: Array<[RegExp, string]> = [
-              [/^@anthropic-ai\/sdk$/, 'Anthropic SDK'],
-              [/^@anthropic-ai\/claude-code$/, 'Claude Agent SDK'],
               [/^openai$/, 'OpenAI SDK'],
               [/^ai$/, 'Vercel AI SDK'],
               [/^@ai-sdk\//, 'Vercel AI SDK provider'],
@@ -866,7 +864,6 @@ export default function Dashboard({ onLogout }: Props) {
           }
         }
         const PY_LLM = [
-          'anthropic',
           'openai',
           'langchain',
           'llama-index',
@@ -915,7 +912,7 @@ export default function Dashboard({ onLogout }: Props) {
           ctxBlocks.push(`LLM stack detected in this repo:\n${detected.map((d) => `  - ${d}`).join('\n')}`)
         } else {
           ctxBlocks.push(
-            `LLM Builder enabled — no AI SDKs detected. If the user is building an LLM app, recommend the Anthropic SDK (\`@anthropic-ai/sdk\` for Node, \`anthropic\` for Python) and Claude models: \`claude-opus-4-7\` (complex), \`claude-sonnet-4-6\` (general), \`claude-haiku-4-5\` (fast).`,
+            `LLM Builder enabled — no AI SDKs detected. If the user is building an LLM app, recommend the OpenAI SDK (\`openai\` for Node or Python) or the Vercel AI SDK (\`ai\`) with your preferred model provider.`,
           )
         }
       }

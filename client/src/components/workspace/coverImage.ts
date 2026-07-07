@@ -2,10 +2,13 @@
 // Each call races a timeout so a slow/failed image never blocks a download; on
 // failure the caller falls back to a solid brand-color cover.
 
-function url(desc: string, w: number, h: number): string {
+/** The raw generated-photo URL — usable directly as an <img src> for live
+ *  previews (the browser streams it; pair with onError for a graceful hide). */
+export function coverImageUrl(desc: string, w: number, h: number): string {
   const prompt = `professional cinematic photograph, ${desc}, elegant, premium, refined, natural light, high detail, no text, no watermark`
   return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&nologo=true&model=flux`
 }
+const url = coverImageUrl
 
 async function fetchBlob(desc: string, w: number, h: number, timeoutMs: number): Promise<Blob | null> {
   if (!desc || !desc.trim()) return null

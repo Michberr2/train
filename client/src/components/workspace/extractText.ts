@@ -10,6 +10,7 @@ export type Attachment = {
   text: string // extracted text (may be truncated)
   truncated?: boolean
   dataUrl?: string // original file (for open/download); omitted for large files
+  isImage?: boolean // screenshot/photo — sent to the vision model + embeddable in docs
 }
 
 const MAX_KEEP_BYTES = 6 * 1024 * 1024 // keep the original for files up to ~6MB
@@ -32,6 +33,43 @@ function clip(s: string): { text: string; truncated: boolean } {
 }
 
 const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|ya?ml|xml|html?|css|js|ts|tsx|jsx|py|java|c|cpp|cs|go|rs|rb|php|sh|sql|ini|conf|log|tex)$/i
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg|avif|heic|heif)$/i
+
+// Downscale a screenshot/photo to a model- and storage-friendly size: vision
+// models cap resolution anyway, and chats persist to localStorage (a few MB
+// total), so a 6MB retina PNG must shrink to a small JPEG dataUrl before we keep
+// it. Returns a data:image/jpeg;base64 URL (or the raw dataUrl on any failure).
+async function downscaleImage(file: File, maxDim = 1568): Promise<string | undefined> {
+  try {
+    const url = await new Promise<string>((res, rej) => {
+      const fr = new FileReader()
+      fr.onload = () => res(String(fr.result || ''))
+      fr.onerror = () => rej(fr.error)
+      fr.readAsDataURL(file)
+    })
+    if (!url) return undefined
+    // SVG has no intrinsic raster size — keep it as-is (it's already tiny text).
+    if (file.type === 'image/svg+xml' || /\.svg$/i.test(file.name)) return url
+    const img = await new Promise<HTMLImageElement>((res, rej) => {
+      const im = new Image()
+      im.onload = () => res(im)
+      im.onerror = () => rej(new Error('decode failed'))
+      im.src = url
+    })
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height))
+    const w = Math.max(1, Math.round(img.width * scale))
+    const h = Math.max(1, Math.round(img.height * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return url
+    ctx.drawImage(img, 0, 0, w, h)
+    return canvas.toDataURL('image/jpeg', 0.85)
+  } catch {
+    return undefined
+  }
+}
 
 async function readAsText(file: File): Promise<string> {
   return new Promise((res, rej) => {
@@ -85,6 +123,22 @@ async function extractDocx(file: File): Promise<string> {
 export async function extractAttachment(file: File): Promise<Attachment> {
   const name = file.name
   const lower = name.toLowerCase()
+
+  // Images (screenshots, photos): no text to extract — keep a downscaled dataUrl
+  // that we hand to the vision model and can embed into generated docs/slides.
+  if (file.type.startsWith('image/') || IMAGE_EXT.test(lower)) {
+    const dataUrl = await downscaleImage(file)
+    return {
+      id: Math.random().toString(36).slice(2) + Date.now().toString(36),
+      name,
+      type: file.type || lower.split('.').pop() || 'image',
+      size: file.size,
+      text: '',
+      isImage: true,
+      dataUrl,
+    }
+  }
+
   let raw = ''
   try {
     if (lower.endsWith('.pdf') || file.type === 'application/pdf') {

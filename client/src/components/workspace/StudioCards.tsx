@@ -3,7 +3,7 @@ import { Palette, Sparkles, Ruler, Download, Copy, Check, FileJson, FileCode2, I
 import CardErrorBoundary from './CardErrorBoundary'
 
 const Blueprint3D = lazy(() => import('./Blueprint3D'))
-import { setBrand, deriveBrand } from './brandKit'
+import { setBrand, deriveBrand, fromColors, savePalette } from './brandKit'
 import { planRoomFromItems } from './furnishPlan'
 import type { DesignArtifact } from './types'
 
@@ -24,11 +24,19 @@ export type PaletteColor = {
   usage?: string
 }
 
+export type PaletteOption = {
+  name?: string
+  description?: string
+  fonts?: { heading?: string; body?: string }
+  colors: PaletteColor[]
+}
 export type PaletteArt = {
   kind: 'palette'
   name?: string
   description?: string
+  fonts?: { heading?: string; body?: string }
   colors: PaletteColor[]
+  options?: PaletteOption[]
 }
 
 type BrandFont = { family?: string; googleFont?: boolean; weights?: number[]; usage?: string }
@@ -54,8 +62,8 @@ type BPShape =
   | { type: 'ellipse'; cx: number; cy: number; rx: number; ry: number; label?: string; stroke?: number }
   | { type: 'polyline'; points: [number, number][]; stroke?: number }
   | { type: 'text'; x: number; y: number; text: string }
-  | { type: 'door'; x: number; y: number; w: number; swing?: string }
-  | { type: 'window'; x: number; y: number; w: number }
+  | { type: 'door'; x: number; y: number; w: number; swing?: string; dir?: 'h' | 'v' }
+  | { type: 'window'; x: number; y: number; w: number; dir?: 'h' | 'v' }
   | { type: 'tree'; cx: number; cy: number; r: number; label?: string }
 
 type BPDimension = { x1: number; y1: number; x2: number; y2: number; text?: string; side?: string }
@@ -76,6 +84,11 @@ export type LogoArt = {
   serif?: boolean
   font?: string
   colors?: string[]
+  // Diffusion-friendly plain-English names for `colors`, in order.
+  colorNames?: string[]
+  // The art-directed pictorial mark concept ("a cresting wave curling into a
+  // coffee bean") — drives the AI logo image prompts.
+  symbol?: string
   options?: LogoOption[]
   // legacy single-mark form
   concept?: string
@@ -217,29 +230,30 @@ function downloadText(text: string, filename: string, type: string) {
 
 // ===== Shared chrome ==========================================================
 
+// Minimal flat frame: hairlines + a quiet meta row. No icon chips, no curves —
+// the artifact itself is the design.
 function CardShell({
-  icon,
   tint,
   title,
   subtitle,
   actions,
   children,
 }: {
-  icon: React.ReactNode
-  tint: string
+  icon?: React.ReactNode
+  tint?: string
   title: string
   subtitle?: string
   actions?: React.ReactNode
   children: React.ReactNode
 }) {
+  void tint
   return (
-    <div className="my-2 overflow-hidden rounded-xl border border-white/[0.16] bg-white/[0.04]">
-      <div className="flex flex-wrap items-center gap-2.5 border-b border-white/[0.12] px-4 py-2.5">
-        <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${tint}`}>{icon}</span>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-[#ededed]">{title}</div>
-          {subtitle && <div className="truncate text-xs text-[#8e8e8e]">{subtitle}</div>}
-        </div>
+    <div className="my-4 border-y border-glass/[0.12]">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-1 py-2">
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
+          {title}
+          {subtitle && <span className="ml-2 text-xs font-normal text-dim">{subtitle}</span>}
+        </span>
         {actions}
       </div>
       {children}
@@ -261,7 +275,7 @@ function ActionBtn({
   const base =
     primary && tint
       ? tint
-      : 'bg-white/[0.07] text-[#ededed] hover:bg-white/[0.12]'
+      : 'bg-glass/[0.07] text-ink hover:bg-glass/[0.12]'
   return (
     <button
       onClick={onClick}
@@ -304,7 +318,7 @@ function Swatch({ c, i }: { c: PaletteColor; i: number }) {
     setTimeout(() => setCopied((p) => (p === label ? null : p)), 1200)
   }
   return (
-    <div className="overflow-hidden rounded-lg border border-white/[0.1] bg-white/[0.02]">
+    <div className="overflow-hidden rounded-lg border border-glass/[0.1] bg-glass/[0.02]">
       <button
         onClick={() => copy('hex', hex)}
         className="group relative flex h-20 w-full items-end justify-between px-3 py-2 text-left"
@@ -318,12 +332,12 @@ function Swatch({ c, i }: { c: PaletteColor; i: number }) {
         </span>
       </button>
       <div className="space-y-1 px-3 py-2">
-        {c.name && <div className="truncate text-xs font-medium text-[#ededed]">{c.name}</div>}
+        {c.name && <div className="truncate text-xs font-medium text-ink">{c.name}</div>}
         <div className="flex flex-wrap gap-1.5">
           <CopyChip label="RGB" value={rgbStr(c.hex)} active={copied === 'rgb'} onClick={() => copy('rgb', rgbStr(c.hex))} />
           <CopyChip label="HSL" value={hslStr(c.hex)} active={copied === 'hsl'} onClick={() => copy('hsl', hslStr(c.hex))} />
         </div>
-        {c.usage && <div className="text-[11px] leading-snug text-[#8e8e8e]">{c.usage}</div>}
+        {c.usage && <div className="text-[11px] leading-snug text-dim">{c.usage}</div>}
       </div>
     </div>
   )
@@ -334,7 +348,7 @@ function CopyChip({ label, value, active, onClick }: { label: string; value: str
     <button
       onClick={onClick}
       title={`Copy ${value}`}
-      className="flex items-center gap-1 rounded-md bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-[#bcbcbc] hover:bg-white/[0.12] hover:text-[#ededed]"
+      className="flex items-center gap-1 rounded-md bg-glass/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-dim hover:bg-glass/[0.12] hover:text-ink"
     >
       {active ? <Check size={9} /> : null}
       {label}
@@ -344,7 +358,7 @@ function CopyChip({ label, value, active, onClick }: { label: string; value: str
 
 export function PaletteStrip({ colors }: { colors: PaletteColor[] }) {
   return (
-    <div className="flex h-12 w-full overflow-hidden rounded-lg border border-white/[0.1]">
+    <div className="flex h-12 w-full overflow-hidden rounded-lg border border-glass/[0.1]">
       {colors.map((c, i) => (
         <div key={i} className="flex-1" style={{ backgroundColor: '#' + normHex(c.hex) }} title={`${c.role || ''} ${'#' + normHex(c.hex)}`} />
       ))}
@@ -414,7 +428,7 @@ export function PaletteCard({ art }: { art: PaletteArt }) {
   if (!colors.length) {
     return (
       <CardShell icon={<Palette size={15} />} tint="bg-rose-500/15 text-rose-300" title={name} subtitle="No colors returned">
-        <div className="p-4 text-sm text-[#8e8e8e]">This palette came back empty. Try rephrasing your request.</div>
+        <div className="p-4 text-sm text-dim">This palette came back empty. Try rephrasing your request.</div>
       </CardShell>
     )
   }
@@ -437,14 +451,71 @@ export function PaletteCard({ art }: { art: PaletteArt }) {
         </>
       }
     >
-      <div className="bg-[#0c0e14] p-4">
+      <div className="bg-canvas p-4">
         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
           {colors.map((c, i) => (
             <Swatch key={i} c={c} i={i} />
           ))}
         </div>
+        {/* PICK A DIRECTION — the recommended set + alternates; one click makes
+            it YOUR palette (applied to the Brand bar AND saved to the library) */}
+        <PaletteOptions art={art} />
       </div>
     </CardShell>
+  )
+}
+
+function PaletteOptions({ art }: { art: PaletteArt }) {
+  const [picked, setPicked] = useState<string | null>(null)
+  const all: PaletteOption[] = [
+    { name: art.name || 'Recommended', description: art.description, fonts: art.fonts, colors: art.colors || [] },
+    ...(art.options || []),
+  ].filter((o) => (o.colors || []).filter((c) => c && c.hex).length >= 3)
+  if (all.length < 2 && !art.fonts) return null
+  const use = (o: PaletteOption, key: string) => {
+    const kit = fromColors(o.colors, o.name, o.fonts)
+    if (!kit) return
+    setBrand(kit)
+    savePalette(kit)
+    setPicked(key)
+    setTimeout(() => setPicked(null), 2200)
+  }
+  return (
+    <div className="mt-4 border-t border-glass/[0.08] pt-3">
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-dim">
+        Pick a direction — applies & saves to your palette
+      </div>
+      <div className="space-y-1.5">
+        {all.map((o, i) => {
+          const key = `${o.name}-${i}`
+          const cs = (o.colors || []).filter((c) => c && c.hex).slice(0, 8)
+          return (
+            <div key={key} className="flex items-center gap-3 rounded-xl border border-glass/[0.08] bg-glass/[0.03] px-2.5 py-2">
+              <span className="flex shrink-0 overflow-hidden rounded-md">
+                {cs.map((c, j) => (
+                  <span key={j} className="h-7 w-7" style={{ background: c.hex }} title={`${c.name || c.role || ''} ${c.hex}`} />
+                ))}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[12.5px] font-medium text-ink">
+                  {o.name || `Direction ${i + 1}`}
+                  {i === 0 && <span className="ml-1.5 text-[9.5px] font-semibold uppercase tracking-wide text-gold">Recommended</span>}
+                </span>
+                <span className="block truncate text-[10.5px] text-dim">
+                  {[o.fonts?.heading && `${o.fonts.heading} / ${o.fonts.body || 'system'}`, o.description].filter(Boolean).join(' — ')}
+                </span>
+              </span>
+              <button
+                onClick={() => use(o, key)}
+                className={`shrink-0 rounded-lg px-2.5 py-1.5 text-[11.5px] font-medium transition-colors ${picked === key ? 'bg-emerald-500/20 text-emerald-200' : 'bg-accent/15 text-gold hover:bg-accent/25'}`}
+              >
+                {picked === key ? 'Saved ✓' : 'Use & save'}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -669,12 +740,12 @@ export function BrandCard({ art }: { art: BrandArt }) {
         </>
       }
     >
-      <div className="space-y-6 bg-[#0c0e14] p-5">
+      <div className="space-y-6 bg-canvas p-5">
         {/* Hero */}
-        <div className="rounded-xl border border-white/[0.08] bg-gradient-to-br from-[#15121f] to-[#0b0e16] p-5">
-          <div className="text-2xl font-bold text-[#ededed]" style={{ fontFamily: headFamily }}>{name}</div>
+        <div className="rounded-xl border border-glass/[0.08] bg-gradient-to-br from-[#15121f] to-canvas p-5">
+          <div className="text-2xl font-bold text-ink" style={{ fontFamily: headFamily }}>{name}</div>
           {brand.tagline && <div className="mt-1 text-sm text-violet-300" style={{ fontFamily: bodyFamily }}>{brand.tagline}</div>}
-          {brand.mission && <p className="mt-3 max-w-prose text-sm leading-relaxed text-[#c5c8d0]" style={{ fontFamily: bodyFamily }}>{brand.mission}</p>}
+          {brand.mission && <p className="mt-3 max-w-prose text-sm leading-relaxed text-dim" style={{ fontFamily: bodyFamily }}>{brand.mission}</p>}
           {brand.voice && brand.voice.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1.5">
               {brand.voice.map((v, i) => (
@@ -691,10 +762,10 @@ export function BrandCard({ art }: { art: BrandArt }) {
             <PaletteStrip colors={palette} />
             <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3">
               {palette.map((c, i) => (
-                <div key={i} className="flex items-center gap-2 text-xs text-[#bcbcbc]">
-                  <span className="h-3 w-3 shrink-0 rounded-sm border border-white/20" style={{ backgroundColor: '#' + normHex(c.hex) }} />
+                <div key={i} className="flex items-center gap-2 text-xs text-dim">
+                  <span className="h-3 w-3 shrink-0 rounded-sm border border-glass/20" style={{ backgroundColor: '#' + normHex(c.hex) }} />
                   <span className="truncate">{c.role || c.name}</span>
-                  <span className="ml-auto font-mono text-[10px] text-[#8e8e8e]">{('#' + normHex(c.hex)).toUpperCase()}</span>
+                  <span className="ml-auto font-mono text-[10px] text-dim">{('#' + normHex(c.hex)).toUpperCase()}</span>
                 </div>
               ))}
             </div>
@@ -705,17 +776,17 @@ export function BrandCard({ art }: { art: BrandArt }) {
         <section>
           <SectionLabel>Typography</SectionLabel>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-lg border border-white/[0.08] bg-white/[0.02] p-4">
-              <div className="text-[10px] uppercase tracking-wide text-[#8e8e8e]">Heading · {heading.family || 'Inter'}</div>
-              <div className="mt-1 text-2xl font-bold text-[#ededed]" style={{ fontFamily: headFamily }}>Aa Bb Cc</div>
-              <div className="text-lg font-semibold text-[#dfe4ee]" style={{ fontFamily: headFamily }}>The quick brown fox</div>
-              {heading.usage && <div className="mt-1 text-[11px] text-[#8e8e8e]">{heading.usage}</div>}
+            <div className="rounded-lg border border-glass/[0.08] bg-glass/[0.02] p-4">
+              <div className="text-[10px] uppercase tracking-wide text-dim">Heading · {heading.family || 'Inter'}</div>
+              <div className="mt-1 text-2xl font-bold text-ink" style={{ fontFamily: headFamily }}>Aa Bb Cc</div>
+              <div className="text-lg font-semibold text-ink" style={{ fontFamily: headFamily }}>The quick brown fox</div>
+              {heading.usage && <div className="mt-1 text-[11px] text-dim">{heading.usage}</div>}
             </div>
-            <div className="rounded-lg border border-white/[0.08] bg-white/[0.02] p-4">
-              <div className="text-[10px] uppercase tracking-wide text-[#8e8e8e]">Body · {body.family || 'Inter'}</div>
-              <div className="mt-1 text-2xl text-[#ededed]" style={{ fontFamily: bodyFamily }}>Aa Bb Cc</div>
-              <div className="text-sm text-[#c5c8d0]" style={{ fontFamily: bodyFamily }}>The quick brown fox jumps over the lazy dog.</div>
-              {body.usage && <div className="mt-1 text-[11px] text-[#8e8e8e]">{body.usage}</div>}
+            <div className="rounded-lg border border-glass/[0.08] bg-glass/[0.02] p-4">
+              <div className="text-[10px] uppercase tracking-wide text-dim">Body · {body.family || 'Inter'}</div>
+              <div className="mt-1 text-2xl text-ink" style={{ fontFamily: bodyFamily }}>Aa Bb Cc</div>
+              <div className="text-sm text-dim" style={{ fontFamily: bodyFamily }}>The quick brown fox jumps over the lazy dog.</div>
+              {body.usage && <div className="mt-1 text-[11px] text-dim">{body.usage}</div>}
             </div>
           </div>
           {typo.scale && typo.scale.length > 0 && (
@@ -732,10 +803,10 @@ export function BrandCard({ art }: { art: BrandArt }) {
           <section>
             <SectionLabel>Logo</SectionLabel>
             <div className="grid gap-3 sm:grid-cols-[1.4fr_1fr]">
-              {art.logo.direction && <p className="text-sm leading-relaxed text-[#c5c8d0]">{art.logo.direction}</p>}
-              <div className="space-y-1 text-xs text-[#bcbcbc]">
-                {art.logo.clearspace && <div>Clearspace: <span className="text-[#ededed]">{art.logo.clearspace}</span></div>}
-                {art.logo.minSize && <div>Min size: <span className="text-[#ededed]">{art.logo.minSize}</span></div>}
+              {art.logo.direction && <p className="text-sm leading-relaxed text-dim">{art.logo.direction}</p>}
+              <div className="space-y-1 text-xs text-dim">
+                {art.logo.clearspace && <div>Clearspace: <span className="text-ink">{art.logo.clearspace}</span></div>}
+                {art.logo.minSize && <div>Min size: <span className="text-ink">{art.logo.minSize}</span></div>}
               </div>
             </div>
           </section>
@@ -749,7 +820,7 @@ export function BrandCard({ art }: { art: BrandArt }) {
                 <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-300">Do</div>
                 <ul className="space-y-1.5">
                   {dos.map((d, i) => (
-                    <li key={i} className="flex gap-2 text-sm text-[#dfe4ee]"><Check size={14} className="mt-0.5 shrink-0 text-emerald-400" />{d}</li>
+                    <li key={i} className="flex gap-2 text-sm text-ink"><Check size={14} className="mt-0.5 shrink-0 text-emerald-400" />{d}</li>
                   ))}
                 </ul>
               </div>
@@ -759,7 +830,7 @@ export function BrandCard({ art }: { art: BrandArt }) {
                 <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-rose-300">Don't</div>
                 <ul className="space-y-1.5">
                   {donts.map((d, i) => (
-                    <li key={i} className="flex gap-2 text-sm text-[#dfe4ee]"><span className="mt-0.5 shrink-0 font-bold text-rose-400">×</span>{d}</li>
+                    <li key={i} className="flex gap-2 text-sm text-ink"><span className="mt-0.5 shrink-0 font-bold text-rose-400">×</span>{d}</li>
                   ))}
                 </ul>
               </div>
@@ -775,7 +846,7 @@ export function BrandCard({ art }: { art: BrandArt }) {
               {spacing.scale.map((s, i) => (
                 <div key={i} className="flex flex-col items-center gap-1">
                   <div className="rounded bg-violet-400/60" style={{ width: 14, height: Math.min(s, 72) }} />
-                  <span className="font-mono text-[10px] text-[#8e8e8e]">{s}</span>
+                  <span className="font-mono text-[10px] text-dim">{s}</span>
                 </div>
               ))}
             </div>
@@ -787,7 +858,7 @@ export function BrandCard({ art }: { art: BrandArt }) {
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <div className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-[#8e8e8e]">{children}</div>
+  return <div className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-dim">{children}</div>
 }
 
 // ===== LogoCard ===============================================================
@@ -900,120 +971,241 @@ function genLogoOptions(name: string, initials: string, serif: boolean): LogoOpt
   ]
 }
 
-// AI logo IMAGES (FLUX via keyless Pollinations) — richer designed marks à la
-// Nutlope/logocreator + Arindam200/logo-ai: style presets + brand color + name.
-const LOGO_STYLES: { key: string; label: string; desc: string }[] = [
-  { key: 'minimal', label: 'Minimal', desc: 'minimalist, simple, timeless, refined, elegant negative space' },
-  { key: 'modern', label: 'Modern', desc: 'modern, flat geometric design, clean lines, forward-thinking' },
-  { key: 'tech', label: 'Tech', desc: 'sleek, futuristic, technological, sharp, precise, high-tech' },
-  { key: 'corporate', label: 'Corporate', desc: 'professional, trustworthy, balanced, corporate, refined' },
-  { key: 'luxury', label: 'Luxury', desc: 'elegant, luxurious, premium, sophisticated, refined gold detailing' },
-  { key: 'playful', label: 'Playful', desc: 'playful, friendly, rounded shapes, bright bold colors, fun' },
-  { key: 'abstract', label: 'Abstract', desc: 'abstract, artistic, creative, unique geometric symbol' },
-  { key: 'flashy', label: 'Flashy', desc: 'bold, vibrant, eye-catching, dynamic, striking, energetic' },
+// AI logo IMAGES (Nalu image engine, keyless) — icon-only pictorial MARKS.
+// Key insight: diffusion models garble letterforms, so we never ask for text —
+// the mark is generated clean and the wordmark is typeset in code below it.
+const LOGO_STYLES: { key: string; label: string; desc: string; archetype: string }[] = [
+  { key: 'minimal', label: 'Minimal', desc: 'minimalist, timeless, refined, elegant use of negative space, thin precise strokes', archetype: 'a single-line minimal pictorial mark' },
+  { key: 'modern', label: 'Modern', desc: 'modern, flat 2D geometric design, clean confident lines, bold simple shapes', archetype: 'a flat geometric pictorial mark' },
+  { key: 'tech', label: 'Tech', desc: 'sleek, futuristic, sharp angles, precise, circuit-like accents, high-tech', archetype: 'an abstract angular tech mark' },
+  { key: 'corporate', label: 'Corporate', desc: 'professional, trustworthy, balanced, symmetrical, refined', archetype: 'a solid emblem-style mark' },
+  { key: 'luxury', label: 'Luxury', desc: 'elegant, premium, sophisticated, fine hairline detailing, subtle gold accents', archetype: 'a refined crest-like mark' },
+  { key: 'playful', label: 'Playful', desc: 'friendly, rounded soft shapes, cheerful, approachable', archetype: 'a rounded mascot-like mark' },
+  { key: 'abstract', label: 'Abstract', desc: 'artistic, distinctive, dynamic overlapping geometry, gradient of two brand colors', archetype: 'an abstract geometric mark' },
+  { key: 'gradient', label: 'Gradient', desc: 'smooth vibrant duotone gradients, contemporary, dimensional but flat-rendered', archetype: 'a fluid gradient mark' },
 ]
-function logoImgUrl(name: string, styleDesc: string, primaryHex: string, seed: number): string {
-  // Prompt tuned for clean, real-looking logos (à la logocreator): few shapes,
-  // flat vector, the brand name, on white.
-  const prompt = `professional logo design, a single ${styleDesc} logo for a brand called "${name}", flat vector, simple iconic memorable mark with the brand name "${name}" in clean modern typography, primary color #${primaryHex}, solid white background, centered, high quality, award-winning, for print and digital, no mockup, no watermark, no photo`
-  return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true&model=flux&seed=${seed}`
-}
-// Serial gate: only ONE logo-image request is ever in flight (across all slots),
-// so FLUX never gets a concurrent burst that triggers rate-limiting. Each request
-// goes through the SERVER proxy (which retries FLUX/turbo with backoff and
-// returns the bytes), so it reliably resolves to a real image.
-let imgGate: Promise<unknown> = Promise.resolve()
-async function fetchLogoImage(url: string): Promise<string> {
-  const run = async (): Promise<string> => {
-    for (let t = 0; t < 2; t++) {
-      try {
-        const r = await fetch('/api/web', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'proxyimg', url: t === 0 ? url : `${url}&r=${t}` }),
-        })
-        const d = (await r.json()) as { dataUrl?: string }
-        if (d.dataUrl) return d.dataUrl
-      } catch { /* retry */ }
-    }
-    return ''
+// Diffusion models can't parse hex codes — translate to the nearest plain-English
+// color so "primary color #0F1B2D" becomes "deep navy blue".
+const NAMED_COLORS: Array<[string, number, number, number]> = [
+  ['deep navy blue', 15, 27, 45], ['royal blue', 40, 80, 200], ['sky blue', 120, 180, 235], ['teal', 20, 128, 128],
+  ['emerald green', 16, 120, 70], ['forest green', 34, 80, 40], ['sage green', 150, 165, 130], ['antique gold', 175, 140, 86],
+  ['warm orange', 235, 130, 40], ['terracotta', 200, 100, 70], ['crimson red', 180, 40, 50], ['burgundy', 110, 30, 45],
+  ['magenta', 200, 40 , 140], ['royal purple', 100, 50, 160], ['lavender', 180, 160, 220], ['charcoal black', 35, 35, 38],
+  ['slate gray', 110, 118, 130], ['warm ivory', 244, 241, 234], ['chocolate brown', 90, 60, 40], ['coral pink', 250, 120, 110],
+]
+function hexToColorName(hex: string): string {
+  const h = hex.replace(/^#/, '')
+  if (!/^[0-9a-fA-F]{6}$/.test(h)) return 'deep navy blue'
+  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16)
+  let best = NAMED_COLORS[0][0], bd = Infinity
+  for (const [name, nr, ng, nb] of NAMED_COLORS) {
+    const d = (r - nr) ** 2 + (g - ng) ** 2 + (b - nb) ** 2
+    if (d < bd) { bd = d; best = name }
   }
-  const p = imgGate.then(run, run)
-  imgGate = p.then(() => {}, () => {}) // keep the chain alive regardless of outcome
-  return p
+  return best
+}
+function logoImgUrl(symbol: string, styleKey: string, colorDesc: string, seed: number): string {
+  const style = LOGO_STYLES.find((s) => s.key === styleKey) || LOGO_STYLES[0]
+  // Icon-only: NO text/letters (diffusion garbles type — the wordmark is typeset
+  // in code). The art-directed `symbol` concept is what makes each brand's mark
+  // distinctive instead of generic clip-art.
+  const prompt = `professional vector logo mark, ${style.archetype}: ${symbol}, ${style.desc}, flat 2D vector illustration, ${colorDesc}, one single centered icon on a solid white background, generous margin around the icon, crisp edges, iconic and memorable, dribbble behance award-winning logo design, NO text, NO letters, NO words, NO typography, no mockup, no watermark, no photo, no 3D render, no shadow`
+  // flux for crisp, high-quality marks; the server proxy retries + falls back.
+  return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=768&height=768&nologo=true&model=flux&seed=${seed}`
+}
+// Once generated, a logo image is CACHED — revisiting a chat or the Studio
+// gallery must never re-run the diffusion model. In-memory for the session +
+// a small localStorage LRU so it survives reloads.
+const logoMemCache = new Map<string, string>()
+const LOGO_CACHE_KEY = 'nalu-logo-img-cache'
+const LOGO_CACHE_MAX = 9
+function logoCacheGet(url: string): string {
+  const hit = logoMemCache.get(url)
+  if (hit) return hit
+  try {
+    const store = JSON.parse(localStorage.getItem(LOGO_CACHE_KEY) || '{}') as Record<string, string>
+    if (store[url]) { logoMemCache.set(url, store[url]); return store[url] }
+  } catch { /* */ }
+  return ''
+}
+function logoCachePut(url: string, dataUrl: string) {
+  logoMemCache.set(url, dataUrl)
+  try {
+    const store = JSON.parse(localStorage.getItem(LOGO_CACHE_KEY) || '{}') as Record<string, string>
+    store[url] = dataUrl
+    const keys = Object.keys(store)
+    while (keys.length > LOGO_CACHE_MAX) delete store[keys.shift() as string]
+    localStorage.setItem(LOGO_CACHE_KEY, JSON.stringify(store))
+  } catch { /* quota — in-memory cache still holds it */ }
+}
+// Fetch one logo image through the SERVER proxy (cache-first). The proxy
+// retries with backoff and returns the bytes, so it resolves reliably.
+async function fetchLogoImage(url: string): Promise<string> {
+  const cached = logoCacheGet(url)
+  if (cached) return cached
+  for (let t = 0; t < 2; t++) {
+    try {
+      const r = await fetch('/api/web', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'proxyimg', url: t === 0 ? url : `${url}&r=${t}` }),
+      })
+      const d = (await r.json()) as { dataUrl?: string }
+      if (d.dataUrl) { logoCachePut(url, d.dataUrl); return d.dataUrl }
+    } catch { /* retry */ }
+  }
+  return ''
 }
 
-function LogoImg({ url, alt, filename }: { url: string; alt: string; filename: string }) {
-  const [state, setState] = useState<'loading' | 'done' | 'error'>('loading')
-  const [data, setData] = useState('')
-  const [nonce, setNonce] = useState(0)
-  useEffect(() => {
-    let alive = true
-    setState('loading')
-    fetchLogoImage(url).then((d) => {
-      if (!alive) return
-      if (d) { setData(d); setState('done') } else setState('error')
-    })
-    return () => { alive = false }
-  }, [url, nonce])
-  const download = () => {
-    const a = document.createElement('a')
-    a.href = data; a.download = filename
-    document.body.appendChild(a); a.click(); a.remove()
-  }
-  return (
-    <div className="group relative aspect-square overflow-hidden rounded-xl border border-white/10 bg-white">
-      {state !== 'done' && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-white">
-          {state === 'loading' ? (
-            <>
-              <span className="h-6 w-6 animate-spin rounded-full border-2 border-black/15 border-t-[#AF8C56]" />
-              <span className="text-[10px] text-black/40">Designing…</span>
-            </>
-          ) : (
-            <button onClick={() => setNonce((n) => n + 1)} className="rounded-md bg-black/5 px-2 py-1 text-[10px] text-black/50 hover:bg-black/10">Retry</button>
-          )}
-        </div>
-      )}
-      {state === 'done' && <img src={data} alt={alt} className="h-full w-full object-contain" />}
-      {state === 'done' && (
-        <button onClick={download}
-          className="absolute bottom-1.5 right-1.5 rounded-md bg-black/55 px-2 py-1 text-[10px] font-medium text-white opacity-0 backdrop-blur transition-opacity group-hover:opacity-100">
-          Download
-        </button>
-      )}
-    </div>
-  )
+type LogoSlot = { st: 'loading' | 'done' | 'error'; data: string }
+const downloadDataUrl = (data: string, filename: string) => {
+  const a = document.createElement('a')
+  a.href = data; a.download = filename
+  document.body.appendChild(a); a.click(); a.remove()
 }
-function LogoImages({ name, brand }: { name: string; brand: string }) {
+// Composite the generated mark + a code-typeset wordmark onto one clean canvas —
+// crisp typography (diffusion models garble letters) under a crisp icon.
+function downloadLogoLockup(markDataUrl: string, name: string, serif: boolean, filename: string) {
+  const img = new Image()
+  img.onload = () => {
+    const W = 1200
+    const markSize = 680
+    const gap = 56
+    const fontPx = Math.min(120, Math.floor((W * 0.82) / Math.max(4, name.length) / 0.62))
+    const H = 120 + markSize + gap + fontPx + 120
+    const cv = document.createElement('canvas')
+    cv.width = W; cv.height = H
+    const ctx = cv.getContext('2d')
+    if (!ctx) return downloadDataUrl(markDataUrl, filename)
+    ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, W, H)
+    ctx.drawImage(img, (W - markSize) / 2, 120, markSize, markSize)
+    ctx.fillStyle = '#111111'
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top'
+    ctx.font = `${serif ? '500' : '600'} ${fontPx}px ${serif ? 'Georgia, "Times New Roman", serif' : 'Inter, "Helvetica Neue", Arial, sans-serif'}`
+    const label = serif ? name : name.toUpperCase()
+    if (!serif) { /* letter-spaced caps for the sans lockup */ }
+    ctx.fillText(label, W / 2, 120 + markSize + gap)
+    downloadDataUrl(cv.toDataURL('image/png'), filename)
+  }
+  img.onerror = () => downloadDataUrl(markDataUrl, filename)
+  img.src = markDataUrl
+}
+// Deterministic-but-well-spread seed (hash), so styles/rounds never collide.
+function seedFor(key: string): number {
+  let h = 2166136261
+  for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619) }
+  return Math.abs(h % 999983) + 1
+}
+function LogoImages({ name, brand, accent, symbol, colorNames, serif }: { name: string; brand: string; accent?: string; symbol?: string; colorNames?: string[]; serif?: boolean }) {
   const [style, setStyle] = useState('minimal')
   const [round, setRound] = useState(0)
-  const desc = LOGO_STYLES.find((s) => s.key === style)?.desc || ''
-  const primary = brand.replace(/^#/, '')
-  const seeds = [0, 1, 2].map((n) => 1 + n + round * 3 + style.length * 13)
+  // The art-directed mark concept — the difference between a distinctive logo
+  // and clip-art. Falls back to a subject-neutral geometric monogram motif.
+  const concept = (symbol || '').trim() || `an abstract geometric emblem evoking "${name}"`
+  const colorDesc = (() => {
+    const primaryName = colorNames?.[0] || hexToColorName(brand)
+    const accentName = colorNames?.[1] || (accent ? hexToColorName(accent) : '')
+    return accentName
+      ? `two-color palette: ${primaryName} as the dominant color with ${accentName} accents`
+      : `monochrome ${primaryName} on white`
+  })()
+  const urls = useMemo(
+    () => [0, 1, 2].map((n) => logoImgUrl(concept, style, colorDesc, seedFor(`${name}|${style}|${round}|${n}`))),
+    [name, concept, colorDesc, round, style],
+  )
+  const urlKey = urls.join('|')
+  const [slots, setSlots] = useState<LogoSlot[]>(() => urls.map(() => ({ st: 'loading', data: '' })))
+  const [revealed, setRevealed] = useState(false)
+
+  // Fetch ALL slots in parallel whenever the set changes; reveal them together.
+  useEffect(() => {
+    let alive = true
+    setRevealed(false)
+    setSlots(urls.map(() => ({ st: 'loading', data: '' })))
+    urls.forEach((u, i) => {
+      fetchLogoImage(u).then((d) => {
+        if (!alive) return
+        setSlots((prev) => {
+          const next = prev.slice()
+          next[i] = d ? { st: 'done', data: d } : { st: 'error', data: '' }
+          return next
+        })
+      })
+    })
+    return () => { alive = false }
+  }, [urlKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const allSettled = slots.length > 0 && slots.every((s) => s.st !== 'loading')
+  const doneCount = slots.filter((s) => s.st === 'done').length
+  // Reveal the whole batch at once the first time every slot has settled.
+  useEffect(() => { if (allSettled) setRevealed(true) }, [allSettled])
+
+  const retry = (i: number) => {
+    setSlots((prev) => { const n = prev.slice(); n[i] = { st: 'loading', data: '' }; return n })
+    fetchLogoImage(urls[i]).then((d) =>
+      setSlots((prev) => { const n = prev.slice(); n[i] = d ? { st: 'done', data: d } : { st: 'error', data: '' }; return n }),
+    )
+  }
+
   return (
-    <div className="border-t border-white/[0.08] px-4 py-3">
+    <div className="border-t border-glass/[0.08] px-4 py-3">
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8e8e8e]">AI logo images</span>
+        <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-dim">AI logo images</span>
         {LOGO_STYLES.map((s) => (
           <button
             key={s.key}
             onClick={() => setStyle(s.key)}
-            className={`rounded px-1.5 py-0.5 text-[10px] ${style === s.key ? 'bg-amber-500/25 text-amber-100' : 'bg-white/10 text-[#bdbdbd] hover:bg-white/20'}`}
+            className={`rounded px-1.5 py-0.5 text-[10px] ${style === s.key ? 'bg-amber-500/25 text-amber-100' : 'bg-glass/10 text-dim hover:bg-glass/20'}`}
           >
             {s.label}
           </button>
         ))}
-        <button onClick={() => setRound((r) => r + 1)} className="ml-auto rounded px-1.5 py-0.5 text-[10px] text-[#9a9a9a] hover:bg-white/10 hover:text-white">
+        <button onClick={() => setRound((r) => r + 1)} className="ml-auto rounded px-1.5 py-0.5 text-[10px] text-dim hover:bg-glass/10 hover:text-ink">
           Regenerate
         </button>
       </div>
       <div className="grid grid-cols-3 gap-3">
-        {seeds.map((sd, i) => {
-          const url = logoImgUrl(name, desc, primary, sd)
-          return <LogoImg key={`${round}-${style}-${i}`} url={url} alt={`${name} logo`} filename={`${slug(name, 'nalu-logo')}-${style}-${i + 1}.png`} />
-        })}
+        {!revealed
+          ? // single cohesive loading state — all three appear together when ready
+            [0, 1, 2].map((i) => (
+              <div key={i} className="flex aspect-square items-center justify-center rounded-xl border border-glass/10 bg-white">
+                <span className="h-6 w-6 animate-spin rounded-full border-2 border-black/15 border-t-accent" />
+              </div>
+            ))
+          : slots.map((s, i) => (
+              <div key={i} className="group relative aspect-square overflow-hidden rounded-xl border border-glass/10 bg-white animate-fadeIn">
+                {s.st === 'done' ? (
+                  <>
+                    <div className="flex h-full w-full flex-col items-center justify-center">
+                      <img src={s.data} alt={`${name} logo`} className="h-[78%] w-full object-contain" />
+                      <div
+                        className="max-w-[92%] truncate px-1 text-center text-black"
+                        style={{ fontFamily: serif ? 'Georgia, serif' : 'Inter, sans-serif', fontWeight: serif ? 500 : 600, fontSize: '13px', letterSpacing: serif ? '0.02em' : '0.14em' }}
+                      >
+                        {serif ? name : name.toUpperCase()}
+                      </div>
+                    </div>
+                    <button onClick={() => downloadLogoLockup(s.data, name, !!serif, `${slug(name, 'nalu-logo')}-${style}-${i + 1}.png`)}
+                      className="absolute bottom-1.5 right-1.5 rounded-md bg-black/55 px-2 py-1 text-[10px] font-medium text-ink opacity-0 backdrop-blur transition-opacity group-hover:opacity-100">
+                      Download
+                    </button>
+                  </>
+                ) : s.st === 'loading' ? (
+                  <div className="absolute inset-0 flex items-center justify-center bg-white">
+                    <span className="h-6 w-6 animate-spin rounded-full border-2 border-black/15 border-t-accent" />
+                  </div>
+                ) : (
+                  <button onClick={() => retry(i)} className="absolute inset-0 flex items-center justify-center bg-white text-[10px] text-black/50 hover:bg-black/[0.03]">
+                    <span className="rounded-md bg-black/5 px-2 py-1">Retry</span>
+                  </button>
+                )}
+              </div>
+            ))}
       </div>
-      <div className="mt-1.5 text-[10px] text-[#6f6f6f]">Real designed logos generated with FLUX (free) — first render takes a few seconds. Pick a style or Regenerate for new options; uses your brand color.</div>
+      <div className="mt-1.5 text-[10px] text-dim">
+        {revealed
+          ? 'Designed logos rendered by Nalu — pick a style or Regenerate for new options; uses your brand color.'
+          : `Designing your logos… ${doneCount}/3 ready`}
+      </div>
     </div>
   )
 }
@@ -1096,7 +1288,7 @@ export function LogoCard({ art }: { art: LogoArt }) {
     >
       {/* Concept options — a real designer presents a few directions. */}
       {options.length > 1 && (
-        <div className="flex gap-2 border-b border-white/[0.08] px-4 py-3">
+        <div className="flex gap-2 border-b border-glass/[0.08] px-4 py-3">
           {options.map((o, i) => (
             <button
               key={i}
@@ -1114,28 +1306,28 @@ export function LogoCard({ art }: { art: LogoArt }) {
 
       {/* PRIMARY: black & white — the real test a designer runs first. */}
       <div className="px-4 pt-4">
-        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8e8e8e]">Black &amp; white (primary)</div>
+        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-dim">Black &amp; white (primary)</div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <SvgBox svg={lockup} color="#0B0B0B" bg="#FFFFFF" border="border-black/10" h="h-36" />
-          <SvgBox svg={lockup} color="#FFFFFF" bg="#0B0B0B" border="border-white/10" h="h-36" />
+          <SvgBox svg={lockup} color="#FFFFFF" bg="#0B0B0B" border="border-glass/10" h="h-36" />
         </div>
       </div>
 
       {/* COLOR treatment. */}
       <div className="px-4 pt-3">
-        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8e8e8e]">In color</div>
+        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-dim">In color</div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <SvgBox svg={lockup} color={brand} bg="#F4F1EA" border="border-black/10" h="h-36" />
-          <SvgBox svg={lockup} color="#FFFFFF" bg={brand} border="border-white/10" h="h-36" />
+          <SvgBox svg={lockup} color="#FFFFFF" bg={brand} border="border-glass/10" h="h-36" />
         </div>
       </div>
 
       {/* The MARK alone, on light + dark + tiny (favicon test). */}
       <div className="px-4 py-3">
-        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8e8e8e]">The mark · scales to a favicon</div>
+        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-dim">The mark · scales to a favicon</div>
         <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
           <SvgBox svg={mark} color="#0B0B0B" bg="#FFFFFF" border="border-black/10" h="h-24" />
-          <SvgBox svg={mark} color="#FFFFFF" bg="#0B0B0B" border="border-white/10" h="h-24" />
+          <SvgBox svg={mark} color="#FFFFFF" bg="#0B0B0B" border="border-glass/10" h="h-24" />
           <SvgBox svg={mark} color={brand} bg="#F4F1EA" border="border-black/10" h="h-24" />
           <div className="flex h-24 flex-col items-center justify-center gap-1.5 rounded-xl border border-black/10 bg-white">
             <div className="text-black [&>svg]:h-8 [&>svg]:w-8" dangerouslySetInnerHTML={{ __html: mark }} />
@@ -1144,11 +1336,18 @@ export function LogoCard({ art }: { art: LogoArt }) {
         </div>
       </div>
 
-      <LogoImages name={name} brand={brand} />
+      <LogoImages
+        name={name}
+        brand={brand}
+        accent={colors[1] ? (colors[1].startsWith('#') ? colors[1] : '#' + colors[1]) : undefined}
+        symbol={art.symbol}
+        colorNames={art.colorNames}
+        serif={!!art.serif}
+      />
 
       {colors.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-white/[0.08] px-4 py-3">
-          <span className="text-[11px] uppercase tracking-wide text-[#8e8e8e]">Palette</span>
+        <div className="flex flex-wrap items-center gap-2 border-t border-glass/[0.08] px-4 py-3">
+          <span className="text-[11px] uppercase tracking-wide text-dim">Palette</span>
           {colors.map((c, i) => {
             const hex = c.startsWith('#') ? c : '#' + c
             return (
@@ -1156,14 +1355,14 @@ export function LogoCard({ art }: { art: LogoArt }) {
                 key={i}
                 onClick={() => void navigator.clipboard?.writeText(hex.toUpperCase())}
                 title={`Copy ${hex}`}
-                className="flex items-center gap-1.5 rounded-md bg-white/[0.05] px-2 py-1 text-[11px] text-[#ededed]"
+                className="flex items-center gap-1.5 rounded-md bg-glass/[0.05] px-2 py-1 text-[11px] text-ink"
               >
-                <span className="h-3.5 w-3.5 rounded-sm border border-white/20" style={{ backgroundColor: hex }} />
+                <span className="h-3.5 w-3.5 rounded-sm border border-glass/20" style={{ backgroundColor: hex }} />
                 {hex.toUpperCase()}
               </button>
             )
           })}
-          {art.font && <span className="ml-1 text-[11px] italic text-[#9a9a9a]">{art.font}</span>}
+          {art.font && <span className="ml-1 text-[11px] italic text-dim">{art.font}</span>}
         </div>
       )}
     </CardShell>
@@ -1266,8 +1465,11 @@ export function BlueprintCard({ art }: { art: BlueprintArt }) {
         const dir = s.swing === 'right' ? 1 : -1
         const hx = X(s.x)
         const hy = Y(s.y)
+        // Vertical-wall doors (dir:"v") rotate the whole symbol 90° about the
+        // hinge, so openings in side walls draw correctly instead of sideways.
+        const vertical = (s as { dir?: string }).dir === 'v'
         return (
-          <g key={i}>
+          <g key={i} {...(vertical ? { transform: `rotate(90 ${hx} ${hy})` } : {})}>
             {/* jamb gap */}
             <line x1={hx} y1={hy} x2={hx + r} y2={hy} stroke="rgba(11,15,22,1)" strokeWidth={3} />
             {/* leaf (open) */}
@@ -1281,8 +1483,9 @@ export function BlueprintCard({ art }: { art: BlueprintArt }) {
         const len = s.w * BP_SCALE
         const x = X(s.x)
         const y = Y(s.y)
+        const vertical = (s as { dir?: string }).dir === 'v'
         return (
-          <g key={i}>
+          <g key={i} {...(vertical ? { transform: `rotate(90 ${x} ${y})` } : {})}>
             <line x1={x} y1={y} x2={x + len} y2={y} stroke="rgba(11,15,22,1)" strokeWidth={4} />
             <line x1={x} y1={y - 2} x2={x + len} y2={y - 2} stroke={STROKE} strokeWidth={1} />
             <line x1={x} y1={y} x2={x + len} y2={y} stroke={STROKE} strokeWidth={1} />
@@ -1420,13 +1623,13 @@ export function BlueprintCard({ art }: { art: BlueprintArt }) {
       }
     >
       {floors.length > 1 && (
-        <div className="flex flex-wrap gap-1 border-b border-white/[0.08] bg-[#0b0e16] px-3 py-2">
+        <div className="flex flex-wrap gap-1 border-b border-glass/[0.08] bg-canvas px-3 py-2">
           {floors.map((f, i) => (
             <button
               key={i}
               onClick={() => setFloorIdx(i)}
               className={`rounded-md px-2.5 py-1 text-[11px] ${
-                i === floorIdx ? 'bg-sky-500/20 text-sky-200' : 'bg-white/[0.05] text-[#9a9a9a] hover:bg-white/10'
+                i === floorIdx ? 'bg-sky-500/20 text-sky-200' : 'bg-glass/[0.05] text-dim hover:bg-glass/10'
               }`}
             >
               {f.name || `Level ${i + 1}`}
@@ -1436,17 +1639,18 @@ export function BlueprintCard({ art }: { art: BlueprintArt }) {
       )}
       {view3d ? (
         <CardErrorBoundary label="The 3D view">
-          <Suspense fallback={<div className="flex h-[30rem] items-center justify-center bg-[#0c0e14] text-sm text-[#8e8e8e]">Building 3D model…</div>}>
+          <Suspense fallback={<div className="flex h-[30rem] items-center justify-center bg-canvas text-sm text-dim">Building 3D model…</div>}>
             <Blueprint3D key={walkMode ? 'walk' : 'orbit'} floors={threeFloors} mode={curIsSite ? 'site' : 'building'} units={art.units} storeKey={base} startWalk={walkMode} />
           </Suspense>
         </CardErrorBoundary>
       ) : (
-      <div className="bg-[#0b0e16] p-4">
+      <div className="bg-canvas p-4">
         <svg
           ref={svgRef}
           viewBox={`0 0 ${W} ${H}`}
           width={W}
           height={H}
+          data-blueprint="1"
           preserveAspectRatio="xMidYMid meet"
           className="mx-auto block h-auto w-full"
           style={{ maxHeight: '72vh', background: '#0b0e16' }}
@@ -1560,18 +1764,18 @@ export function ShoppingCard({ art }: { art: ShoppingArt }) {
   return (
     <CardShell
       icon={<ShoppingBag size={15} />}
-      tint="bg-[#AF8C56]/20 text-[#d8b878]"
+      tint="bg-accent/20 text-gold"
       title={title}
       subtitle={`${items.length} item${items.length === 1 ? '' : 's'}${art.budget ? ` · ${art.budget}` : ''}`}
       actions={<ActionBtn onClick={copyList}><Copy size={13} /> Copy list</ActionBtn>}
     >
       {/* See the items in a room: a real 3D room with the pieces auto-placed
           (walk it / record it), plus an AI-rendered scene + walkthrough video. */}
-      <div className="border-b border-white/[0.08] bg-[#0b0e16] p-4 sm:p-5">
-        <div className="relative overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]">
+      <div className="border-b border-glass/[0.08] bg-canvas p-4 sm:p-5">
+        <div className="relative overflow-hidden rounded-xl border border-glass/10 bg-glass/[0.03]">
           {show3d ? (
             <CardErrorBoundary label="The 3D room">
-              <Suspense fallback={<div className="flex aspect-video items-center justify-center text-sm text-[#8e8e8e]">Building your room…</div>}>
+              <Suspense fallback={<div className="flex aspect-video items-center justify-center text-sm text-dim">Building your room…</div>}>
                 <Blueprint3D floors={[roomPlan.floor as never]} mode="building" storeKey={`room-${slug(title, 'nalu-room')}`} initialFurniture={roomPlan.furniture as never} />
               </Suspense>
             </CardErrorBoundary>
@@ -1588,14 +1792,14 @@ export function ShoppingCard({ art }: { art: ShoppingArt }) {
           )}
           {!show3d && (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3">
-              <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-white/90">The room, furnished</div>
+              <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-glass/90">The room, furnished</div>
             </div>
           )}
         </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
           <button
             onClick={() => setShow3d((v) => !v)}
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium ${show3d ? 'border-emerald-400/40 bg-emerald-500/20 text-emerald-100' : 'border-[#AF8C56]/30 bg-[#AF8C56]/10 text-[#e2c896] hover:bg-[#AF8C56]/20'}`}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium ${show3d ? 'border-emerald-400/40 bg-emerald-500/20 text-emerald-100' : 'border-accent/30 bg-accent/10 text-gold hover:bg-accent/20'}`}
           >
             <Box size={13} /> {show3d ? 'Back to preview' : `Walk the room in 3D (${roomPlan.placed} pieces)`}
           </button>
@@ -1603,51 +1807,51 @@ export function ShoppingCard({ art }: { art: ShoppingArt }) {
             <button
               onClick={() => void makeVideo()}
               disabled={video.state === 'loading'}
-              className="flex items-center gap-1.5 rounded-lg border border-[#AF8C56]/30 bg-[#AF8C56]/10 px-3 py-1.5 text-xs font-medium text-[#e2c896] hover:bg-[#AF8C56]/20 disabled:opacity-60"
+              className="flex items-center gap-1.5 rounded-lg border border-accent/30 bg-accent/10 px-3 py-1.5 text-xs font-medium text-gold hover:bg-accent/20 disabled:opacity-60"
             >
               <Footprints size={13} /> {video.state === 'loading' ? 'Filming the room… (~60s)' : video.state === 'done' ? 'Re-film walkthrough' : 'Walkthrough video'}
             </button>
           )}
           {video.state === 'error' && <span className="text-[11px] text-red-300">{video.msg}</span>}
-          <span className="ml-auto text-[10px] text-[#6f6f6f]">{show3d ? 'Furnish · Walk through · Record tour' : 'AI-rendered preview'}</span>
+          <span className="ml-auto text-[10px] text-dim">{show3d ? 'Furnish · Walk through · Record tour' : 'AI-rendered preview'}</span>
         </div>
       </div>
-      <div className="bg-[#0b0e16] px-4 pb-4 pt-3 sm:px-5">
-        {art.summary && <p className="mb-4 max-w-2xl text-[13px] italic leading-relaxed text-[#c8c2b6]">{art.summary}</p>}
+      <div className="bg-canvas px-4 pb-4 pt-3 sm:px-5">
+        {art.summary && <p className="mb-4 max-w-2xl text-[13px] italic leading-relaxed text-ink">{art.summary}</p>}
         <div className="space-y-5">
           {groups.map((g) => (
             <div key={g.name}>
               <div className="mb-2 flex items-center gap-2.5">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#d8b878]">{g.name}</span>
-                <span className="h-px flex-1 bg-gradient-to-r from-[#AF8C56]/30 to-transparent" />
+                <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gold">{g.name}</span>
+                <span className="h-px flex-1 bg-gradient-to-r from-accent/30 to-transparent" />
               </div>
-              <div className="divide-y divide-white/[0.06] overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.02]">
+              <div className="divide-y divide-glass/[0.06] overflow-hidden rounded-xl border border-glass/[0.08] bg-glass/[0.02]">
                 {g.items.map((it, i) => {
                   const href = storeLink(it.retailer, it.query || it.name)
                   return (
-                    <div key={i} className="group flex items-center gap-3 px-3.5 py-3 transition-colors hover:bg-white/[0.03] sm:px-4">
+                    <div key={i} className="group flex items-center gap-3 px-3.5 py-3 transition-colors hover:bg-glass/[0.03] sm:px-4">
                       <a href={href} target="_blank" rel="noopener noreferrer" className="shrink-0">
                         <img
                           src={productImg(it)}
                           alt={it.name}
                           loading="lazy"
-                          className="h-12 w-12 rounded-lg border border-white/10 bg-white/[0.04] object-cover sm:h-14 sm:w-14"
+                          className="h-12 w-12 rounded-lg border border-glass/10 bg-glass/[0.04] object-cover sm:h-14 sm:w-14"
                           onError={(e) => { const t = e.currentTarget as HTMLImageElement; t.style.visibility = 'hidden' }}
                         />
                       </a>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-baseline gap-x-2">
-                          <span className="text-[13.5px] font-medium text-[#f0ede6]">{it.name}</span>
-                          {it.retailer && <span className="text-[11px] text-[#8e8e8e]">{it.retailer}</span>}
+                          <span className="text-[13.5px] font-medium text-ink">{it.name}</span>
+                          {it.retailer && <span className="text-[11px] text-dim">{it.retailer}</span>}
                         </div>
-                        {it.reason && <div className="mt-0.5 truncate text-[12px] leading-snug text-[#928d83]">{it.reason}</div>}
+                        {it.reason && <div className="mt-0.5 truncate text-[12px] leading-snug text-dim">{it.reason}</div>}
                       </div>
-                      {it.price && <span className="shrink-0 text-[13px] font-semibold tabular-nums text-[#e7d6b6]">{it.price}</span>}
+                      {it.price && <span className="shrink-0 text-[13px] font-semibold tabular-nums text-gold">{it.price}</span>}
                       <a
                         href={href}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex shrink-0 items-center gap-1 rounded-lg border border-[#AF8C56]/30 bg-[#AF8C56]/10 px-2.5 py-1.5 text-[11px] font-medium text-[#e2c896] transition-colors hover:bg-[#AF8C56]/20"
+                        className="flex shrink-0 items-center gap-1 rounded-lg border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-[11px] font-medium text-gold transition-colors hover:bg-accent/20"
                       >
                         Shop <ExternalLink size={11} />
                       </a>
@@ -1659,12 +1863,12 @@ export function ShoppingCard({ art }: { art: ShoppingArt }) {
           ))}
         </div>
         {art.budget && (
-          <div className="mt-5 flex items-center justify-between border-t border-white/[0.1] pt-3.5">
-            <span className="text-[11px] uppercase tracking-[0.14em] text-[#8e8e8e]">Estimated total</span>
-            <span className="text-base font-semibold text-[#f0ede6]">{art.budget}</span>
+          <div className="mt-5 flex items-center justify-between border-t border-glass/[0.1] pt-3.5">
+            <span className="text-[11px] uppercase tracking-[0.14em] text-dim">Estimated total</span>
+            <span className="text-base font-semibold text-ink">{art.budget}</span>
           </div>
         )}
-        <div className="mt-2.5 text-[10px] leading-relaxed text-[#6f6f6f]">Each link opens a live search at the retailer (or Google Shopping). Prices are designer estimates, not live quotes.</div>
+        <div className="mt-2.5 text-[10px] leading-relaxed text-dim">Each link opens a live search at the retailer (or Google Shopping). Prices are designer estimates, not live quotes.</div>
       </div>
     </CardShell>
   )

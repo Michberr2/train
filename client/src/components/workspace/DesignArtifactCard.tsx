@@ -2,16 +2,25 @@
 // creative subtree (fabric / jspdf / docx — all dynamically imported inside the
 // cards) stays out of the main bundle.
 import DesignCard from './DesignCard'
+import CarouselCard from './CarouselCard'
 import CanvasCard from './CanvasCard'
 import { PaletteCard, BrandCard, BlueprintCard, LogoCard, ShoppingCard } from './StudioCards'
 import type { DesignArtifact } from './types'
 
-export default function DesignArtifactCard({ art }: { art: DesignArtifact }) {
+export default function DesignArtifactCard({ art, onUpdate }: { art: DesignArtifact; onUpdate?: (art: DesignArtifact) => void }) {
   switch (art.kind) {
     case 'webpage':
     case 'poster':
     case 'motion':
-      return <DesignCard html={art.html} />
+    case 'game':
+    case 'board':
+      return (
+        <DesignCard
+          html={art.html}
+          truncated={art.truncated}
+          onUpdate={onUpdate ? (html) => onUpdate({ ...art, html, truncated: false }) : undefined}
+        />
+      )
     case 'canvas':
       return <CanvasCard art={art} />
     case 'palette':
@@ -26,6 +35,8 @@ export default function DesignArtifactCard({ art }: { art: DesignArtifact }) {
       return <LogoCard art={art} />
     case 'shopping':
       return <ShoppingCard art={art} />
+    case 'carousel':
+      return <CarouselCard art={art} />
     default:
       return null
   }

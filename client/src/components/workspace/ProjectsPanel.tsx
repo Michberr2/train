@@ -93,15 +93,15 @@ export default function ProjectsPanel() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-white/[0.09] backdrop-blur-2xl font-sans text-[#ededed]">
-      <header className="flex items-start justify-between gap-4 border-b border-white/[0.18] px-6 py-5">
+    <div className="flex h-full flex-col bg-glass/[0.09] backdrop-blur-2xl font-sans text-ink">
+      <header className="flex items-start justify-between gap-4 border-b border-glass/[0.18] px-6 py-5">
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/[0.11] backdrop-blur-2xl">
-            <FolderGit2 className="h-5 w-5 text-[#ededed]" />
+          <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-glass/[0.11] backdrop-blur-2xl">
+            <FolderGit2 className="h-5 w-5 text-ink" />
           </div>
           <div>
-            <h1 className="text-base font-semibold text-[#ededed]">Projects</h1>
-            <p className="text-sm text-[#8e8e8e]">
+            <h1 className="text-base font-semibold text-ink">Projects</h1>
+            <p className="text-sm text-dim">
               Connect a GitHub repo or create a workspace
             </p>
           </div>
@@ -110,7 +110,7 @@ export default function ProjectsPanel() {
           <button
             type="button"
             onClick={() => setShowForm(true)}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-black transition hover:bg-white/90"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-black transition hover:bg-white/80"
           >
             <Plus className="h-4 w-4" />
             New project
@@ -120,15 +120,15 @@ export default function ProjectsPanel() {
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         {showForm && (
-          <div className="mb-5 rounded-xl border border-white/[0.18] bg-white/[0.11] backdrop-blur-2xl p-4">
+          <div className="mb-5 rounded-xl border border-glass/[0.18] bg-glass/[0.11] backdrop-blur-2xl p-4">
             <div className="mb-3 flex items-center justify-between">
-              <span className="text-sm font-medium text-[#ededed]">
+              <span className="text-sm font-medium text-ink">
                 New project
               </span>
               <button
                 type="button"
                 onClick={resetForm}
-                className="rounded-md p-1 text-[#8e8e8e] transition hover:bg-white/5 hover:text-[#ededed]"
+                className="rounded-md p-1 text-dim transition hover:bg-glass/5 hover:text-ink"
                 aria-label="Cancel"
               >
                 <X className="h-4 w-4" />
@@ -144,7 +144,7 @@ export default function ProjectsPanel() {
                   if (e.key === 'Escape') resetForm()
                 }}
                 placeholder="Project name"
-                className="w-full rounded-lg border border-white/[0.18] bg-white/[0.09] backdrop-blur-2xl px-3 py-2 text-sm text-[#ededed] placeholder:text-[#8e8e8e] focus:border-white/20 focus:outline-none"
+                className="w-full rounded-lg border border-glass/[0.18] bg-glass/[0.09] backdrop-blur-2xl px-3 py-2 text-sm text-ink placeholder:text-dim focus:border-glass/20 focus:outline-none"
               />
               <input
                 value={repo}
@@ -154,14 +154,14 @@ export default function ProjectsPanel() {
                   if (e.key === 'Escape') resetForm()
                 }}
                 placeholder="owner/repo (optional)"
-                className="w-full rounded-lg border border-white/[0.18] bg-white/[0.09] backdrop-blur-2xl px-3 py-2 text-sm text-[#ededed] placeholder:text-[#8e8e8e] focus:border-white/20 focus:outline-none"
+                className="w-full rounded-lg border border-glass/[0.18] bg-glass/[0.09] backdrop-blur-2xl px-3 py-2 text-sm text-ink placeholder:text-dim focus:border-glass/20 focus:outline-none"
               />
             </div>
             <div className="mt-3 flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={resetForm}
-                className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-[#ededed] transition hover:bg-white/10"
+                className="rounded-lg bg-glass/5 px-3 py-1.5 text-sm text-ink transition hover:bg-glass/10"
               >
                 Cancel
               </button>
@@ -169,7 +169,7 @@ export default function ProjectsPanel() {
                 type="button"
                 onClick={createProject}
                 disabled={!name.trim()}
-                className="rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-black transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-black transition hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Create
               </button>
@@ -178,19 +178,19 @@ export default function ProjectsPanel() {
         )}
 
         {projects.length === 0 ? (
-          <div className="flex h-full min-h-[240px] flex-col items-center justify-center rounded-xl border border-dashed border-white/[0.18] text-center">
-            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-white/[0.11] backdrop-blur-2xl">
-              <FolderGit2 className="h-6 w-6 text-[#8e8e8e]" />
+          <div className="flex h-full min-h-[240px] flex-col items-center justify-center rounded-xl border border-dashed border-glass/[0.18] text-center">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-glass/[0.11] backdrop-blur-2xl">
+              <FolderGit2 className="h-6 w-6 text-dim" />
             </div>
-            <p className="text-sm font-medium text-[#ededed]">No projects yet</p>
-            <p className="mt-1 max-w-xs text-sm text-[#8e8e8e]">
+            <p className="text-sm font-medium text-ink">No projects yet</p>
+            <p className="mt-1 max-w-xs text-sm text-dim">
               Create a workspace or connect a GitHub repo to get started.
             </p>
             {!showForm && (
               <button
                 type="button"
                 onClick={() => setShowForm(true)}
-                className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-white/5 px-3 py-1.5 text-sm text-[#ededed] transition hover:bg-white/10"
+                className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-glass/5 px-3 py-1.5 text-sm text-ink transition hover:bg-glass/10"
               >
                 <Plus className="h-4 w-4" />
                 New project
@@ -202,30 +202,30 @@ export default function ProjectsPanel() {
             {projects.map((project) => (
               <div
                 key={project.id}
-                className="group relative rounded-xl border border-white/[0.18] bg-white/[0.11] backdrop-blur-2xl p-4 transition hover:bg-white/5"
+                className="group relative rounded-xl border border-glass/[0.18] bg-glass/[0.11] backdrop-blur-2xl p-4 transition hover:bg-glass/5"
               >
                 <button
                   type="button"
                   onClick={() => deleteProject(project.id)}
-                  className="absolute right-2 top-2 rounded-md p-1.5 text-[#8e8e8e] opacity-0 transition hover:bg-white/10 hover:text-red-300 group-hover:opacity-100"
+                  className="absolute right-2 top-2 rounded-md p-1.5 text-dim opacity-0 transition hover:bg-glass/10 hover:text-red-300 group-hover:opacity-100"
                   aria-label={`Delete ${project.name}`}
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
                 <div className="flex items-center gap-2 pr-7">
                   {project.repo && (
-                    <Github className="h-4 w-4 shrink-0 text-[#afafaf]" />
+                    <Github className="h-4 w-4 shrink-0 text-dim" />
                   )}
-                  <h2 className="truncate text-sm font-semibold text-[#ededed]">
+                  <h2 className="truncate text-sm font-semibold text-ink">
                     {project.name}
                   </h2>
                 </div>
                 {project.repo && (
-                  <p className="mt-1 truncate text-xs text-[#afafaf]">
+                  <p className="mt-1 truncate text-xs text-dim">
                     {project.repo}
                   </p>
                 )}
-                <p className="mt-3 text-xs text-[#8e8e8e]">
+                <p className="mt-3 text-xs text-dim">
                   Created {formatDate(project.createdAt)}
                 </p>
               </div>

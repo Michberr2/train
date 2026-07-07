@@ -54,12 +54,51 @@ function schedule(key: string, value: string | null): void {
   timer = setTimeout(flush, 600)
 }
 
+// Every same-origin /api/* call carries the signed-in token, so server-side
+// daily quotas meter the USER (25+/day) — not the shared anonymous IP bucket
+// (3/day). Without this, signed-in users hit "free limit reached" at 3 videos.
+let fetchPatched = false
+function installApiAuth(): void {
+  if (fetchPatched || typeof window === 'undefined') return
+  fetchPatched = true
+  const orig = window.fetch.bind(window)
+  window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    try {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url
+      if (url && (url.startsWith('/api/') || url.startsWith(`${location.origin}/api/`))) {
+        const token = getToken()
+        if (token) {
+          const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined))
+          if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`)
+          return orig(input, { ...init, headers })
+        }
+      }
+    } catch { /* fall through to the original call */ }
+    return orig(input, init)
+  }) as typeof window.fetch
+}
+
 /** Patch localStorage so every `nalu-*` write is pushed to the server. */
+// Push the COMPLETE chats payload (with all doc/sheet/deck/design artifacts) to
+// the server. The DB (Postgres) holds far more than localStorage, so artifacts
+// live here even when the browser copy has to be slimmed. Call this from the
+// chat persister with a full, artifact-preserving serialization.
+export function pushChatsFull(fullJson: string): void {
+  if (!hydrated && isEmptyish(fullJson)) return
+  schedule('nalu-chats', fullJson)
+}
+
 export function installSync(): void {
+  installApiAuth()
   if (patched) return
   patched = true
   localStorage.setItem = (key: string, value: string) => {
     origSet(key, value)
+    // 'nalu-chats' is synced separately via pushChatsFull() with the COMPLETE,
+    // artifact-preserving payload — NOT the localStorage value, which may have
+    // been stripped of docs/artifacts to fit the browser's ~5MB quota. Syncing
+    // the stripped value here is what silently destroyed users' saved docs.
+    if (key === 'nalu-chats') return
     if (key.startsWith(PREFIX) && !SKIP.has(key)) schedule(key, value)
   }
   localStorage.removeItem = (key: string) => {

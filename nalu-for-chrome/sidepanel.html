@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="sidepanel.css" />
+    <title>Nalu for Chrome</title>
+  </head>
+  <body>
+    <header class="hdr">
+      <img src="icons/icon48.png" alt="" class="logo" />
+      <div class="brand">
+        <div class="name">Nalu</div>
+        <div class="sub">for Chrome</div>
+      </div>
+      <span id="state" class="state">idle</span>
+    </header>
+
+    <div id="tasks" class="tasks hidden"></div>
+
+    <main id="log" class="log">
+      <div class="hint">
+        <p>Tell Nalu what to do on the current page and it will read the page and act for you — clicking, typing, and navigating. It asks before anything consequential.</p>
+        <ul>
+          <li>“Find the cheapest direct flight to NYC next Friday.”</li>
+          <li>“Summarize this article and copy the key points.”</li>
+          <li>“Fill the contact form with my details and stop before sending.”</li>
+        </ul>
+      </div>
+    </main>
+
+    <div id="prompt" class="prompt hidden"></div>
+
+    <footer class="composer">
+      <textarea id="goal" rows="2" placeholder="What should Nalu do on this page?"></textarea>
+      <div class="row">
+        <button id="run" class="run">Run</button>
+        <button id="stop" class="stop hidden">Stop</button>
+      </div>
+    </footer>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

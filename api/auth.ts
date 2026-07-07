@@ -1,11 +1,13 @@
 // Nalu auth — server-side accounts in Neon Postgres, shared across n4lu.ai/.com.
 // POST { action: 'signup'|'signin'|'me'|'signout', ... }
+import { cors } from './_cors'
 import { getClient, ensureSchema, hashPassword, newSalt, newToken, readToken, safeJson } from './_db'
 
 const MIN_PASSWORD = 8
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default async function handler(req: any, res: any) {
+  if (cors(req, res)) return
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'POST only' })
     return

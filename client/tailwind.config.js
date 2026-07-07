@@ -14,6 +14,17 @@ export default {
         'accent-blue': 'rgb(var(--color-accent-blue) / <alpha-value>)',
         'border-gray': 'rgb(var(--color-border-gray) / <alpha-value>)',
         'curve-line': 'rgb(var(--color-curve-line) / <alpha-value>)',
+        // Workspace (n4lu.ai app) theme tokens. `glass` flips white-alpha
+        // overlays to warm-dark-alpha in light mode; the rest are warm-earthy
+        // in light and the original dark values in dark. See globals.css.
+        glass: 'rgb(var(--ws-glass) / <alpha-value>)',
+        ink: 'rgb(var(--ws-ink) / <alpha-value>)',
+        dim: 'rgb(var(--ws-dim) / <alpha-value>)',
+        canvas: 'rgb(var(--ws-canvas) / <alpha-value>)',
+        panel: 'rgb(var(--ws-panel) / <alpha-value>)',
+        panel2: 'rgb(var(--ws-panel2) / <alpha-value>)',
+        sidebar: 'rgb(var(--ws-sidebar) / <alpha-value>)',
+        accent: 'rgb(var(--ws-accent) / <alpha-value>)',
       },
       fontFamily: {
         sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'sans-serif'],

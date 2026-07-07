@@ -32,7 +32,7 @@ export default class CardErrorBoundary extends Component<Props, State> {
           </span>
           <button
             onClick={() => this.setState((s) => ({ failed: false, key: s.key + 1 }))}
-            className="rounded-lg bg-white/10 px-2.5 py-1 text-xs text-[#ededed] hover:bg-white/20"
+            className="rounded-lg bg-glass/10 px-2.5 py-1 text-xs text-ink hover:bg-glass/20"
           >
             Retry
           </button>

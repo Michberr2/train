@@ -3,6 +3,8 @@ import {
   Plus,
   Search,
   PanelLeft,
+  Sun,
+  Moon,
   Settings,
   LogOut,
   ArrowUp,
@@ -11,6 +13,7 @@ import {
   Trash2,
   FolderGit2,
   FolderInput,
+  Bot,
   type LucideIcon,
 } from 'lucide-react'
 import {
@@ -29,21 +32,26 @@ import {
   ExternalLink,
   Download,
   ChevronLeft,
+  ChevronRight,
   Shield,
   MapPin,
   Sparkles,
+  Wand2,
+  Brain,
 } from 'lucide-react'
-import { streamChat, type WireMessage } from './agentApi'
+import { streamChat, recoverToolCalls, findJsonObjects, isToolCallShape, type WireMessage } from './agentApi'
 import { lazy, Suspense } from 'react'
 import Markdown from './Markdown'
-import MediaLoader from './MediaLoader'
+import { useTheme } from '../ThemeProvider'
+import MediaLoader, { WolfWord } from './MediaLoader'
 import CardErrorBoundary from './CardErrorBoundary'
 import { extractAttachment, type Attachment } from './extractText'
 import type { SheetDoc } from './SheetCard'
-import type { DocDoc } from './DocCard'
+import { normalizeDoc } from './DocCard'
+import type { DocDoc, DocBlock } from './DocCard'
 import type { Deck } from './SlidesCard'
 import type { DesignArtifact, DesignKind } from './types'
-import { getBrand, ensureDefaultBrand } from './brandKit'
+import { getBrand, ensureDefaultBrand, setBrand, deriveBrand } from './brandKit'
 import BrandBar from './BrandBar'
 // Heavy (three.js / pptxgenjs / docx / xlsx / fabric) — load only when a card is
 // shown, so they never weigh down the main site bundle / slow the whole site.
@@ -54,6 +62,7 @@ const DocCard = lazy(() => import('./DocCard'))
 // Nalu Studio kind→card switch (canvas/palette/brand/blueprint + DesignCard for
 // webpage/poster). Lazy so fabric/jspdf/docx never touch the main bundle.
 const DesignArtifactCard = lazy(() => import('./DesignArtifactCard'))
+const AgentsPanel = lazy(() => import('./AgentsPanel'))
 import { TOOLS, execTool, WEB_TOOLS, execWebTool, isWebTool } from './agentTools'
 import {
   getActiveRepo,
@@ -64,19 +73,20 @@ import {
   commitFiles,
   type ActiveRepo,
 } from './github'
-import StudioPanel from './StudioPanel'
+import StudioPanel, { TOOLS as STUDIO_TOOLS } from './StudioPanel'
 import MapPanel from './MapPanel'
 import ProjectsPanel from './ProjectsPanel'
 import SkillsPanel from './SkillsPanel'
-import PluginsPanel from './PluginsPanel'
 import AutomationsPanel from './AutomationsPanel'
 import SettingsPanel from './SettingsPanel'
+import { pushChatsFull } from '../../lib/sync'
 
 // ---- model ---------------------------------------------------------------
 
 interface Msg {
   role: 'user' | 'assistant'
   content: string
+  reasoning?: string // chain-of-thought (plain English) when Deep think is on
   sheet?: SheetDoc
   doc?: DocDoc
   video?: string
@@ -101,7 +111,7 @@ interface Project {
   createdAt: number
 }
 
-type View = 'chat' | 'studio' | 'map' | 'projects' | 'skills' | 'plugins' | 'automations' | 'settings'
+type View = 'chat' | 'studio' | 'map' | 'agents' | 'projects' | 'skills' | 'automations' | 'settings'
 
 const CHATS_KEY = 'nalu-chats'
 const ACTIVE_KEY = 'nalu-active-chat'
@@ -114,14 +124,15 @@ const NAV_ITEMS: { view: View; label: string; icon: LucideIcon }[] = [
   { view: 'chat', label: 'Chats', icon: MessageSquare },
   { view: 'studio', label: 'Studio', icon: Palette },
   { view: 'map', label: 'Map', icon: MapPin },
+  { view: 'agents', label: 'AutoPilot', icon: Bot },
 ]
 
 const VIEW_TITLES: Record<Exclude<View, 'chat'>, string> = {
   studio: 'Studio',
   map: 'Map',
+  agents: 'AutoPilot',
   projects: 'Projects',
   skills: 'Skills',
-  plugins: 'Plugins',
   automations: 'Automations',
   settings: 'Settings',
 }
@@ -149,6 +160,112 @@ function loadChats(): Chat[] {
     return []
   }
 }
+
+// Strip the heavy bits from attachments (base64 originals + long extracted text)
+// so the persisted copy is small; the in-memory copy keeps everything.
+function lightenAttachments(atts: Attachment[] | undefined, textLen: number): Attachment[] | undefined {
+  if (!atts || !atts.length) return atts
+  return atts.map((a) => ({
+    ...a,
+    text: typeof a.text === 'string' ? a.text.slice(0, textLen) : a.text,
+    truncated: true,
+    dataUrl: undefined,
+  }))
+}
+
+// Persisting chats MUST always succeed. If we let a quota error abort the write,
+// a deleted chat (or any edit) never lands on disk and the OLD data reloads on
+// refresh — so a "deleted" chat comes back. We therefore write progressively
+// lighter copies until one fits: full → no attachment blobs → no generated
+// artifacts → a bare skeleton. The skeleton still lists exactly the chats that
+// exist now, so deletions and new chats are ALWAYS preserved across refreshes.
+//
+// CRITICAL: localStorage (~5MB) and the server DB are persisted SEPARATELY. The
+// browser copy is tiered-down to fit quota, but the SERVER always receives the
+// full, artifact-preserving payload (dbSerialize) so docs/sheets/decks/designs
+// are NEVER lost. (Previously the stripped browser copy was synced to the DB,
+// which silently destroyed saved artifacts once localStorage filled up.)
+
+// Is a string a base64 data: URL (the big, regeneratable media)?
+const isDataUrl = (s: unknown): s is string => typeof s === 'string' && s.startsWith('data:')
+
+// Full serialization for the SERVER: keep every structured artifact
+// (doc/sheet/deck/cad/design + text). Only drop attachment ORIGINALS (re-
+// uploadable) and, if we must fit under the request-body limit, the heaviest
+// base64 media (video/images) — but NEVER the docs themselves.
+function dbSerialize(chats: Chat[]): string {
+  const MAX = 3_600_000 // stay under the serverless ~4.5MB body limit
+  const base = (dropMedia: boolean) =>
+    chats.map((c) => ({
+      ...c,
+      attachments: lightenAttachments(c.attachments, dropMedia ? 0 : 4000),
+      messages: c.messages.map((m) => ({
+        ...m,
+        attachments: lightenAttachments(m.attachments, dropMedia ? 0 : 2000),
+        // video/image are large base64 — drop only when over the size budget
+        video: dropMedia && isDataUrl(m.video) ? undefined : m.video,
+      })),
+    }))
+  let out = JSON.stringify(base(false))
+  if (out.length > MAX) out = JSON.stringify(base(true)) // drop media, KEEP docs/sheets/decks/designs
+  return out
+}
+
+function persistChats(chats: Chat[]): void {
+  // 1) SERVER: always the complete, artifact-preserving payload.
+  try { pushChatsFull(dbSerialize(chats)) } catch { /* sync best-effort */ }
+
+  // 2) BROWSER localStorage: tier down to fit the ~5MB quota (docs still live
+  //    on the server via step 1, so the browser copy can be slimmer).
+  const tiers: Array<() => string> = [
+    () => JSON.stringify(chats),
+    // Drop attachment originals (base64) — usually the bulk of the weight.
+    () =>
+      JSON.stringify(
+        chats.map((c) => ({
+          ...c,
+          attachments: lightenAttachments(c.attachments, 2000),
+          messages: c.messages.map((m) => ({ ...m, attachments: lightenAttachments(m.attachments, 1000) })),
+        })),
+      ),
+    // Drop big base64 MEDIA but KEEP structured docs/sheets/decks/designs.
+    () =>
+      JSON.stringify(
+        chats.map((c) => ({
+          ...c,
+          attachments: lightenAttachments(c.attachments, 0),
+          messages: c.messages.map((m) => ({
+            ...m,
+            attachments: lightenAttachments(m.attachments, 0),
+            video: isDataUrl(m.video) ? undefined : m.video,
+            design: undefined, // designs can embed base64; kept on server
+          })),
+        })),
+      ),
+    // Last resort: keep text only (server still has the full artifacts).
+    () =>
+      JSON.stringify(
+        chats.map((c) => ({
+          id: c.id,
+          title: c.title,
+          createdAt: c.createdAt,
+          projectId: c.projectId,
+          notes: typeof c.notes === 'string' ? c.notes.slice(0, 4000) : c.notes,
+          messages: c.messages.map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '', reasoning: m.reasoning })),
+        })),
+      ),
+    // Skeleton — guarantees the chat LIST (and every deletion) survives.
+    () => JSON.stringify(chats.map((c) => ({ id: c.id, title: c.title, createdAt: c.createdAt, projectId: c.projectId, messages: [] }))),
+  ]
+  for (const build of tiers) {
+    try {
+      localStorage.setItem(CHATS_KEY, build())
+      return
+    } catch {
+      /* too big for this tier — fall through to a lighter one */
+    }
+  }
+}
 function loadModel(): string {
   return DEFAULT_MODEL
 }
@@ -174,14 +291,37 @@ const SHEET_INTENT =
   /\b(spread ?sheets?|excels?|xlsx?|\.xls|google ?sheets?|pivot tables?|work ?books?|balance sheets?|cap tables?|time ?sheets?)\b|^\/(sheet|excel|xls)\b|\b(make|build|create|generate|do|put together|whip up|prepare|need|want|give me)\b[^.?!]*\b(spread ?sheets?|sheets?|tables?|trackers?|budgets?|rosters?|schedules?|inventory|ledgers?|gantt|workbooks?|financial models?|calculators?|p ?& ?l|income statements?)\b/i
 function isSheetPrompt(text: string): boolean {
   if (QUESTION_LEAD.test(text)) return false
+  if (MEDIA_OF.test(text)) return false
   return SHEET_INTENT.test(text)
 }
 
 // Detect "write me a business plan / doc / report" → route to the doc builder.
+// "video of X" / "animate X" is a VIDEO ask no matter what nouns X contains
+// ("video of a floor plan" was routing to the document builder).
+const MEDIA_OF =
+  /\b(generate|create|make|produce|render|do|whip up|film|shoot)\b[^.?!]*\b(videos?|animations?|clips?|movies?|reels?|gifs?)\b|\b(videos?|animations?|clips?|movies?|reels?|gifs?)\s+(of|showing|about|that|where|with|using|from|for)\b|^\/video\b|\banimate\b|\b(generate|create|make)\b[^.?!]*\b(image|photo|picture)s?\b/i
+
+// Long-form works: books, scientific articles, theses, big legal instruments,
+// anything with an explicit large page/chapter count. These run the chaptered
+// outline→sections pipeline (no length cap) instead of the one-shot doc call.
+const LONGFORM_INTENT =
+  /\b(books?|novels?|novellas?|manuscripts?|memoirs?|textbooks?|monographs?|dissertations?|thesis|theses|scientific (articles?|papers?|reviews?)|research (articles?|papers?)|journal articles?|literature reviews?|systematic reviews?|comprehensive (guide|manual|treatise)|treatises?)\b|\b(\d{2,3})[- ]?(page|pages|chapter|chapters)\b|\b(long[- ]form|full[- ]length)\b/i
+function isLongDocPrompt(text: string): boolean {
+  if (QUESTION_LEAD.test(text)) return false
+  if (MEDIA_OF.test(text)) return false
+  return LONGFORM_INTENT.test(text) && (isDocPrompt(text) || /\b(write|draft|create|make|produce|generate)\b/i.test(text))
+}
+
+// Studio memory: follow-up edit verbs — a request like "make the roof bigger"
+// revises the LAST matching artifact in this chat instead of starting over.
+const STUDIO_EDIT_VERB =
+  /\b(make|change|turn|add|remove|delete|update|fix|swap|adjust|edit|revise|recolou?r|resize|move|replace|rename|redo|restyle|rewrite|shorten|lengthen|expand|animate|center|align|darker|lighter|bigger|smaller|instead|actually|tweak)\b/i
+
 const DOC_INTENT =
   /\b(business plans?|marketing plans?|project plans?|word documents?|word docs?|google docs?|\.docx|reports?|proposals?|white ?papers?|cover letters?|résumés?|resumes?|\bcvs?\b|memos?|press releases?|essays?|write-?ups?|one ?pagers?|documents?)\b|^\/(doc|word)\b|\b(write|draft|create|build|make|generate|do|put together|prepare|whip up|need|want|give me)\b[^.?!]*\b(plans?|reports?|proposals?|essays?|letters?|documents?|docs?|memos?|briefs?|white ?papers?|whitepapers?|pdfs?|articles?|write-?ups?|one ?pagers?)\b/i
 function isDocPrompt(text: string): boolean {
   if (QUESTION_LEAD.test(text)) return false
+  if (MEDIA_OF.test(text)) return false
   return DOC_INTENT.test(text)
 }
 
@@ -198,6 +338,7 @@ const CAD_INTENT =
   /\b(auto ?cad|open ?scad|\bcad\b|cad (?:model|part|design|file)|3d models?|3d-?print(?:ed|able)?|3d print|stl files?|\.stl\b|parametric (?:part|model|design))\b|^\/cad\b|\b(design|model|make|build|create|3d ?print)\b[^.?!]*\b(brackets?|gears?|flanges?|enclosures?|housings?|mounts?|bolts?|nuts?|screws?|gadgets?|widgets?|knobs?|hooks?|stands?|holders?|adapters?|spacers?|cases?|clips?|parts?|fixtures?|jigs?|vases?|containers?)\b/i
 function isCadPrompt(text: string): boolean {
   if (QUESTION_LEAD.test(text)) return false
+  if (MEDIA_OF.test(text)) return false
   return CAD_INTENT.test(text)
 }
 
@@ -223,7 +364,7 @@ const BLUEPRINT_INTENT =
 // walkthrough of a mansion", "design my house", "3d home tour", etc. The
 // negative lookahead keeps web/app/logo asks ("design a home page") out.
 const WALKTHROUGH_INTENT =
-  /\b(walk\s?through|walk-through|house\s?tour|home\s?tour|interior design|3d\s?(?:house|home|tour|walk))\b|\b(design|build|make|create|model|render|lay\s?out)\b(?![^.?!]*\b(website|web ?app|web ?page|home ?page|landing page|app|logo|poster|deck|slide)\b)[^.?!]{0,40}\b(house|home|mansion|villa|apartment|condo|bungalow|cottage|floor ?plan|bedroom|kitchen|bathroom|living room)\b|^\/(walkthrough|house|home|tour)\b/i
+  /\b(walk\s?through|walk-through|house\s?tour|home\s?tour|3d\s?(?:house|home|tour|walk))\b|\b(design|build|make|create|model|render|lay\s?out)\b(?![^.?!]*\b(website|web ?app|web ?page|home ?page|landing page|app|logo|poster|deck|slide)\b)[^.?!]{0,40}\b(house|home|mansion|villa|apartment|condo|bungalow|cottage|floor ?plan|bedroom|kitchen|bathroom|living room)\b|^\/(walkthrough|house|home|tour)\b/i
 const LOGO_INTENT =
   /\b(logos?|logotypes?|word ?marks?|brand ?marks?|logo ?marks?|app ?icons?|monograms?|emblems?|logo design|favicons?|lockups?)\b|^\/logo\b/i
 const SHOP_INTENT =
@@ -231,8 +372,13 @@ const SHOP_INTENT =
 const CANVAS_INTENT =
   /\b(editable|vector|figma|canvas|social (?:post|graphic)|instagram (?:post|story)|flyer|poster art|graphic)\b[^.?!]*\b(design|make|create|graphic|post|canvas)\b|\beditable (?:design|graphic|canvas)\b|\bfigma-?like\b|^\/canvas\b/i
 // Motion graphics → an animated, looping self-contained HTML "HyperFrame".
+const CAROUSEL_INTENT =
+  /\b(carousel|slide ?show|swipe ?post|multi.?slide|instagram (post|carousel)|ig (post|carousel)|linkedin (post|carousel)|social (media )?(post|carousel)|tiktok slides?|photo ?dump)\b/i
 const MOTION_INTENT =
   /\b(motion graphic|animated|animation|kinetic typography|title card|logo (?:reveal|animation|intro)|promo (?:video|animation)|loop(?:ing)? (?:animation|background|graphic)|intro animation|lower third|hyperframe|gif-?style)\b|^\/(motion|animate)\b/i
+// Playable games → a self-contained PlayCanvas HTML game (Nalu Game Studio).
+const GAME_INTENT =
+  /\b(make|build|create|generate|code|design|develop|program|write)\b[^.?!]*\b(video ?game|game|platformer|shoot-?(?:er|em-?up)|arcade game|endless runner|tower defense|rpg|maze game|pong|snake game|flappy|breakout|tetris|racing game|driving game|first-?person|fps game)\b|\b(playable (?:game|demo)|mini-?games?|2d game|3d game|browser game|game where you)\b|^\/game\b/i
 
 /** Resolve a creative ask to a DesignKind, or null to fall through to the agent
  *  loop. Order: logo → palette → brand → blueprint → canvas → poster/webpage. */
@@ -241,6 +387,10 @@ function designKind(text: string): DesignKind | null {
   if (QUESTION_LEAD.test(text)) return null
   // Specific, high-confidence creative kinds win first.
   if (SHOP_INTENT.test(text)) return 'shopping'
+  // Game before motion so "make an animated platformer game" builds a game.
+  if (GAME_INTENT.test(text)) return 'game'
+  // Carousel before generic design so "instagram carousel post" is slides, not a site.
+  if (CAROUSEL_INTENT.test(text)) return 'carousel'
   // Motion before logo so "animated logo reveal" is a motion graphic, not a logo.
   if (MOTION_INTENT.test(text)) return 'motion'
   if (LOGO_INTENT.test(text)) return 'logo'
@@ -257,16 +407,109 @@ function designKind(text: string): DesignKind | null {
   return null
 }
 
+// Download any media URL (video/image, incl. cross-origin) to the user's disk.
+async function downloadMedia(url: string, fallbackName: string) {
+  try {
+    const r = await fetch(url)
+    const blob = await r.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = fallbackName
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000)
+  } catch {
+    window.open(url, '_blank') // fetch blocked (CORS) — open it for manual save
+  }
+}
+
+// Rasterize the most recent on-screen blueprint (BlueprintCard SVG) so a video
+// ask like "walkthrough of this blueprint" can use it as the start frame.
+async function blueprintSnapshot(): Promise<string | undefined> {
+  const els = document.querySelectorAll('svg[data-blueprint]')
+  const el = els[els.length - 1] as SVGSVGElement | undefined
+  if (!el) return undefined
+  try {
+    let doc = new XMLSerializer().serializeToString(el)
+    if (!/xmlns=/.test(doc)) doc = doc.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"')
+    const url = URL.createObjectURL(new Blob([doc], { type: 'image/svg+xml;charset=utf-8' }))
+    const img = new Image()
+    await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = () => rej(new Error('svg')); img.src = url })
+    const W = 1024
+    const H = Math.max(1, Math.round((img.naturalHeight / Math.max(1, img.naturalWidth)) * W))
+    const canvas = document.createElement('canvas')
+    canvas.width = W
+    canvas.height = H
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return undefined
+    ctx.fillStyle = '#0b0e16'
+    ctx.fillRect(0, 0, W, H)
+    ctx.drawImage(img, 0, 0, W, H)
+    URL.revokeObjectURL(url)
+    return canvas.toDataURL('image/jpeg', 0.92)
+  } catch {
+    return undefined
+  }
+}
+
+// ---- Specialist boost: two agents on one artifact -------------------------
+// When a doc/sheet/deck ask clearly belongs to a domain expert (finance, legal,
+// health…), that specialist drafts the SUBSTANCE first and the artifact engine
+// designs the final piece from it — e.g. "document for financial freedom" runs
+// Nalu Financial × Nalu Docs instead of a generic writer alone.
+const BOOSTS: { kind: string; label: string; re: RegExp }[] = [
+  { kind: 'finance', label: 'Nalu Financial', re: /\b(financ\w*|invest\w*|wealth|budget\w*|portfolio|retire\w*|401k|ira\b|roth|stocks?|equit\w*|hedge fund|net worth|taxes|fire number|savings?|debt|dividend|compound)\b/i },
+  { kind: 'legal', label: 'Nalu Law', re: /\b(contract|lease|nda|legal|liabilit\w*|terms (of service|of use|and conditions)|compliance|llc|incorporat\w*|will and testament|exhibits? [a-z0-9]|exhibit\b|addendum|amendment|agreement|clause|affidavit|bylaws|memorandum of|eula|privacy policy|licens\w* (agreement|terms)|indemnif\w*|ip assignment|cease and desist|demand letter|power of attorney)\b/i },
+  { kind: 'construction', label: 'Nalu Construction', re: /\b(construction|contractor|estimate for|takeoff|framing|drywall|roofing|concrete|rebar|foundation|osha|safety plan|scope of work|schedule of values|punch list|change order|building permit|jobsite|crew)\b/i },
+  { kind: 'cre', label: 'Nalu CRE', re: /\b(commercial real estate|nnn|triple net|office building|retail center|shopping center|industrial|warehouse|multifamily|cap rate|noi|rent roll|dscr|cmbs|proforma|pro forma|ground lease|tenant improvement|loi|entitlement|sitework|slab|concrete|blueprint|surveying|construction cost|gmp)\b/i },
+  { kind: 'realestate', label: 'Nalu Real Estate', re: /\b(real estate|property|rental|landlord|tenant|mortgage|house (hunt|purchase|buying)|home (buying|selling|staging)|airbnb|interior design|staging|renovat\w*|remodel\w*|floor ?plan|cap ?rate|brrrr)\b/i },
+  { kind: 'crypto', label: 'Nalu Crypto', re: /\b(crypto\w*|bitcoin|ethereum|defi|blockchain|token|staking|web3)\b/i },
+  { kind: 'math', label: 'Nalu Math', re: /\b(math (worksheet|problem set|study guide|proof)|proof of|solve these|step.by.step solution|calculus|algebra|geometry) (problems?|worksheet|guide|homework)?\b/i },
+  { kind: 'social', label: 'Nalu Social', re: /\b(carousel|social (media )?post|instagram|linkedin post|tiktok|reels?|story|pinterest|threads|\bpost\b|caption|content (calendar|series|plan)|hashtags?|go viral|hook)\b/i },
+  { kind: 'science', label: 'Nalu Science', re: /\b(scientific (paper|article|study|method)|research (paper|proposal)|physics|chemistry|biology|drug (design|discovery|candidate)|formula|derivation|experiment (design|protocol)|lab report|clinical trial design|pharmacolog\w*|hypothesis)\b/i },
+  { kind: 'medical', label: 'Nalu Medical', re: /\b(medical|medicine|clinical|diagnos\w*|treatment|medication|drug|patient|usmle|med school|shelf exam|residency|anatomy|pharmacolog\w*|nursing|study guide for (the )?(usmle|step|mcat|boards))\b/i },
+  { kind: 'hr', label: 'Nalu HR', re: /\b(job (post|description)|offer letter|employee handbook|onboarding (plan|checklist)|performance review|pip\b|comp(ensation)? (band|plan)|salary band|severance|hiring plan|interview (loop|kit|questions)|hr polic\w*|pto policy)\b/i },
+  { kind: 'health', label: 'Nalu Health', re: /\b(workout|nutrition|diet|meal plan|fitness|training plan|health plan|wellness|macros)\b/i },
+  { kind: 'marketing', label: 'Nalu Marketing', re: /\b(marketing|seo|go.?to.?market|launch plan|campaign|content (strategy|calendar)|brand strategy|growth plan)\b/i },
+]
+function boostFor(text: string): { kind: string; label: string } | null {
+  return boostsFor(text)[0] || null
+}
+/** ALL matching domain experts (best first, cap 2) — a doc that is both legal
+ *  AND financial gets briefs from BOTH before the engine designs it. */
+function boostsFor(text: string): Array<{ kind: string; label: string }> {
+  const scored: Array<{ kind: string; label: string; score: number }> = []
+  for (const b of BOOSTS) {
+    const hits = text.match(new RegExp(b.re.source, 'gi'))
+    if (hits && hits.length) scored.push({ kind: b.kind, label: b.label, score: hits.length })
+  }
+  scored.sort((a, b) => b.score - a.score)
+  return scored.slice(0, 2).map(({ kind, label }) => ({ kind, label }))
+}
+const BOOST_BRIEF = (ask: string) =>
+  `You are the domain expert contributing the SUBSTANCE for a piece a separate specialist will design and format. Produce the complete expert content for the request below — the real strategy, specific numbers and dollar math, frameworks, step-by-step plans, tables (as markdown), risks and caveats. Be exhaustive and concrete; no formatting advice, no preamble — just the expert material.\n\nTHE REQUEST:\n${ask}`
+
+// Photo → executive breakdown board: the user attached a photo and asks to
+// break down / analyze / board everything in it. Routed BEFORE doc (a
+// "breakdown" would otherwise read like a document ask).
+const BREAKDOWN_INTENT =
+  /\b(break ?downs?|breaks? (it|this|the \w+) down|deconstruct|itemi[sz]e|catalog(ue)?|inventory|(everything|all( the)? (elements|details|parts|objects))\s+(in|about|of)\s+(this|the|that|my)\s+(photo|image|picture|pic|shot)|(architectural|design|executive|presentation|breakdown)\s+board|analy[sz]e\s+(this|the|that|my)\s+(photo|image|picture|pic|house|building|room|design))\b/i
+
 // Live intent detection for the prompt bar — mirrors send()'s exact routing
 // order (doc → slides → cad → designKind → sheet → video → image) so the chip
 // shown as you type matches what will actually be built.
 const KIND_LABEL: Record<string, string> = {
   webpage: 'Website', poster: 'Poster', canvas: 'Canvas', palette: 'Palette',
   brand: 'Brand book', blueprint: 'Blueprint', logo: 'Logo', shopping: 'Shopping list', motion: 'Motion graphic',
+  game: 'Game', board: 'Breakdown board', carousel: 'Carousel',
 }
-export function detectIntent(text: string): string | null {
+export function detectIntent(text: string, hasImages = false): string | null {
   const t = text.trim()
   if (t.length < 4) return null
+  if (hasImages && BREAKDOWN_INTENT.test(t)) return 'Breakdown board'
+  if (isVideoPrompt(t)) return 'Video' // video asks outrank every other artifact
+  if (isLongDocPrompt(t) && !isSheetPrompt(t)) return 'Long-form document'
   if (isDocPrompt(t) && !isSheetPrompt(t)) return 'Document'
   if (isSlidesPrompt(t)) return 'PowerPoint'
   if (isCadPrompt(t)) return '3D model'
@@ -276,9 +519,86 @@ export function detectIntent(text: string): string | null {
     return KIND_LABEL[k] || 'Design'
   }
   if (isSheetPrompt(t)) return 'Spreadsheet'
-  if (isVideoPrompt(t)) return 'Video'
   if (isImagePrompt(t)) return 'Image'
   return null
+}
+
+// What the vision model is asked for before a breakdown board is designed —
+// exhaustive, structured ground truth about the photo.
+const BREAKDOWN_VISION_PROMPT = `Analyze this photo exhaustively for a design team building an executive presentation board about it. Organize your analysis under these headings (plain text, be specific and technical):
+SUBJECT: what it is, style/era/movement, overall character (2-3 sentences).
+ELEMENTS: every significant visible element, one line each — name, description, material/finish, estimated dimensions where inferable. Cover 10-20 elements (for a building: massing, roof, each facade element, glazing, cladding, entry, landscape, lighting; for other subjects: every object/part).
+MATERIALS & COLORS: each material and dominant color with an estimated hex value and where it appears.
+TEXT: any visible text/signage verbatim.
+SPATIAL: layout, proportions, and (for architecture) a plausible read of the floor plan/room arrangement implied by the massing and windows.
+CONDITION & CONTEXT: setting, condition, time of day, notable details.
+Reply with ONLY the analysis.`
+
+// Natural pixel dims of a data-URL image — so embedded images keep their aspect
+// ratio in the .docx / .pdf export. Resolves to 0×0 on failure (callers fall back).
+function imageNaturalDims(src: string): Promise<{ w: number; h: number }> {
+  return new Promise((res) => {
+    const im = new Image()
+    im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight })
+    im.onerror = () => res({ w: 0, h: 0 })
+    im.src = src
+  })
+}
+
+// One-line caption for an attached image, via the vision model (the doc/sheet
+// text model can't see images, so it places them by caption + index).
+async function captionImage(
+  src: string,
+  model: string | undefined,
+  signal: AbortSignal,
+): Promise<string> {
+  let text = ''
+  try {
+    await streamChat(
+      [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'In one short sentence, caption this image so it can be placed in a document. Reply with ONLY the caption — no preamble.' },
+            { type: 'image_url', image_url: { url: src } },
+          ],
+        },
+      ],
+      model,
+      { onDelta: (t) => { text += t }, signal },
+    )
+  } catch {
+    /* ignore — fall back to a generic caption */
+  }
+  return text.trim().replace(/^["']+|["']+$/g, '').slice(0, 160)
+}
+
+/** Resolve image blocks the doc model placed by `ref` (index into the user's
+ *  attached images) into real embedded images. Any images the model FORGOT to
+ *  place are appended at the end, so the user's files always make it in. */
+async function embedDocImages(
+  blocks: DocBlock[],
+  images: { src: string; caption: string }[],
+): Promise<DocBlock[]> {
+  if (!images.length) return blocks
+  const dims = await Promise.all(images.map((im) => imageNaturalDims(im.src)))
+  const used = new Set<number>()
+  const out: DocBlock[] = blocks.map((b) => {
+    const ref = (b as { ref?: unknown }).ref
+    if (b.type === 'image' && typeof ref === 'number' && images[ref]) {
+      used.add(ref)
+      const d = dims[ref]
+      return { type: 'image', src: images[ref].src, caption: (b as { caption?: string }).caption || images[ref].caption, w: d.w || undefined, h: d.h || undefined }
+    }
+    return b
+  })
+  images.forEach((im, i) => {
+    if (!used.has(i)) {
+      const d = dims[i]
+      out.push({ type: 'image', src: im.src, caption: im.caption, w: d.w || undefined, h: d.h || undefined })
+    }
+  })
+  return out
 }
 
 /** Normalize the /api/design response into a typed artifact. A bare string
@@ -297,6 +617,7 @@ const SLIDES_INTENT =
   /\b(pitch decks?|slide ?decks?|presentations?|power ?points?|pptx?|slide ?shows?|slides?|keynotes?|google slides|decks?)\b|^\/(slides|deck|ppt)\b|\b(make|build|create|design|generate|do|put together|whip up|prepare)\b[^.?!]*\b(decks?|presentations?|slides?|pitch|slideshow)\b/i
 function isSlidesPrompt(text: string): boolean {
   if (QUESTION_LEAD.test(text)) return false
+  if (MEDIA_OF.test(text)) return false
   return SLIDES_INTENT.test(text)
 }
 
@@ -312,6 +633,120 @@ function bgFor(name: string): string {
   return '/bg/tech.png'
 }
 
+// Every tool the agent can call — used to strip ANY tool-call syntax from what
+// the user sees, in whatever format the model emits it.
+const ALL_TOOL_SPECS = [...WEB_TOOLS, ...TOOLS]
+const TOOL_NAME_RE = new RegExp(
+  `\\b(${ALL_TOOL_SPECS.map((t) => t.function.name).join('|')})\\b`,
+  'i',
+)
+
+// Guarantee the user NEVER sees tool-call code, in ANY format the model invents
+// (<invoke> XML, JSON fenced/bare, Python/function-call). The answer is
+// always clean prose — tools run separately. We reuse recoverToolCalls' stripper,
+// then aggressively nuke any leftover markup.
+function cleanForDisplay(s: string): string {
+  if (!s) return s
+  // Shield ```chart blocks (real inline-chart data, incl. still-streaming ones)
+  // from the tool-call strippers — their JSON ({"name": …}) looks exactly like
+  // a dropped tool call to the heuristics below.
+  const chartGuards: string[] = []
+  const shielded = s.replace(/```chart\b[\s\S]*?(?:```|$)/gi, (m) => {
+    chartGuards.push(m)
+    return `\u0000CHART${chartGuards.length - 1}\u0000`
+  })
+  // Primary: the full recovery stripper removes all recognized tool-call forms.
+  let out = recoverToolCalls(shielded, ALL_TOOL_SPECS).cleaned
+  // Belt-and-suspenders for partial/streaming/garbled output:
+  out = out
+    .replace(/<\/?think>/gi, '')
+    // any invoke/parameter/function_calls XML (closed, unclosed, or orphan tags)
+    .replace(/<\s*(?:antml:)?(?:invoke|function_calls?)\b[\s\S]*?(?:<\s*\/\s*(?:antml:)?(?:invoke|function_calls?)\s*>|$)/gi, '')
+    .replace(/<\s*\/?\s*(?:antml:)?(?:invoke|parameter|function_calls?|tool_call)\b[^>]*>/gi, '')
+    // a fenced code block is hidden ONLY if it's a tool call (names a tool or has
+    // a function/params key) — real code the user asked for is preserved
+    .replace(/```[\w]*\s*([\s\S]*?)```/g, (m, body: string) =>
+      TOOL_NAME_RE.test(body) || /["'](?:function|tool|tool_name|recipient_name|params)["']\s*:/.test(body) ? '' : m,
+    )
+  // bare tool-call JSON objects dropped mid-text
+  for (const raw of findJsonObjects(out)) {
+    try {
+      if (isToolCallShape(JSON.parse(raw))) out = out.split(raw).join('')
+    } catch {
+      /* not JSON — leave it */
+    }
+  }
+  // a trailing, still-streaming unclosed tool call (fence, object, or invoke)
+  out = out
+    .replace(/```[\w]*\s*[\s\S]*$/i, (m: string) => (TOOL_NAME_RE.test(m) || /["'](?:function|tool|params|query|url|path)["']/.test(m) ? '' : m))
+    .replace(/\{\s*["'](?:function|tool|name|recipient_name|query|url|path)["']\s*:[\s\S]*$/i, '')
+    .replace(new RegExp(`(?:tool_call|invoke)?\\s*${TOOL_NAME_RE.source}\\s*[({][\\s\\S]*$`, 'i'), (m: string) => (TOOL_NAME_RE.test(m) ? '' : m))
+  out = out.replace(/\u0000CHART(\d+)\u0000/g, (_, i: string) => chartGuards[+i] || '')
+  return out.replace(/\n{3,}/g, '\n\n').trim()
+}
+
+// Deep-think split: while the model is reasoning, the chain-of-thought (plain
+// English) sits on the LEFT, the answer on the RIGHT, divided by a light-grey
+// line. When the turn finishes the thoughts slide out and the answer goes
+// full-width, leaving a "View thinking" button to reopen the left pane.
+function AssistantThink({
+  reasoning,
+  isLive,
+  children,
+}: {
+  reasoning?: string
+  isLive: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(true)
+  const wasLive = useRef(isLive)
+  useEffect(() => {
+    if (wasLive.current && !isLive) setOpen(false) // finished → slide thoughts out
+    if (!wasLive.current && isLive) setOpen(true) // a new turn started → reopen
+    wasLive.current = isLive
+  }, [isLive])
+
+  if (!reasoning) return <>{children}</>
+
+  return (
+    <div className="flex items-stretch">
+      {/* Left: thoughts in plain English. Slides out when thinking finishes. */}
+      <div
+        aria-hidden={!open}
+        className={`min-w-0 shrink-0 overflow-hidden transition-all duration-300 ease-out ${
+          open ? 'mr-3 w-[42%] border-r border-glass/[0.2] pr-3 opacity-100' : 'w-0 opacity-0'
+        }`}
+      >
+        <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-dim">
+          <Brain size={12} /> Thinking
+          <button
+            onClick={() => setOpen(false)}
+            className="ml-auto rounded p-0.5 text-dim hover:bg-glass/10 hover:text-ink"
+            title="Hide thinking"
+          >
+            <ChevronLeft size={13} />
+          </button>
+        </div>
+        <div className={`whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[13px] leading-relaxed text-dim ${isLive ? 'streaming-caret' : ''}`}>
+          {cleanForDisplay(reasoning)}
+        </div>
+      </div>
+      {/* Right: the answer. Goes full-width once thoughts slide out. */}
+      <div className="min-w-0 flex-1">
+        {!open && (
+          <button
+            onClick={() => setOpen(true)}
+            className="mb-2 inline-flex items-center gap-1.5 rounded-lg border border-glass/[0.14] bg-glass/[0.05] px-2.5 py-1 text-xs text-dim transition-colors hover:bg-glass/10 hover:text-ink"
+          >
+            <Brain size={12} /> View thinking
+          </button>
+        )}
+        {children}
+      </div>
+    </div>
+  )
+}
+
 export default function Workspace({ user, onLogout }: Props) {
   const [view, setView] = useState<View>('chat')
   const [model] = useState<string>(() => loadModel())
@@ -324,7 +759,17 @@ export default function Workspace({ user, onLogout }: Props) {
     () => localStorage.getItem(ACTIVE_KEY) || null,
   )
   const [input, setInput] = useState('')
+  // When the live "Creating: X" chip is showing, the user can × it to force a
+  // plain text answer instead of building the studio artifact. We remember the
+  // exact prompt they dismissed for; if they edit the text the chip comes back.
+  const [dismissedIntent, setDismissedIntent] = useState<string | null>(null)
+  // Deep-think toggle: when on, the base model reasons before answering (slower,
+  // stronger). Off by default for fast replies.
+  const [deepThink, setDeepThink] = useState(false)
   const [streaming, setStreaming] = useState(false)
+  const { isDark, toggleTheme } = useTheme()
+  // Light mode = black logo; dark mode = white (inverted) logo.
+  const logoClass = `brightness-0 ${isDark ? 'invert' : ''}`
   const [routeName, setRouteName] = useState('Nalu Catalina')
   const [query, setQuery] = useState('')
   // Sidebar is a push-column on desktop but an off-canvas overlay on phones, so
@@ -337,6 +782,7 @@ export default function Workspace({ user, onLogout }: Props) {
   }, [])
   const abortRef = useRef<AbortController | null>(null)
   const lastCadCodeRef = useRef('') // current CAD model, so follow-ups edit it
+  const lastSentPromptRef = useRef('') // stopped mid-generation → prompt returns for editing
   const chatsRef = useRef<Chat[]>([]) // always-latest chats (for reads after awaits)
   const attachPromiseRef = useRef<Promise<void> | null>(null) // in-flight extraction
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -395,24 +841,10 @@ export default function Workspace({ user, onLogout }: Props) {
     }
   }, [activeRepo, changeCount])
 
-  // persist
+  // persist — always lands the write (see persistChats) so deletions stick.
   useEffect(() => {
     chatsRef.current = chats
-    try {
-      localStorage.setItem(CHATS_KEY, JSON.stringify(chats))
-    } catch {
-      // Quota exceeded (big attachments) — drop attachment text from the stored
-      // copy so chats still persist; the in-memory copy keeps full text.
-      try {
-        const slim = chats.map((c) => ({
-          ...c,
-          attachments: (c.attachments || []).map((a) => ({ ...a, text: a.text.slice(0, 2000), truncated: true, dataUrl: undefined })),
-        }))
-        localStorage.setItem(CHATS_KEY, JSON.stringify(slim))
-      } catch {
-        /* give up persisting this update */
-      }
-    }
+    persistChats(chats)
   }, [chats])
   useEffect(() => {
     if (activeId) localStorage.setItem(ACTIVE_KEY, activeId)
@@ -468,10 +900,41 @@ export default function Workspace({ user, onLogout }: Props) {
     return out
   }, [active])
 
+  // Everything Nalu has built across ALL chats — the Studio gallery previews it.
+  const creations = useMemo(() => {
+    const out: { key: string; chatId: string; mi: number; kind: string; title: string; html?: string; img?: string }[] = []
+    chats.forEach((c) =>
+      c.messages.forEach((m, mi) => {
+        const base = { key: `${c.id}:${mi}`, chatId: c.id, mi }
+        if (m.design) {
+          const d = m.design as { kind: string; html?: string; name?: string }
+          out.push({ ...base, kind: d.kind, title: d.name || c.title || d.kind, html: typeof d.html === 'string' ? d.html : undefined })
+        } else if (m.deck) out.push({ ...base, kind: 'deck', title: m.deck.title || c.title || 'Presentation' })
+        else if (m.sheet) out.push({ ...base, kind: 'sheet', title: m.sheet.title || c.title || 'Spreadsheet' })
+        else if (m.doc) out.push({ ...base, kind: 'doc', title: m.doc.title || c.title || 'Document' })
+        else if (m.video) out.push({ ...base, kind: 'video', title: c.title || 'Video' })
+        else if (m.cad) out.push({ ...base, kind: 'cad', title: c.title || 'CAD model' })
+        else if (m.role === 'assistant' && typeof m.content === 'string') {
+          // Generated images live as markdown in the message text.
+          const im = m.content.match(/^!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/)
+          if (im) out.push({ ...base, kind: 'image', title: c.title || 'Image', img: im[1] })
+        }
+      }),
+    )
+    return out.reverse()
+  }, [chats])
+
   const msgRefs = useRef<Record<number, HTMLDivElement | null>>({})
   const scrollToMsg = useCallback((mi: number) => {
     msgRefs.current[mi]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [])
+  // Open a Studio creation in its chat (switch chat + view, then scroll to it).
+  const openCreation = useCallback((chatId: string, mi: number) => {
+    setActiveId(chatId)
+    setView('chat')
+    closeSidebarOnMobile()
+    setTimeout(() => scrollToMsg(mi), 140)
+  }, [scrollToMsg])
   const deleteMessage = useCallback(
     (mi: number) => {
       if (!activeId) return
@@ -487,7 +950,8 @@ export default function Workspace({ user, onLogout }: Props) {
   }, [messages.length, streaming])
 
   const newChat = useCallback(() => {
-    abortRef.current?.abort()
+    // Do NOT abort in-flight work — a video/doc generation keeps running in the
+    // background and lands in ITS chat even after you move on.
     setStreaming(false)
     setActiveId(null)
     setInput('')
@@ -509,7 +973,6 @@ export default function Workspace({ user, onLogout }: Props) {
 
   // ---- Attachments + Notes (per chat, referenced by the AI) ----------------
   const [attaching, setAttaching] = useState(false)
-  const [docDrawerOpen, setDocDrawerOpen] = useState(true) // right drawer (docs the AI sees)
   // Attachments just added but not yet sent — these show as chips in the prompt.
   // After sending they clear from the prompt but stay saved (drawer + AI context).
   const [pendingIds, setPendingIds] = useState<string[]>([])
@@ -544,7 +1007,6 @@ export default function Workspace({ user, onLogout }: Props) {
         }
       })()
       attachPromiseRef.current = job
-      setDocDrawerOpen(true) // reveal the doc the AI will look at
       await job
       if (attachPromiseRef.current === job) attachPromiseRef.current = null
     },
@@ -572,16 +1034,21 @@ export default function Workspace({ user, onLogout }: Props) {
   )
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, opts?: { keepView?: boolean }) => {
       const content = text.trim()
       if (!content || streaming) return
+      // If the user ×'d out of the intent chip for this exact prompt, skip every
+      // studio/artifact route and answer in plain chat instead.
+      const plain = dismissedIntent !== null && dismissedIntent === content
       setInput('')
+      setDismissedIntent(null)
       setPendingIds([]) // attachments stay saved (drawer + AI), just clear the prompt chips
 
       // Resolve the target chat id + full history SYNCHRONOUSLY from current
       // state — never from inside the setChats updater (which React runs
       // later), so the page switches to the conversation immediately instead
       // of leaving you on the home screen having to click into the chat.
+      lastSentPromptRef.current = content
       const chatId = activeId ?? uid()
       const existing = chats.find((c) => c.id === chatId)
       const history: Msg[] = [...(existing?.messages ?? []), { role: 'user', content }]
@@ -599,17 +1066,59 @@ export default function Workspace({ user, onLogout }: Props) {
       // post-await), so the AI references them in EVERY path — a text answer or a
       // generated doc/sheet/deck/design/CAD.
       const ctxChat = chatsRef.current.find((c) => c.id === chatId) || existing
+      // Images attached to this chat (downscaled on import) — fed to the vision
+      // model AND embeddable into generated docs.
+      const imageAtts = (ctxChat?.attachments || []).filter((a) => a.isImage && a.dataUrl)
       const ctxParts: string[] = []
       if (ctxChat?.notes && ctxChat.notes.trim())
         ctxParts.push(`## Notes (kept by the user for you to reference)\n${ctxChat.notes.trim()}`)
-      for (const a of ctxChat?.attachments || [])
-        ctxParts.push(`## Attached document: ${a.name}\n${a.text}${a.truncated ? '\n…[truncated]' : ''}`)
+      for (const a of ctxChat?.attachments || []) {
+        if (a.isImage) {
+          // The image itself is sent to the vision model as an image part below;
+          // here just name it so text-only paths (doc/sheet) know it exists.
+          ctxParts.push(`## Attached image: ${a.name}`)
+        } else {
+          ctxParts.push(`## Attached document: ${a.name}\n${a.text}${a.truncated ? '\n…[truncated]' : ''}`)
+        }
+      }
       const ctxBlock = ctxParts.length
         ? `\n\n---\n[Attached context for this request — use it; don't repeat it verbatim.]\n\n${ctxParts.join('\n\n---\n\n')}`
         : ''
       // For artifact generators (doc/sheet/slides/design/cad) we fold the context
       // into the prompt; the chat path injects it as a separate message below.
       const withCtx = (prompt: string) => (ctxBlock ? prompt + ctxBlock : prompt)
+
+      // Two agents on one artifact: run the matching domain specialist first
+      // (via forced routing) and hand its expert brief to the artifact engine.
+      // Best-effort — a boost failure never blocks the build.
+      const runBoost = async (artifactName: string): Promise<string> => {
+        const experts = plain ? [] : boostsFor(content)
+        if (!experts.length) return ''
+        setRouteName(`${experts.map((e) => e.label).join(' + ')} × ${artifactName}`)
+        // every matching expert drafts their lane (in parallel), all briefs feed the engine
+        const briefs = await Promise.all(
+          experts.map(async (b) => {
+            let expert = ''
+            try {
+              await streamChat(
+                [{ role: 'user', content: BOOST_BRIEF(withCtx(content)) + (experts.length > 1 ? `\n\n(Contribute ONLY your ${b.label} specialty — another expert covers the rest.)` : '') }],
+                model,
+                { signal: ctrl.signal, onDelta: (t) => { expert += t } },
+                undefined,
+                undefined,
+                undefined,
+                b.kind,
+              )
+            } catch {
+              /* boost is optional — the artifact still builds from the raw ask */
+            }
+            return expert.trim()
+              ? `\n\n--- EXPERT BRIEF from ${b.label} (substantive backbone — keep its numbers, plans and tables) ---\n${expert.trim().slice(0, 9000)}`
+              : ''
+          }),
+        )
+        return briefs.join('')
+      }
 
       setChats((cs) => {
         let next = cs
@@ -624,14 +1133,50 @@ export default function Workspace({ user, onLogout }: Props) {
         )
       })
       setActiveId(chatId)
-      setView('chat')
+      // Generating from the Studio keeps you IN the Studio (the result previews
+      // there); every other path jumps to the chat where the reply streams.
+      if (!opts?.keepView) setView('chat')
 
       const wire: WireMessage[] = history.map((m) => ({ role: m.role, content: m.content }))
       const ctrl = new AbortController()
       abortRef.current = ctrl
+
+      // ---- HOLISTIC INTENT — understand the whole prompt, cleanly. Fast regex
+      // decides clear cases instantly; when signals CONFLICT (or a build-ish ask
+      // matches nothing), a quick LLM classifier reads the whole message and
+      // picks the single intended output; `forcedKind` overrides routing below. ----
+      let forcedKind: string | null = null
+      if (!plain) {
+        const cand: string[] = []
+        if (isVideoPrompt(content)) cand.push('video')
+        if (isImagePrompt(content)) cand.push('image')
+        if (isSheetPrompt(content)) cand.push('spreadsheet')
+        if (isSlidesPrompt(content)) cand.push('slides')
+        if (isCadPrompt(content)) cand.push('cad')
+        if (isDocPrompt(content) && !isSheetPrompt(content)) cand.push(isLongDocPrompt(content) ? 'book' : 'document')
+        const dkGuess = designKind(content)
+        if (dkGuess) cand.push(dkGuess === 'webpage' ? 'website' : dkGuess)
+        const uniq = [...new Set(cand)]
+        const buildish = /\b(make|build|create|design|generate|produce|write|draft|do|put together|whip up|render|film|shoot)\b/i.test(content)
+        if (uniq.length >= 2 || (uniq.length === 0 && buildish && content.length > 24)) {
+          try {
+            const cr = await fetch('/api/web', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'intent', prompt: content, signals: uniq, hasImage: imageAtts.length > 0 }),
+              signal: ctrl.signal,
+            })
+            const cj = (await cr.json().catch(() => ({}))) as { kind?: string }
+            if (cj.kind && cj.kind !== 'chat') forcedKind = cj.kind
+          } catch { /* classifier optional — fall back to regex order */ }
+        }
+      }
+      // Translate the classifier's decision into the branch predicates. When the
+      // classifier fired, EXACTLY one route is true and the rest are forced off.
+      const wantK = (k: string, fallback: boolean): boolean => (forcedKind ? forcedKind === k : fallback)
       setStreaming(true)
 
       let acc = ''
+      let accReasoning = ''
       let accSheet: SheetDoc | undefined
       let accDoc: DocDoc | undefined
       let accVideo: string | undefined
@@ -653,6 +1198,7 @@ export default function Workspace({ user, onLogout }: Props) {
             msgs[msgs.length - 1] = {
               role: 'assistant',
               content,
+              reasoning: accReasoning || undefined,
               sheet: accSheet,
               doc: accDoc,
               video: accVideo,
@@ -687,22 +1233,258 @@ export default function Workspace({ user, onLogout }: Props) {
         if (!revealRaf) revealRaf = requestAnimationFrame(reveal)
       }
 
+      // Photo → executive breakdown board: real vision analysis of the attached
+      // photo(s), then a premium presentation board built from that analysis,
+      // with the actual photo embedded via {{PHOTO_n}} placeholders.
+      if (!plain && imageAtts.length > 0 && wantK('board', BREAKDOWN_INTENT.test(content))) {
+        setRouteName('Nalu Studio')
+        accLoading = 'design'
+        flush()
+        try {
+          // 1) The vision model reads the photo — exhaustive structured analysis.
+          let analysis = ''
+          await streamChat(
+            [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: `${BREAKDOWN_VISION_PROMPT}\n\nThe user's own request (honor any specific focus): ${content}` },
+                  ...imageAtts.map((a) => ({ type: 'image_url' as const, image_url: { url: a.dataUrl as string } })),
+                ],
+              },
+            ],
+            model,
+            { onDelta: (t) => { analysis += t }, signal: ctrl.signal },
+          )
+          // 2) The design engine turns the analysis into the executive board.
+          const r = await fetch('/api/design', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: withCtx(content), kind: 'board', analysis: analysis.trim(), brand: getBrand() || undefined }),
+            signal: ctrl.signal,
+          })
+          const data = (await r.json().catch(() => ({}))) as { html?: string; name?: string; error?: string }
+          accLoading = undefined
+          if (r.ok && data.html) {
+            // 3) Substitute the real photo(s) into the board.
+            let boardHtml = data.html
+            imageAtts.forEach((a, i) => { boardHtml = boardHtml.split(`{{PHOTO_${i}}}`).join(a.dataUrl as string) })
+            boardHtml = boardHtml.replace(/\{\{PHOTO_\d+\}\}/g, imageAtts[0].dataUrl as string)
+            accDesign = { kind: 'board', html: boardHtml, name: data.name || 'Breakdown Board' }
+            acc = ''
+          } else {
+            acc = `⚠️ ${data.error || `Board error ${r.status}`}`
+          }
+        } catch (e) {
+          accLoading = undefined
+          acc = `⚠️ ${e instanceof Error ? e.message : 'Board request failed'}`
+        }
+        flush()
+        setStreaming(false)
+        abortRef.current = null
+        return
+      }
+
       // Document: build a designed Word/PDF document (business plan, report, …).
-      if (isDocPrompt(content) && !isSheetPrompt(content)) {
-        setRouteName('Nalu Docs')
+      // ---- STUDIO MEMORY — persistent, chat-derived. The last artifact of each
+      // kind lives in the saved chat (synced across devices); an edit-ish
+      // follow-up revises IT rather than regenerating from scratch. ----------
+      const lastArts = (() => {
+        const msgs = ctxChat?.messages || []
+        const out: { doc?: DocDoc; sheet?: SheetDoc; deck?: Deck; cad?: string; designs: Record<string, DesignArtifact>; recent?: { type: string; kind?: string } } = { designs: {} }
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          const m = msgs[i]
+          if (m.doc && !out.doc) { out.doc = m.doc; out.recent ||= { type: 'doc' } }
+          if (m.sheet && !out.sheet) { out.sheet = m.sheet; out.recent ||= { type: 'sheet' } }
+          if (m.deck && !out.deck) { out.deck = m.deck; out.recent ||= { type: 'deck' } }
+          if (m.cad && !out.cad) { out.cad = m.cad; out.recent ||= { type: 'cad' } }
+          const d = m.design as (DesignArtifact & { kind?: string }) | undefined
+          if (d?.kind && !out.designs[d.kind]) { out.designs[d.kind] = d as DesignArtifact; out.recent ||= { type: 'design', kind: d.kind } }
+        }
+        return out
+      })()
+      const editTarget = (() => {
+        if (plain || !STUDIO_EDIT_VERB.test(content) || content.length > 500) return null
+        if (/\b(new|another|fresh|separate)\b[^.?!]*\b(doc|document|sheet|deck|site|game|logo|poster|design|blueprint|video)\b/i.test(content)) return null
+        if (isVideoPrompt(content) || isImagePrompt(content)) return null
+        const T: Array<[RegExp, { type: string; kind?: string }]> = [
+          [/\b(slides?|deck|presentation|powerpoint)\b/i, { type: 'deck' }],
+          [/\b(spreadsheet|sheet|workbook|tab|column|row|cell|formula)\b/i, { type: 'sheet' }],
+          [/\b(blueprint|floor ?plan)\b/i, { type: 'design', kind: 'blueprint' }],
+          [/\blogo\b/i, { type: 'design', kind: 'logo' }],
+          [/\bpalette\b/i, { type: 'design', kind: 'palette' }],
+          [/\bposter\b/i, { type: 'design', kind: 'poster' }],
+          [/\b(carousel|slideshow|swipe post|social post)\b/i, { type: 'design', kind: 'carousel' }],
+          [/\b(brand book|brand guide(lines)?)\b/i, { type: 'design', kind: 'brand' }],
+          [/\bgame\b/i, { type: 'design', kind: 'game' }],
+          [/\b(animation|motion graphic)\b/i, { type: 'design', kind: 'motion' }],
+          [/\bboard\b/i, { type: 'design', kind: 'board' }],
+          [/\b(website|web ?page|site|landing page|hero|nav(bar)?|homepage)\b/i, { type: 'design', kind: 'webpage' }],
+          [/\b(3d model|cad\b)\b/i, { type: 'cad' }],
+          [/\b(document|\bdoc\b|report|letter|memo|essay|article|chapter|the book)\b/i, { type: 'doc' }],
+        ]
+        const has = (t: { type: string; kind?: string }) =>
+          t.type === 'doc' ? !!lastArts.doc : t.type === 'sheet' ? !!lastArts.sheet : t.type === 'deck' ? !!lastArts.deck : t.type === 'cad' ? !!lastArts.cad : !!(t.kind && lastArts.designs[t.kind])
+        for (const [re, t] of T) if (re.test(content) && has(t)) return t
+        // a short bare follow-up ("make it more minimal") targets the most recent artifact
+        if (content.length < 160 && lastArts.recent && has(lastArts.recent) && !isDocPrompt(content) && !isSheetPrompt(content) && !isSlidesPrompt(content)) return lastArts.recent
+        return null
+      })()
+
+      // doc / sheet / deck follow-up edits → revise-in-place via prev payloads
+      if (editTarget?.type === 'doc' && lastArts.doc) {
+        setRouteName('Nalu Docs — editing')
         accLoading = 'doc'
         flush()
         try {
           const r = await fetch('/api/doc', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: withCtx(content), prevDoc: JSON.stringify(lastArts.doc).slice(0, 90000), images: [] }),
+            signal: ctrl.signal,
+          })
+          const data = (await r.json().catch(() => ({}))) as DocDoc & { error?: string }
+          accLoading = undefined
+          if (r.ok && Array.isArray(data.blocks) && data.blocks.length) { accDoc = normalizeDoc(data); acc = '' }
+          else acc = `⚠️ ${data.error || `Edit failed ${r.status}`}`
+        } catch (e) { accLoading = undefined; if (!ctrl.signal.aborted) acc = `⚠️ ${e instanceof Error ? e.message : 'Edit failed'}` }
+        flush(); setStreaming(false); setRouteName('Nalu Catalina'); abortRef.current = null
+        return
+      }
+      if (editTarget?.type === 'sheet' && lastArts.sheet) {
+        setRouteName('Nalu Sheets — editing')
+        accLoading = 'sheet'
+        flush()
+        try {
+          const r = await fetch('/api/sheet', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: withCtx(content), prevSheet: JSON.stringify(lastArts.sheet).slice(0, 90000) }),
+            signal: ctrl.signal,
+          })
+          const data = (await r.json().catch(() => ({}))) as SheetDoc & { error?: string }
+          accLoading = undefined
+          if (r.ok && Array.isArray(data.sheets) && data.sheets.length) { accSheet = data; acc = '' }
+          else acc = `⚠️ ${data.error || `Edit failed ${r.status}`}`
+        } catch (e) { accLoading = undefined; if (!ctrl.signal.aborted) acc = `⚠️ ${e instanceof Error ? e.message : 'Edit failed'}` }
+        flush(); setStreaming(false); setRouteName('Nalu Catalina'); abortRef.current = null
+        return
+      }
+      if (editTarget?.type === 'deck' && lastArts.deck) {
+        setRouteName('Nalu Slides — editing')
+        accLoading = 'slides'
+        flush()
+        try {
+          const r = await fetch('/api/slides', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: withCtx(content), prevDeck: JSON.stringify(lastArts.deck).slice(0, 90000) }),
+            signal: ctrl.signal,
+          })
+          const data = (await r.json().catch(() => ({}))) as Deck & { error?: string }
+          accLoading = undefined
+          if (r.ok && Array.isArray(data.slides) && data.slides.length) { accDeck = data; acc = '' }
+          else acc = `⚠️ ${data.error || `Edit failed ${r.status}`}`
+        } catch (e) { accLoading = undefined; if (!ctrl.signal.aborted) acc = `⚠️ ${e instanceof Error ? e.message : 'Edit failed'}` }
+        flush(); setStreaming(false); setRouteName('Nalu Catalina'); abortRef.current = null
+        return
+      }
+
+      // LONG-FORM: books / scientific articles / big legal documents — outline
+      // first, then every chapter generated in turn and streamed into the doc
+      // as it grows. No page cap; a failed chapter retries then is skipped.
+      if (!plain && wantK('book', isLongDocPrompt(content) && !isSheetPrompt(content))) {
+        setRouteName('Nalu Docs — long form')
+        accLoading = 'doc'
+        flush()
+        try {
+          const boost = await runBoost('Nalu Docs')
+          const or = await fetch('/api/doc', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: withCtx(content) }),
+            body: JSON.stringify({ prompt: withCtx(content) + boost, mode: 'outline' }),
+            signal: ctrl.signal,
+          })
+          const outline = (await or.json().catch(() => ({}))) as {
+            title?: string; subtitle?: string; cover?: string; kind?: string
+            chapters?: Array<{ heading?: string; brief?: string; targetWords?: number }>
+            error?: string
+          }
+          if (!or.ok || !Array.isArray(outline.chapters) || !outline.chapters.length) {
+            accLoading = undefined
+            acc = `⚠️ ${outline.error || 'Could not plan the document.'}`
+            flush(); setStreaming(false); abortRef.current = null
+            return
+          }
+          const chapters = outline.chapters.slice(0, 48)
+          accDoc = normalizeDoc({ title: outline.title, subtitle: outline.subtitle, cover: outline.cover, blocks: [] })
+          accLoading = undefined
+          const summaries: string[] = []
+          for (let ci = 0; ci < chapters.length; ci++) {
+            if (ctrl.signal.aborted) break
+            const ch = chapters[ci]
+            setRouteName(`Nalu Docs — ${ci + 1}/${chapters.length}: ${String(ch.heading || '').slice(0, 40)}`)
+            let blocks: DocBlock[] | null = null
+            for (let attempt = 0; attempt < 2 && !blocks; attempt++) {
+              try {
+                const sr = await fetch('/api/doc', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    prompt: content, mode: 'section', docTitle: outline.title, docKind: outline.kind || 'report',
+                    heading: ch.heading, brief: ch.brief, targetWords: ch.targetWords,
+                    index: ci, total: chapters.length,
+                    context: summaries.slice(-6).join('\n'),
+                  }),
+                  signal: ctrl.signal,
+                })
+                const sj = (await sr.json().catch(() => ({}))) as { blocks?: DocBlock[] }
+                if (sr.ok && Array.isArray(sj.blocks) && sj.blocks.length) blocks = sj.blocks
+              } catch { /* retry once */ }
+            }
+            if (blocks) {
+              accDoc = normalizeDoc({ ...accDoc, blocks: [...(accDoc.blocks || []), ...blocks] })
+              const text = blocks.map((b) => ('text' in b && b.text) || '').join(' ')
+              summaries.push(`Ch.${ci + 1} "${ch.heading}": ${text.slice(0, 260)}`)
+            } else if (!ctrl.signal.aborted) {
+              summaries.push(`Ch.${ci + 1} "${ch.heading}": (skipped)`)
+            }
+            flush() // progressive: the document grows chapter by chapter on screen
+          }
+          acc = ''
+        } catch (e) {
+          accLoading = undefined
+          if (!ctrl.signal.aborted) acc = `⚠️ ${e instanceof Error ? e.message : 'Long-form build failed'}`
+        }
+        flush()
+        setStreaming(false)
+        setRouteName('Nalu Catalina')
+        abortRef.current = null
+        return
+      }
+
+      if (!plain && wantK('document', isDocPrompt(content) && !isSheetPrompt(content))) {
+        setRouteName('Nalu Docs')
+        accLoading = 'doc'
+        flush()
+        try {
+          // Two-agent build: the domain expert (e.g. Nalu Financial) drafts the
+          // substance, then Nalu Docs designs the document from it.
+          const boost = await runBoost('Nalu Docs')
+          // Caption attached images (vision) so the text model can place them.
+          const docImgs = imageAtts.length
+            ? await Promise.all(
+                imageAtts.map(async (a) => ({ src: a.dataUrl as string, caption: await captionImage(a.dataUrl as string, model, ctrl.signal) })),
+              )
+            : []
+          const r = await fetch('/api/doc', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: withCtx(content) + boost, images: docImgs.map((im) => ({ caption: im.caption })) }),
             signal: ctrl.signal,
           })
           const data = (await r.json().catch(() => ({}))) as DocDoc & { error?: string }
           accLoading = undefined
           if (r.ok && Array.isArray(data.blocks) && data.blocks.length) {
-            accDoc = { title: data.title, subtitle: data.subtitle, blocks: data.blocks }
+            const blocks = await embedDocImages(data.blocks, docImgs)
+            accDoc = normalizeDoc({ title: data.title, subtitle: data.subtitle, cover: data.cover, blocks })
             acc = ''
           } else {
             acc = `⚠️ ${data.error || `Document error ${r.status}`}`
@@ -718,15 +1500,16 @@ export default function Workspace({ user, onLogout }: Props) {
       }
 
       // Nalu Slides: AI builds a deck → inline preview + PowerPoint/PDF download.
-      if (isSlidesPrompt(content)) {
+      if (!plain && wantK('slides', isSlidesPrompt(content))) {
         setRouteName('Nalu Slides')
         accLoading = 'slides'
         flush()
         try {
+          const boost = await runBoost('Nalu Slides')
           const r = await fetch('/api/slides', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: withCtx(content) }),
+            body: JSON.stringify({ prompt: withCtx(content) + boost }),
             signal: ctrl.signal,
           })
           const data = (await r.json().catch(() => ({}))) as Deck & { error?: string }
@@ -748,15 +1531,34 @@ export default function Workspace({ user, onLogout }: Props) {
       }
 
       // Nalu CAD: AI writes OpenSCAD → inline 3D model viewer (compiled in-browser).
-      if (isCadPrompt(content)) {
+      if (!plain && wantK('cad', isCadPrompt(content))) {
         setRouteName('Nalu CAD')
         accLoading = 'cad'
         flush()
         try {
+          // Construction-grade exactness: for anything built (a bolt, a slab, a
+          // whole building) Nalu Construction first writes the precise
+          // dimensional spec, and the CAD engine models to it.
+          let spec = ''
+          if (/\b(bolt|screw|nut|washer|anchor|bracket|beam|column|joist|truss|stud|slab|footing|foundation|wall|house|building|shed|garage|barn|deck|stair|framing|frame|flange|plate|weld|rebar|roof)\w*\b/i.test(content)) {
+            setRouteName('Nalu Construction × Nalu CAD')
+            try {
+              await streamChat(
+                [{ role: 'user', content: `You are writing the EXACT dimensional spec for a 3D CAD model of: ${content}\n\nList every component with REAL-WORLD dimensions in millimetres (hardware sizes and head/thread geometry, member sizes, spacings, thicknesses, embed depths), counts, and how the parts fit together. Compact bullet spec only — no prose, no advice.` }],
+                model,
+                { signal: ctrl.signal, onDelta: (t) => { spec += t } },
+                undefined, undefined, undefined,
+                'construction',
+              )
+            } catch { /* spec is a boost — CAD still builds without it */ }
+          }
           const r = await fetch('/api/cad', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: withCtx(content), prevCode: lastCadCodeRef.current }),
+            body: JSON.stringify({
+              prompt: withCtx(content) + (spec.trim() ? `\n\nEXACT SPEC from Nalu Construction — model these dimensions precisely:\n${spec.trim().slice(0, 6000)}` : ''),
+              prevCode: lastCadCodeRef.current || lastArts.cad || '',
+            }),
             signal: ctrl.signal,
           })
           const data = (await r.json().catch(() => ({}))) as { code?: string; error?: string }
@@ -780,7 +1582,37 @@ export default function Workspace({ user, onLogout }: Props) {
 
       // Nalu Studio: AI produces the right editable artifact for the ask —
       // canvas (Figma-like) / palette / brand / blueprint / poster / webpage.
-      const studioKind = designKind(content)
+      // Follow-up website tweaks REVISE the existing page (prevHtml) instead of
+      // regenerating from scratch, so users can converge on a design.
+      const lastWebHtml = (() => {
+        const msgs = ctxChat?.messages || []
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          const d = msgs[i]?.design as { kind?: string; html?: string } | undefined
+          if (d?.html && (d.kind === 'webpage' || d.kind === 'board')) return d.html
+        }
+        return ''
+      })()
+      const WEB_EDIT_VERB = /\b(make|change|turn|add|remove|delete|update|fix|swap|adjust|edit|recolou?r|resize|move|replace|rename|redo|restyle|animate|center|align|darker|lighter|bigger|smaller|sticky)\b/i
+      const NEW_SITE_ASK = /\b(new|another|different|fresh|separate)\b[^.?!]*\b(site|website|page|app|design)\b|\b(website|site|landing page|web ?app|homepage)\s+(for|about)\b/i
+      // a VIDEO ask always goes to the video engine — even when it mentions
+      // walkthrough/blueprint (those words otherwise route to the 3D builder)
+      const DESIGN_KINDS = ['website', 'logo', 'palette', 'brand', 'blueprint', 'poster', 'canvas', 'shopping', 'motion', 'game', 'board', 'carousel']
+      let studioKind = plain || isVideoPrompt(content)
+        ? null
+        : forcedKind
+          ? (DESIGN_KINDS.includes(forcedKind) ? (forcedKind === 'website' ? 'webpage' : (forcedKind as ReturnType<typeof designKind>)) : null)
+          : designKind(content)
+      // Studio memory: a design-kind edit revises the LAST artifact of that kind
+      const prevArt = editTarget?.type === 'design' && editTarget.kind ? lastArts.designs[editTarget.kind] : undefined
+      if (prevArt && editTarget?.kind) studioKind = editTarget.kind as typeof studioKind
+      const isWebEdit =
+        !plain && !!lastWebHtml && WEB_EDIT_VERB.test(content) && !NEW_SITE_ASK.test(content) &&
+        (studioKind === 'webpage' ||
+          (!studioKind &&
+            /\b(page|site|website|hero|nav(bar)?|header|footer|section|headline|tagline|button|cta|colors?|palette|fonts?|layout|board)\b/i.test(content) &&
+            !isDocPrompt(content) && !isSheetPrompt(content) && !isSlidesPrompt(content) && !isCadPrompt(content) &&
+            !isVideoPrompt(content) && !isImagePrompt(content)))
+      if (isWebEdit) studioKind = 'webpage'
       if (studioKind) {
         setRouteName('Nalu Studio')
         accLoading = 'design'
@@ -789,7 +1621,21 @@ export default function Workspace({ user, onLogout }: Props) {
           const r = await fetch('/api/design', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: withCtx(content), kind: studioKind, brand: getBrand() || undefined }),
+            body: JSON.stringify({
+              prompt:
+                withCtx(content) +
+                (prevArt && (editTarget?.kind === 'logo' || editTarget?.kind === 'palette' || editTarget?.kind === 'shopping')
+                  ? `\n\nPREVIOUS ${editTarget.kind.toUpperCase()} JSON (revise THIS — keep everything not mentioned in the request identical; output the full updated JSON):\n${JSON.stringify(prevArt).slice(0, 9000)}`
+                  : ''),
+              kind: studioKind,
+              brand: getBrand() || undefined,
+              ...(prevArt && 'html' in prevArt && (prevArt as { html?: string }).html
+                ? { prevHtml: (prevArt as { html: string }).html }
+                : isWebEdit
+                  ? { prevHtml: lastWebHtml }
+                  : {}),
+              ...(prevArt && editTarget?.kind === 'blueprint' ? { prevBlueprint: JSON.stringify(prevArt).slice(0, 60000) } : {}),
+            }),
             signal: ctrl.signal,
           })
           const data = (await r.json().catch(() => ({}))) as { error?: string }
@@ -807,13 +1653,19 @@ export default function Workspace({ user, onLogout }: Props) {
               'lockup' in data ||
               'mark' in data ||
               'initials' in data ||
-              'items' in data)
+              'items' in data ||
+              (studioKind === 'carousel' && 'slides' in data))
           if (ok) {
             accDesign = normalizeArtifact(studioKind, data)
             acc = ''
-            // Brand stays EXPLICIT: the user clicks "Make routine" on a palette
-            // or brand card to set the global Brand Kit — generating one never
-            // hijacks the active routine brand.
+            // A freshly generated palette / brand becomes the active Brand Kit
+            // immediately, so docs, decks and sheets the user downloads next
+            // KEEP the palette they just gave (not the house default). They can
+            // still re-pin any older palette via "Make routine".
+            if (accDesign.kind === 'palette' || accDesign.kind === 'brand') {
+              const b = deriveBrand(accDesign)
+              if (b) setBrand(b)
+            }
           } else {
             acc = `⚠️ ${data.error || `Studio error ${r.status}`}`
           }
@@ -828,15 +1680,16 @@ export default function Workspace({ user, onLogout }: Props) {
       }
 
       // Spreadsheet: build a real workbook (Excel formulas) the user can download.
-      if (isSheetPrompt(content)) {
+      if (!plain && wantK('spreadsheet', isSheetPrompt(content))) {
         setRouteName('Nalu Sheets')
         accLoading = 'sheet'
         flush()
         try {
+          const boost = await runBoost('Nalu Sheets')
           const r = await fetch('/api/sheet', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: withCtx(content) }),
+            body: JSON.stringify({ prompt: withCtx(content) + boost }),
             signal: ctrl.signal,
           })
           const data = (await r.json().catch(() => ({}))) as SheetDoc & { error?: string }
@@ -857,17 +1710,23 @@ export default function Workspace({ user, onLogout }: Props) {
         return
       }
 
-      // Video generation: route to the (pluggable) video endpoint.
-      if (isVideoPrompt(content)) {
+      // Video generation: route to the (pluggable) video endpoint. An attached
+      // photo (or the blueprint on screen) becomes the START FRAME — true
+      // image-to-video walkthroughs and blueprint→3D grow reveals.
+      if (!plain && wantK('video', isVideoPrompt(content))) {
         setRouteName('Nalu Video')
         accLoading = 'video'
         flush()
         const vidPrompt = content.replace(/^\/video\s+/i, '').trim() || content
         try {
+          let vImage = imageAtts[0]?.dataUrl as string | undefined
+          if (!vImage && /\b(blueprint|floor ?plan|walk.?through|this (plan|design)|grow|3d)\b/i.test(content)) {
+            vImage = await blueprintSnapshot()
+          }
           const r = await fetch('/api/video', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: vidPrompt }),
+            body: JSON.stringify({ prompt: vidPrompt, ...(vImage ? { image: vImage } : {}) }),
             signal: ctrl.signal,
           })
           const data = (await r.json().catch(() => ({}))) as { url?: string; error?: string }
@@ -890,7 +1749,7 @@ export default function Workspace({ user, onLogout }: Props) {
 
       // Image generation: if the user is asking for an image, call the image
       // endpoint (Nalu Image / CogView) and render the result inline as Markdown.
-      if (isImagePrompt(content)) {
+      if (!plain && wantK('image', isImagePrompt(content))) {
         setRouteName('Nalu Image')
         accLoading = 'image'
         flush()
@@ -938,17 +1797,40 @@ export default function Workspace({ user, onLogout }: Props) {
             ...wire.map((m) => ({ role: m.role, content: m.content })),
           ]
         : wire.map((m) => ({ role: m.role, content: m.content }))
+      // Attach any images on this chat to the latest user turn so the vision
+      // model can actually SEE them (screenshots, photos). /api/chat routes a
+      // message with image parts to Nalu Vision. Images were downscaled on import.
+      if (imageAtts.length) {
+        for (let i = conv.length - 1; i >= 0; i--) {
+          if (conv[i].role === 'user') {
+            const txt = typeof conv[i].content === 'string' ? (conv[i].content as string) : ''
+            conv[i] = {
+              ...conv[i],
+              content: [
+                { type: 'text', text: txt },
+                ...imageAtts.map((a) => ({ type: 'image_url' as const, image_url: { url: a.dataUrl as string } })),
+              ],
+            }
+            break
+          }
+        }
+      }
       let sawAny = false
       // Up to 12 tool rounds so the agent can do genuinely deep, multi-step
       // research (search → read sources → refine → read more) before answering.
       for (let round = 0; round < 12 && !ctrl.signal.aborted; round++) {
-        const { text, toolCalls } = await streamChat(
+        const { text, reasoning, autoResearch, toolCalls } = await streamChat(
           conv,
           model,
           {
             signal: ctrl.signal,
             onDelta: (t) => {
               acc += t
+              sawAny = true
+              scheduleFlush()
+            },
+            onReasoning: (t) => {
+              accReasoning += t
               sawAny = true
               scheduleFlush()
             },
@@ -961,10 +1843,38 @@ export default function Workspace({ user, onLogout }: Props) {
           },
           tools,
           context,
+          deepThink,
         )
-        conv.push({ role: 'assistant', content: text || null, tool_calls: toolCalls.length ? toolCalls : undefined })
-        if (!toolCalls.length) break
-        for (const tc of toolCalls) {
+        // Recover tool calls a model emitted as plain text instead of the
+        // tool_calls field (known serving gap: GLM emits JSON, DeepSeek emits
+        // <tool_name>…</tool_name>). Run them for real and strip the call syntax
+        // from what the user sees (keeping any "Let me research…" preamble).
+        let calls = toolCalls
+        let shownText = text
+        // When the SERVER already did the research (autoResearch), the model got
+        // no tools — its text is the final answer. Skip the recovery/tool loop
+        // entirely so nothing re-runs and the turn ends cleanly.
+        if (!autoResearch && !calls.length) {
+          // In deep-think mode the model often emits its tool-call JSON inside the
+          // REASONING section (before the answer marker). Recover from BOTH the
+          // answer and the reasoning so the tools actually run and the raw JSON is
+          // stripped from whichever pane it appeared in.
+          const recA = recoverToolCalls(text, tools)
+          const recR = recoverToolCalls(reasoning, tools)
+          const found = [...recA.calls, ...recR.calls]
+          if (found.length) {
+            calls = found
+            acc = acc.slice(0, acc.length - text.length) + recA.cleaned
+            shownText = recA.cleaned
+            if (recR.calls.length && reasoning) {
+              accReasoning = accReasoning.slice(0, accReasoning.length - reasoning.length) + recR.cleaned
+            }
+            flush()
+          }
+        }
+        conv.push({ role: 'assistant', content: shownText || null, tool_calls: calls.length ? calls : undefined })
+        if (autoResearch || !calls.length) break
+        for (const tc of calls) {
           let label = ''
           try {
             const a = JSON.parse(tc.function.arguments || '{}') as { path?: string; query?: string; url?: string }
@@ -987,16 +1897,24 @@ export default function Workspace({ user, onLogout }: Props) {
       if (!sawAny) {
         acc = '⚠️ No response from the Nalu engine. Please try again in a moment.'
       }
+      // Deep-think fallback: if the model produced reasoning but never the answer
+      // marker, don't strand it in the left pane — show it as the answer.
+      if (accReasoning && !acc.trim()) {
+        acc = accReasoning
+        accReasoning = ''
+      }
       flush() // ensure the final, complete text is rendered (no pending frame lost)
       setStreaming(false)
       abortRef.current = null
     },
-    [activeId, chats, streaming, model, activeRepo, activeProjectId],
+    [activeId, chats, streaming, model, activeRepo, activeProjectId, dismissedIntent, deepThink],
   )
 
   const stop = useCallback(() => {
     abortRef.current?.abort()
     setStreaming(false)
+    // hand the prompt back so it can be edited and re-sent
+    if (lastSentPromptRef.current) setInput((cur) => (cur.trim() ? cur : lastSentPromptRef.current))
   }, [])
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1012,27 +1930,98 @@ export default function Workspace({ user, onLogout }: Props) {
     closeSidebarOnMobile()
   }, [closeSidebarOnMobile])
 
-  const filteredChats = chats
-    .filter((c) => (activeProjectId ? c.projectId === activeProjectId : true))
-    .filter((c) => (query.trim() ? c.title.toLowerCase().includes(query.toLowerCase()) : true))
+  const matchesQuery = (c: Chat) => (query.trim() ? c.title.toLowerCase().includes(query.toLowerCase()) : true)
+  // Chats with no project (shown at the bottom under "Chats").
+  const unfiledChats = chats.filter((c) => !c.projectId).filter(matchesQuery)
+
+  // One chat row — reused inside a project folder and in the unfiled list.
+  const renderChatRow = (c: Chat) => (
+    <div key={c.id} className="mb-0.5">
+      <div
+        className={`group flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] cursor-pointer ${
+          c.id === activeId ? 'bg-glass/10' : 'hover:bg-glass/5'
+        }`}
+        onClick={() => selectChat(c.id)}
+      >
+        <MessageSquare size={13} className="text-dim shrink-0" />
+        <span className="truncate flex-1">{c.title}</span>
+        <div className="relative flex items-center gap-1">
+          <button
+            onClick={(e) => { e.stopPropagation(); setChatMenu((m) => (m === c.id ? null : c.id)) }}
+            className={`shrink-0 text-dim hover:text-ink transition-opacity ${chatMenu === c.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+            title="Move to project"
+            aria-label="Move to project"
+          >
+            <FolderInput size={12} />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); deleteChat(c.id) }}
+            className="opacity-0 group-hover:opacity-100 text-dim hover:text-ink transition-opacity shrink-0"
+            aria-label="Delete chat"
+          >
+            <Trash2 size={12} />
+          </button>
+          {chatMenu === c.id && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setChatMenu(null) }} />
+              <div className="absolute right-0 top-6 z-50 w-44 overflow-hidden rounded-lg border border-glass/15 bg-panel2 py-1 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-dim">Move to</div>
+                <button onClick={() => moveChatToProject(c.id, null)}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-glass/10 ${!c.projectId ? 'text-gold' : 'text-ink'}`}>
+                  <MessageSquare size={12} /> No project
+                </button>
+                {projects.map((p) => (
+                  <button key={p.id} onClick={() => moveChatToProject(c.id, p.id)}
+                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-glass/10 ${c.projectId === p.id ? 'text-gold' : 'text-ink'}`}>
+                    <FolderGit2 size={12} className="text-gold" /> <span className="truncate">{p.name}</span>
+                  </button>
+                ))}
+                {projects.length === 0 && <div className="px-3 py-1.5 text-[11px] text-dim">No projects yet</div>}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+      {c.id === activeId && (
+        <ChatDrawer
+          attachments={c.attachments || []}
+          built={builtArtifacts}
+          notes={c.notes || ''}
+          onRemove={removeAttachment}
+          onNotes={updateNotes}
+          onOpenBuilt={scrollToMsg}
+          onDeleteBuilt={deleteMessage}
+        />
+      )}
+    </div>
+  )
 
   const topBarTitle =
     view === 'chat' ? active?.title || 'New chat' : VIEW_TITLES[view]
 
   return (
     <div
-      className="h-[100dvh] w-screen flex text-[#ededed] overflow-hidden font-sans"
-      style={{
-        background: [
-          'radial-gradient(1100px 760px at 6% -12%, rgba(56,120,255,0.20), transparent 55%)',
-          'radial-gradient(950px 680px at 102% -4%, rgba(40,90,200,0.16), transparent 55%)',
-          // heavy dark overlay keeps it dark; the model photo only peeks through ~10%
-          'linear-gradient(180deg, rgba(11,12,16,0.88), rgba(11,12,16,0.93))',
-          `url(${bgFor(routeName)}) center / cover no-repeat`,
-        ].join(', '),
-        transition: 'background-image 600ms ease',
-      }}
+      className="relative isolate h-[100dvh] w-screen flex text-ink overflow-hidden font-sans"
+      style={{ backgroundColor: isDark ? 'rgb(11,12,16)' : 'rgb(247,249,251)' }}
     >
+      {/* Background model photo — a DEDICATED layer behind everything, so no
+          opaque panel can ever cover it (the old inline root background could be
+          hidden). Kept prominent; the wash above only softens it for readability. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10 bg-center bg-cover"
+        style={{ backgroundImage: `url(${bgFor(routeName)})`, transition: 'background-image 600ms ease' }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 -z-10"
+        style={{
+          background: isDark
+            ? 'radial-gradient(1100px 760px at 6% -12%, rgba(56,120,255,0.18), transparent 55%), radial-gradient(950px 680px at 102% -4%, rgba(40,90,200,0.14), transparent 55%), linear-gradient(180deg, rgba(11,12,16,0.48), rgba(11,12,16,0.64))'
+            : 'radial-gradient(1200px 620px at 50% -14%, rgba(93,156,214,0.10), transparent 60%), linear-gradient(180deg, rgba(247,249,251,0.52), rgba(238,242,247,0.66))',
+        }}
+      />
+
       {/* Mobile backdrop — taps close the off-canvas sidebar. */}
       {sidebarOpen && (
         <div
@@ -1044,30 +2033,30 @@ export default function Workspace({ user, onLogout }: Props) {
 
       {/* Sidebar — push column on desktop, off-canvas overlay on phones. */}
       <aside
-        className={`${sidebarOpen ? 'w-64' : 'w-0'} fixed inset-y-0 left-0 z-40 md:static md:z-auto transition-[width] duration-200 shrink-0 overflow-hidden border-r border-white/[0.18] bg-[#0f1320]/95 md:bg-white/[0.08] backdrop-blur-2xl flex flex-col`}
+        className={`${sidebarOpen ? 'w-64' : 'w-0'} fixed inset-y-0 left-0 z-40 md:static md:z-auto transition-[width] duration-200 shrink-0 overflow-hidden border-r border-glass/[0.18] ws-glass flex flex-col`}
       >
         <div className="h-12 flex items-center gap-2 px-3 shrink-0">
-          <img src="/wolf-icon.png" alt="Nalu" className="brightness-0 invert w-6 h-6 rounded-md" />
+          <img src="/wolf-icon.png" alt="Nalu" className={`${logoClass} w-6 h-6 rounded-md`} />
           <span className="text-sm font-semibold tracking-tight">Nalu</span>
         </div>
 
         <div className="px-3 pb-2">
           <button
             onClick={() => { newChat(); closeSidebarOnMobile() }}
-            className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm bg-white/5 hover:bg-white/10 transition-colors"
+            className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm bg-glass/5 hover:bg-glass/10 transition-colors"
           >
             <Plus size={15} /> New chat
           </button>
         </div>
 
         <div className="px-3 pb-2">
-          <div className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 bg-white/5">
-            <Search size={14} className="text-[#8e8e8e]" />
+          <div className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 bg-glass/5">
+            <Search size={14} className="text-dim" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search"
-              className="bg-transparent outline-none text-sm w-full placeholder:text-[#6e6e6e]"
+              className="bg-transparent outline-none text-sm w-full placeholder:text-dim"
             />
           </div>
         </div>
@@ -1082,7 +2071,7 @@ export default function Workspace({ user, onLogout }: Props) {
                 key={item.view}
                 onClick={() => { setView(item.view); closeSidebarOnMobile() }}
                 className={`w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors ${
-                  activeNav ? 'bg-white/10 text-[#ededed]' : 'text-[#afafaf] hover:bg-white/5'
+                  activeNav ? 'bg-glass/10 text-ink' : 'text-dim hover:bg-glass/5'
                 }`}
               >
                 <Icon size={15} className="shrink-0" />
@@ -1096,24 +2085,16 @@ export default function Workspace({ user, onLogout }: Props) {
           <>
             {/* Projects — fold chats under a project. */}
             <div className="px-2 pt-1">
-              <div className="flex items-center px-1 pb-1 text-[11px] uppercase tracking-wide text-[#6e6e6e]">
+              <div className="flex items-center px-1 pb-1 text-[11px] uppercase tracking-wide text-dim">
                 <span>Projects</span>
                 <button
                   onClick={() => setNewProjectName('')}
                   title="New project"
-                  className="ml-auto rounded p-0.5 text-[#8e8e8e] hover:bg-white/10 hover:text-white"
+                  className="ml-auto rounded p-0.5 text-dim hover:bg-glass/10 hover:text-ink"
                 >
                   <Plus size={13} />
                 </button>
               </div>
-              <button
-                onClick={() => setActiveProjectId(null)}
-                className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm ${
-                  activeProjectId === null ? 'bg-white/10 text-[#ededed]' : 'text-[#afafaf] hover:bg-white/5'
-                }`}
-              >
-                <MessageSquare size={14} className="shrink-0 text-[#8e8e8e]" /> All chats
-              </button>
               {newProjectName !== null && (
                 <input
                   autoFocus
@@ -1125,137 +2106,92 @@ export default function Workspace({ user, onLogout }: Props) {
                   }}
                   onBlur={() => (newProjectName.trim() ? createProject(newProjectName) : setNewProjectName(null))}
                   placeholder="Project name…"
-                  className="mt-1 w-full rounded-lg border border-white/15 bg-white/[0.05] px-2.5 py-1.5 text-sm text-[#ededed] outline-none focus:border-white/30"
+                  className="mt-1 w-full rounded-lg border border-glass/15 bg-glass/[0.05] px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-glass/30"
                 />
               )}
+              {/* Each project is a folder; opening it reveals its chats nested inside. */}
               {projects.map((p) => {
-                const count = chats.filter((c) => c.projectId === p.id).length
+                const projChats = chats.filter((c) => c.projectId === p.id).filter(matchesQuery)
+                const open = activeProjectId === p.id
                 return (
-                  <div
-                    key={p.id}
-                    className={`group flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm cursor-pointer ${
-                      activeProjectId === p.id ? 'bg-white/10 text-[#ededed]' : 'text-[#afafaf] hover:bg-white/5'
-                    }`}
-                    onClick={() => setActiveProjectId(p.id)}
-                  >
-                    <FolderGit2 size={14} className="shrink-0 text-[#c9b891]" />
-                    <span className="truncate flex-1">{p.name}</span>
-                    <span className="shrink-0 text-[10px] text-[#6e6e6e] group-hover:hidden">{count}</span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        deleteProject(p.id)
-                      }}
-                      className="hidden shrink-0 text-[#8e8e8e] hover:text-white group-hover:block"
-                      aria-label="Delete project"
+                  <div key={p.id}>
+                    <div
+                      className={`group flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[13px] cursor-pointer ${
+                        open ? 'bg-glass/[0.07] text-ink' : 'text-dim hover:bg-glass/5'
+                      }`}
+                      onClick={() => setActiveProjectId(open ? null : p.id)}
                     >
-                      <Trash2 size={12} />
-                    </button>
+                      <ChevronRight size={13} className={`shrink-0 text-dim transition-transform ${open ? 'rotate-90' : ''}`} />
+                      <FolderGit2 size={13} className="shrink-0 text-gold" />
+                      <span className="truncate flex-1">{p.name}</span>
+                      {!open && <span className="shrink-0 text-[10px] text-dim group-hover:hidden">{chats.filter((c) => c.projectId === p.id).length}</span>}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteProject(p.id) }}
+                        className="hidden shrink-0 text-dim hover:text-ink group-hover:block"
+                        aria-label="Delete project"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                    {open && (
+                      <div className="ml-2 mt-0.5 mb-1 space-y-0.5 border-l border-glass/[0.12] pl-1.5">
+                        {projChats.length === 0 ? (
+                          <div className="px-2 py-1 text-[11px] text-dim">Empty — “New chat” adds one here.</div>
+                        ) : (
+                          projChats.map(renderChatRow)
+                        )}
+                      </div>
+                    )}
                   </div>
                 )
               })}
             </div>
 
-            <div className="px-3 pt-3 pb-1 text-[11px] uppercase tracking-wide text-[#6e6e6e]">
-              {activeProjectId ? projects.find((p) => p.id === activeProjectId)?.name || 'Chats' : 'Recent'}
-            </div>
+            {/* Chats not filed under any project. */}
             <div className="flex-1 overflow-y-auto px-2 pb-2">
-              {filteredChats.length === 0 && (
-                <div className="px-2 py-3 text-xs text-[#6e6e6e]">
-                  {activeProjectId ? 'No chats in this project yet. Start one with New chat.' : 'No chats yet.'}
-                </div>
+              {unfiledChats.length > 0 && (
+                <div className="px-1 pt-2 pb-1 text-[11px] uppercase tracking-wide text-dim">Chats</div>
               )}
-              {filteredChats.map((c) => (
-                <div key={c.id} className="mb-0.5">
-                  <div
-                    className={`group flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm cursor-pointer ${
-                      c.id === activeId ? 'bg-white/10' : 'hover:bg-white/5'
-                    }`}
-                    onClick={() => selectChat(c.id)}
-                  >
-                    <MessageSquare size={14} className="text-[#8e8e8e] shrink-0" />
-                    <span className="truncate flex-1">{c.title}</span>
-                    <div className="relative flex items-center gap-1">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setChatMenu((m) => (m === c.id ? null : c.id)) }}
-                        className={`shrink-0 text-[#8e8e8e] hover:text-white transition-opacity ${chatMenu === c.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                        title="Move to project"
-                        aria-label="Move to project"
-                      >
-                        <FolderInput size={13} />
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); deleteChat(c.id) }}
-                        className="opacity-0 group-hover:opacity-100 text-[#8e8e8e] hover:text-white transition-opacity shrink-0"
-                        aria-label="Delete chat"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                      {chatMenu === c.id && (
-                        <>
-                          <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setChatMenu(null) }} />
-                          <div className="absolute right-0 top-6 z-50 w-44 overflow-hidden rounded-lg border border-white/15 bg-[#13151b] py-1 shadow-xl" onClick={(e) => e.stopPropagation()}>
-                            <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-[#6e6e6e]">Move to</div>
-                            <button onClick={() => moveChatToProject(c.id, null)}
-                              className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-white/10 ${!c.projectId ? 'text-[#c9b891]' : 'text-[#cfcfcf]'}`}>
-                              <MessageSquare size={12} /> No project
-                            </button>
-                            {projects.map((p) => (
-                              <button key={p.id} onClick={() => moveChatToProject(c.id, p.id)}
-                                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-white/10 ${c.projectId === p.id ? 'text-[#c9b891]' : 'text-[#cfcfcf]'}`}>
-                                <FolderGit2 size={12} className="text-[#c9b891]" /> <span className="truncate">{p.name}</span>
-                              </button>
-                            ))}
-                            {projects.length === 0 && <div className="px-3 py-1.5 text-[11px] text-[#6e6e6e]">No projects yet</div>}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  {/* When this chat is active, its files + notes live right under it. */}
-                  {c.id === activeId && (
-                    <ChatDrawer
-                      attachments={c.attachments || []}
-                      built={builtArtifacts}
-                      notes={c.notes || ''}
-                      onRemove={removeAttachment}
-                      onNotes={updateNotes}
-                      onOpenBuilt={scrollToMsg}
-                      onDeleteBuilt={deleteMessage}
-                    />
-                  )}
-                </div>
-              ))}
+              {unfiledChats.length === 0 && projects.length === 0 && (
+                <div className="px-2 py-3 text-xs text-dim">No chats yet.</div>
+              )}
+              {unfiledChats.map(renderChatRow)}
             </div>
           </>
         )}
         {view !== 'chat' && <div className="flex-1" />}
 
-        <div className="border-t border-white/[0.18] p-2 space-y-1">
+        <div className="border-t border-glass/[0.18] p-2 space-y-1">
           <button
             onClick={() => setView('settings')}
             className={`w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors ${
-              view === 'settings' ? 'bg-white/10 text-[#ededed]' : 'text-[#afafaf] hover:bg-white/5'
+              view === 'settings' ? 'bg-glass/10 text-ink' : 'text-dim hover:bg-glass/5'
             }`}
           >
             <Settings size={15} className="shrink-0" /> Settings
           </button>
           <a
+            href="https://github.com/Michberr2/nalu-desktop/releases/latest/download/Nalu-0.1.0-arm64.dmg"
+            className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-dim hover:bg-glass/5 transition-colors"
+          >
+            <Download size={15} className="shrink-0" /> Download app
+          </a>
+          <a
             href="/privacy.html"
             target="_blank"
             rel="noreferrer"
-            className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-[#afafaf] hover:bg-white/5 transition-colors"
+            className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-dim hover:bg-glass/5 transition-colors"
           >
             <Shield size={15} className="shrink-0" /> Privacy Policy
           </a>
-          <div className="flex items-center gap-2 rounded-lg px-2.5 py-2 hover:bg-white/5">
-            <div className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center text-xs font-medium">
+          <div className="flex items-center gap-2 rounded-lg px-2.5 py-2 hover:bg-glass/5">
+            <div className="w-7 h-7 rounded-full bg-glass/10 flex items-center justify-center text-xs font-medium">
               {(user?.displayName || 'N').charAt(0).toUpperCase()}
             </div>
             <span className="text-sm truncate flex-1">{user?.displayName || 'You'}</span>
             <button
               onClick={onLogout}
-              className="text-[#8e8e8e] hover:text-white"
+              className="text-dim hover:text-ink"
               aria-label="Sign out"
               title="Sign out"
             >
@@ -1267,17 +2203,26 @@ export default function Workspace({ user, onLogout }: Props) {
 
       {/* Main */}
       <main className="flex-1 flex flex-col min-w-0">
-        <div className="h-12 flex items-center gap-2 px-3 border-b border-white/[0.18] shrink-0">
+        <div className="h-12 flex items-center gap-2 px-3 border-b border-glass/[0.18] shrink-0">
           <button
             onClick={() => setSidebarOpen((v) => !v)}
-            className="w-8 h-8 rounded-md hover:bg-white/10 flex items-center justify-center text-[#afafaf]"
+            className="w-8 h-8 rounded-md hover:bg-glass/10 flex items-center justify-center text-dim"
             aria-label="Toggle sidebar"
           >
             <PanelLeft size={16} />
           </button>
-          <span className="truncate text-sm text-[#afafaf]">{topBarTitle}</span>
+          <span className="truncate text-sm text-dim">{topBarTitle}</span>
+          <button
+            onClick={toggleTheme}
+            className="ml-auto flex shrink-0 items-center gap-1.5 rounded-lg border border-glass/[0.14] bg-glass/[0.06] px-2.5 py-1.5 text-xs text-dim hover:bg-glass/10 hover:text-ink transition-colors"
+            aria-label="Toggle light or dark theme"
+            title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {isDark ? <Sun size={14} /> : <Moon size={14} />}
+            <span className="hidden sm:inline">{isDark ? 'Light' : 'Dark'}</span>
+          </button>
           {view === 'chat' && (
-            <div className="ml-auto flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2">
               {activeRepo ? (
                 <>
                   {changeCount > 0 && (
@@ -1292,7 +2237,7 @@ export default function Workspace({ user, onLogout }: Props) {
                   <button
                     onClick={disconnectRepo}
                     title={`Disconnect ${activeRepo.owner}/${activeRepo.repo}`}
-                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/10 text-[#afafaf]"
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-glass/[0.06] hover:bg-glass/10 text-dim"
                   >
                     <GitBranch size={13} /> <span className="hidden sm:inline">{activeRepo.owner}/{activeRepo.repo}</span>
                   </button>
@@ -1300,13 +2245,12 @@ export default function Workspace({ user, onLogout }: Props) {
               ) : (
                 <button
                   onClick={() => setShowConnect(true)}
-                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/10 text-[#afafaf]"
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-glass/[0.06] hover:bg-glass/10 text-dim"
                 >
                   <GitBranch size={13} /> <span className="hidden sm:inline">Connect repo</span>
                 </button>
               )}
-              <div className="hidden sm:flex items-center gap-1.5 text-xs text-[#afafaf] px-2.5 py-1.5 rounded-lg bg-white/[0.06]">
-                <img src="/wolf-icon.png" alt="" className="brightness-0 invert h-3.5 w-3.5" />
+              <div className="hidden sm:flex items-center text-xs text-dim px-2.5 py-1.5 rounded-lg bg-glass/[0.06]">
                 Talking to {routeName}
               </div>
             </div>
@@ -1319,41 +2263,41 @@ export default function Workspace({ user, onLogout }: Props) {
             onClick={() => setShowConnect(false)}
           >
             <div
-              className="w-full max-w-md rounded-2xl border border-white/[0.18] bg-white/[0.06] backdrop-blur-2xl p-5"
+              className="w-full max-w-md rounded-2xl border border-glass/[0.18] bg-glass/[0.06] backdrop-blur-2xl p-5"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-medium flex items-center gap-2">
                   <GitBranch size={15} /> Connect a GitHub repo
                 </h3>
-                <button onClick={() => setShowConnect(false)} className="text-[#8e8e8e] hover:text-white">
+                <button onClick={() => setShowConnect(false)} className="text-dim hover:text-ink">
                   <X size={16} />
                 </button>
               </div>
-              <label className="block text-xs text-[#8e8e8e] mb-1">GitHub token (repo scope)</label>
+              <label className="block text-xs text-dim mb-1">GitHub token (repo scope)</label>
               <input
                 type="password"
                 value={tokenInput}
                 onChange={(e) => setTokenInput(e.target.value)}
                 placeholder="ghp_…"
-                className="w-full mb-3 rounded-lg bg-white/[0.06] border border-white/[0.18] px-3 py-2 text-sm outline-none focus:border-white/20"
+                className="w-full mb-3 rounded-lg bg-glass/[0.06] border border-glass/[0.18] px-3 py-2 text-sm outline-none focus:border-glass/20"
               />
-              <label className="block text-xs text-[#8e8e8e] mb-1">Repository</label>
+              <label className="block text-xs text-dim mb-1">Repository</label>
               <input
                 value={repoInput}
                 onChange={(e) => setRepoInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && void connectRepo()}
                 placeholder="owner/repo"
-                className="w-full mb-4 rounded-lg bg-white/[0.06] border border-white/[0.18] px-3 py-2 text-sm outline-none focus:border-white/20"
+                className="w-full mb-4 rounded-lg bg-glass/[0.06] border border-glass/[0.18] px-3 py-2 text-sm outline-none focus:border-glass/20"
               />
               <button
                 onClick={() => void connectRepo()}
                 disabled={connecting || !tokenInput.trim() || !repoInput.includes('/')}
-                className="w-full rounded-lg bg-white text-black text-sm font-medium py-2 disabled:bg-white/15 disabled:text-white/40"
+                className="w-full rounded-lg bg-white text-black text-sm font-medium py-2 disabled:bg-glass/15 disabled:text-glass/40"
               >
                 {connecting ? 'Connecting…' : 'Connect'}
               </button>
-              <p className="text-[11px] text-[#8e8e8e] mt-3">
+              <p className="text-[11px] text-dim mt-3">
                 Nalu reads, edits, and commits files via the GitHub API — your token stays in your browser.
               </p>
             </div>
@@ -1362,17 +2306,80 @@ export default function Workspace({ user, onLogout }: Props) {
 
         {view === 'studio' && (
           <StudioPanel
+            creations={creations}
+            onOpen={openCreation}
+            streaming={streaming}
+            renderCreation={(c) => {
+              // Render the creation's REAL interactive card (the same components
+              // chat uses) so EVERY kind previews right inside the Studio.
+              const chat = chats.find((x) => x.id === c.chatId)
+              const m = chat?.messages[c.mi]
+              if (!m) return null
+              if (m.design)
+                return (
+                  <CardErrorBoundary label="The design">
+                    <Suspense fallback={<MediaLoader kind="design" />}>
+                      <DesignArtifactCard
+                        art={m.design}
+                        onUpdate={(art) =>
+                          setChats((cs) =>
+                            cs.map((ch) =>
+                              ch.id === c.chatId
+                                ? { ...ch, messages: ch.messages.map((mm, k) => (k === c.mi ? { ...mm, design: art } : mm)) }
+                                : ch,
+                            ),
+                          )
+                        }
+                      />
+                    </Suspense>
+                  </CardErrorBoundary>
+                )
+              if (m.deck)
+                return (
+                  <CardErrorBoundary label="The deck">
+                    <Suspense fallback={<MediaLoader kind="slides" />}><SlidesCard data={m.deck} /></Suspense>
+                  </CardErrorBoundary>
+                )
+              if (m.sheet)
+                return (
+                  <CardErrorBoundary label="The spreadsheet">
+                    <Suspense fallback={<MediaLoader kind="sheet" />}><SheetCard data={m.sheet} /></Suspense>
+                  </CardErrorBoundary>
+                )
+              if (m.doc)
+                return (
+                  <CardErrorBoundary label="The document">
+                    <Suspense fallback={<MediaLoader kind="doc" />}><DocCard data={m.doc} /></Suspense>
+                  </CardErrorBoundary>
+                )
+              if (m.cad)
+                return (
+                  <CardErrorBoundary label="The 3D model">
+                    <Suspense fallback={<MediaLoader kind="cad" />}><CADCard code={m.cad} /></Suspense>
+                  </CardErrorBoundary>
+                )
+              if (m.video) return <video src={m.video} controls className="mx-auto max-h-[70vh] w-auto max-w-full rounded-xl" />
+              if (typeof m.content === 'string') {
+                const im = m.content.match(/^!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/)
+                if (im) return <img src={im[1]} alt={m.content.slice(2, 80)} className="mx-auto max-h-[70vh] w-auto max-w-full rounded-xl" />
+              }
+              return null
+            }}
             onGenerate={(prompt) => {
-              setView('chat')
+              // Stay in the Studio so the design renders here first; it also lands in chat.
               closeSidebarOnMobile()
-              void send(prompt)
+              void send(prompt, { keepView: true })
             }}
           />
         )}
         {view === 'map' && <MapPanel />}
+        {view === 'agents' && (
+          <Suspense fallback={<div className="flex flex-1 items-center justify-center text-sm text-dim"><Loader2 size={18} className="mr-2 animate-spin" /> Loading AutoPilot…</div>}>
+            <AgentsPanel />
+          </Suspense>
+        )}
         {view === 'projects' && <ProjectsPanel />}
         {view === 'skills' && <SkillsPanel />}
-        {view === 'plugins' && <PluginsPanel />}
         {view === 'automations' && <AutomationsPanel />}
         {view === 'settings' && (
           <SettingsPanel displayName={user?.displayName} onLogout={onLogout} />
@@ -1397,6 +2404,10 @@ export default function Workspace({ user, onLogout }: Props) {
                   attaching={attaching}
                   attachments={(active?.attachments || []).filter((a) => pendingIds.includes(a.id))}
                   onRemoveAttachment={removeAttachment}
+                  dismissedIntent={dismissedIntent}
+                  onDismissIntent={() => setDismissedIntent(input.trim())}
+                  deepThink={deepThink}
+                  onToggleThink={() => setDeepThink((v) => !v)}
                 />
               </div>
             </div>
@@ -1410,24 +2421,19 @@ export default function Workspace({ user, onLogout }: Props) {
                       ref={(el) => {
                         msgRefs.current[i] = el
                       }}
-                      className="flex gap-3 scroll-mt-20"
+                      className={`scroll-mt-20 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
-                      <div
-                        className={`w-7 h-7 rounded-full shrink-0 flex items-center justify-center text-xs font-medium ${
-                          m.role === 'user' ? 'bg-white/10' : 'bg-emerald-500/20 text-emerald-300'
-                        }`}
-                      >
-                        {m.role === 'user' ? (
-                          (user?.displayName || 'Y').charAt(0).toUpperCase()
-                        ) : (
-                          <img src="/wolf-icon.png" alt="Nalu" className="brightness-0 invert w-4 h-4" />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0 pt-0.5">
-                        <div className="text-xs text-[#8e8e8e] mb-1">
-                          {m.role === 'user' ? 'You' : 'Nalu'}
+                      {m.role === 'user' ? (
+                        // Your messages render as an iMessage-style blue bubble on the
+                        // right — no avatar — so it's obvious which side is you.
+                        <div className="max-w-[78%] rounded-2xl rounded-br-md bg-gradient-to-b from-[#3b82f6] to-[#2f6fed] px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-white shadow-sm">
+                          {m.content}
                         </div>
-                        {m.role === 'assistant' ? (
+                      ) : (
+                        // Nalu's answer: full-width, left-aligned, no avatar.
+                        <div className="w-full min-w-0">
+                          <div className="text-xs text-dim mb-1">Nalu</div>
+                          <AssistantThink reasoning={m.reasoning} isLive={streaming && i === messages.length - 1}>
                           <>
                             {m.loading ? (
                               <MediaLoader kind={m.loading} />
@@ -1436,11 +2442,20 @@ export default function Workspace({ user, onLogout }: Props) {
                               // styling appears as the text arrives (rAF-throttled
                               // upstream keeps it smooth). A subtle caret trails it.
                               <div className={streaming && i === messages.length - 1 ? 'streaming-caret' : undefined}>
-                                <Markdown>{m.content}</Markdown>
+                                <Markdown>{cleanForDisplay(m.content)}</Markdown>
                               </div>
                             ) : !m.sheet && !m.doc && !m.video && !m.cad && !m.design && !m.deck && streaming && i === messages.length - 1 ? (
-                              <div className="text-[15px] leading-relaxed text-[#ededed]">▍</div>
+                              // Waiting for the first token — the Nalu mark breathes
+                              // with three soft dots while waiting for the first token.
+                              <div className="flex items-center gap-2 py-0.5">
+                                <img src="/wolf-icon.png" alt="" className={`${logoClass} w-5 h-5 nalu-think`} />
+                                <WolfWord className="text-[13px]" />
+                              </div>
                             ) : null}
+                            <div
+                              className={i === messages.length - 1 && (m.sheet || m.doc || m.deck || m.design || m.cad || m.video) ? 'nalu-materialize' : undefined}
+                              onAnimationEnd={(e) => e.currentTarget.classList.remove('nalu-materialize')}
+                            >
                             {m.sheet && (
                               <CardErrorBoundary label="The spreadsheet">
                                 <Suspense fallback={<MediaLoader kind="sheet" />}>
@@ -1465,36 +2480,62 @@ export default function Workspace({ user, onLogout }: Props) {
                             {m.cad && (
                               <CardErrorBoundary label="The 3D model">
                                 <Suspense fallback={<MediaLoader kind="cad" />}>
-                                  <CADCard code={m.cad} />
+                                  <CADCard
+                                    code={m.cad}
+                                    prompt={(() => {
+                                      // the design intent = the user message that asked for it
+                                      for (let k = i - 1; k >= 0; k--) if (messages[k].role === 'user') return messages[k].content
+                                      return undefined
+                                    })()}
+                                  />
                                 </Suspense>
                               </CardErrorBoundary>
                             )}
                             {m.design && (
                               <CardErrorBoundary label="The design">
                                 <Suspense fallback={<MediaLoader kind="design" />}>
-                                  <DesignArtifactCard art={m.design} />
+                                  <DesignArtifactCard
+                                    art={m.design}
+                                    onUpdate={(art) => {
+                                      // "Finish build" (and future in-card edits) persist onto the message
+                                      if (!activeId) return
+                                      setChats((cs) =>
+                                        cs.map((c) =>
+                                          c.id === activeId
+                                            ? { ...c, messages: c.messages.map((mm, k) => (k === i ? { ...mm, design: art } : mm)) }
+                                            : c,
+                                        ),
+                                      )
+                                    }}
+                                  />
                                 </Suspense>
                               </CardErrorBoundary>
                             )}
                             {m.video && (
-                              <video
-                                src={m.video}
-                                controls
-                                className="my-2 max-h-[28rem] w-auto max-w-full rounded-xl border border-white/[0.14]"
-                              />
+                              <span className="block">
+                                <video
+                                  src={m.video}
+                                  controls
+                                  className="my-2 max-h-[28rem] w-auto max-w-full rounded-xl border border-glass/[0.14]"
+                                />
+                                <button
+                                  onClick={() => void downloadMedia(m.video as string, 'nalu-video.mp4')}
+                                  className="mb-2 text-xs font-medium text-gold underline-offset-4 hover:underline"
+                                >
+                                  Download video
+                                </button>
+                              </span>
                             )}
+                            </div>
                           </>
-                        ) : (
-                          <div className="text-[15px] leading-relaxed whitespace-pre-wrap break-words text-[#ededed]">
-                            {m.content}
-                          </div>
-                        )}
-                      </div>
+                          </AssistantThink>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
               </div>
-              <div className="border-t border-white/[0.18] px-4 py-3">
+              <div className="border-t border-glass/[0.18] px-4 py-3">
                 <div className="max-w-3xl mx-auto">
                   <BrandBar />
                   <Composer
@@ -1509,6 +2550,10 @@ export default function Workspace({ user, onLogout }: Props) {
                     attaching={attaching}
                     attachments={(active?.attachments || []).filter((a) => pendingIds.includes(a.id))}
                     onRemoveAttachment={removeAttachment}
+                    dismissedIntent={dismissedIntent}
+                    onDismissIntent={() => setDismissedIntent(input.trim())}
+                    deepThink={deepThink}
+                    onToggleThink={() => setDeepThink((v) => !v)}
                   />
                 </div>
               </div>
@@ -1516,306 +2561,12 @@ export default function Workspace({ user, onLogout }: Props) {
           ))}
       </main>
 
-      {/* Right drawer: documents the AI is looking at + artifacts it built. */}
-      {view === 'chat' && ((active?.attachments?.length ?? 0) > 0 || builtArtifacts.length > 0) && (
-        <AttachmentDrawer
-          open={docDrawerOpen}
-          attachments={active?.attachments || []}
-          built={builtArtifacts}
-          messages={active?.messages || []}
-          onToggle={() => setDocDrawerOpen((o) => !o)}
-          onRemove={removeAttachment}
-          onJumpToMsg={scrollToMsg}
-          onDeleteBuilt={deleteMessage}
-        />
-      )}
+      {/* No right drawer — everything Nalu builds renders IN FULL in the chat. */}
     </div>
   )
 }
 
 // ---- composer ------------------------------------------------------------
-
-// Lightweight in-drawer preview of an artifact Nalu BUILT (doc, deck, sheet, or
-// a live web design), so you can actually see it in the right drawer.
-function BuiltPreview({ m }: { m: Msg }) {
-  // Live web design (webpage / poster / brand book) — render the real HTML.
-  const designHtml = m.design ? (m.design as { html?: string }).html : undefined
-  if (typeof designHtml === 'string' && designHtml) {
-    return <iframe srcDoc={designHtml} title="preview" sandbox="allow-scripts" className="h-full w-full flex-1 border-0 bg-white" />
-  }
-  if (m.doc) {
-    const blocks = m.doc.blocks || []
-    return (
-      <div className="mx-3 mb-3 flex-1 overflow-y-auto rounded-lg border border-white/[0.1] bg-[#faf8f3] p-5 text-[#23262b]">
-        <div className="mb-1 text-lg font-semibold" style={{ color: '#0F1B2D', fontFamily: 'Georgia, serif' }}>{m.doc.title || 'Document'}</div>
-        {m.doc.subtitle && <div className="mb-3 text-xs italic text-[#6b6b6b]">{m.doc.subtitle}</div>}
-        {blocks.map((b, i) => {
-          if (b.type === 'heading')
-            return <div key={i} className="mb-1 mt-3 font-semibold" style={{ color: '#0F1B2D', fontFamily: 'Georgia, serif', fontSize: b.level === 1 ? 16 : 14 }}>{b.text}</div>
-          if (b.type === 'paragraph') return <p key={i} className="mb-2 text-[12px] leading-relaxed">{b.text}</p>
-          if (b.type === 'bullets')
-            return (
-              <ul key={i} className="mb-2 ml-4 list-disc text-[12px]">
-                {(b.items || []).map((it, j) => <li key={j} className="mb-0.5">{it}</li>)}
-              </ul>
-            )
-          if (b.type === 'table')
-            return (
-              <div key={i} className="mb-2 overflow-x-auto">
-                <table className="w-full border-collapse text-[11px]">
-                  <thead><tr>{(b.columns || []).map((c, j) => <th key={j} className="border border-[#ddd] bg-[#0F1B2D] px-2 py-1 text-left text-white">{c}</th>)}</tr></thead>
-                  <tbody>{(b.rows || []).map((r, ri) => <tr key={ri}>{(b.columns || []).map((_, ci) => <td key={ci} className="border border-[#e3e3e3] px-2 py-1">{String(r[ci] ?? '')}</td>)}</tr>)}</tbody>
-                </table>
-              </div>
-            )
-          return null
-        })}
-      </div>
-    )
-  }
-  if (m.deck) {
-    return (
-      <div className="mx-3 mb-3 flex-1 space-y-2 overflow-y-auto">
-        <div className="text-sm font-semibold text-[#ededed]">{m.deck.title}</div>
-        {(m.deck.slides || []).map((s, i) => (
-          <div key={i} className="rounded-lg border border-white/10 bg-white/[0.04] p-2.5">
-            <div className="text-[11px] font-medium text-[#c9b891]">{String(i + 1).padStart(2, '0')} · {s.title}</div>
-            <ul className="mt-1 ml-3 list-disc text-[11px] text-[#cfcfcf]">{(s.bullets || []).slice(0, 4).map((b, j) => <li key={j}>{b}</li>)}</ul>
-          </div>
-        ))}
-      </div>
-    )
-  }
-  if (m.sheet) {
-    const sh = m.sheet.sheets?.[0]
-    return (
-      <div className="mx-3 mb-3 flex-1 overflow-auto rounded-lg border border-white/[0.1] bg-white/[0.04] p-2">
-        <div className="mb-1 text-xs font-medium text-[#ededed]">{m.sheet.title}</div>
-        <table className="w-full border-collapse text-[10px] text-[#cfcfcf]">
-          <thead><tr>{(sh?.columns || []).map((c, j) => <th key={j} className="border border-white/10 bg-white/[0.06] px-1.5 py-1 text-left">{c}</th>)}</tr></thead>
-          <tbody>{(sh?.rows || []).slice(0, 30).map((r, ri) => <tr key={ri}>{(sh?.columns || []).map((_, ci) => <td key={ci} className="border border-white/[0.06] px-1.5 py-1">{String(r[ci] ?? '')}</td>)}</tr>)}</tbody>
-        </table>
-      </div>
-    )
-  }
-  return <div className="mx-3 mb-3 flex-1 text-xs text-[#8e8e8e]">Open it in the chat to view or download.</div>
-}
-
-// Right drawer: documents Nalu is looking at + a live preview of artifacts it built.
-function AttachmentDrawer({
-  open,
-  attachments,
-  built,
-  messages,
-  onToggle,
-  onRemove,
-  onJumpToMsg,
-  onDeleteBuilt,
-}: {
-  open: boolean
-  attachments: Attachment[]
-  built: { kind: string; label: string; mi: number }[]
-  messages: Msg[]
-  onToggle: () => void
-  onRemove: (id: string) => void
-  onJumpToMsg: (mi: number) => void
-  onDeleteBuilt: (mi: number) => void
-}) {
-  const [sel, setSel] = useState(0)
-  const [previewMi, setPreviewMi] = useState<number | null>(null)
-  // Drag-to-resize width (persisted + synced via the nalu- prefix).
-  const [width, setWidth] = useState(() => {
-    const v = Number(localStorage.getItem('nalu-drawer-width'))
-    return v >= 280 && v <= 760 ? v : 320
-  })
-  useEffect(() => { try { localStorage.setItem('nalu-drawer-width', String(Math.round(width))) } catch { /* */ } }, [width])
-  const startResize = (e: React.PointerEvent) => {
-    e.preventDefault()
-    const onMove = (ev: PointerEvent) => setWidth(Math.min(760, Math.max(280, window.innerWidth - ev.clientX)))
-    const onUp = () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-    }
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-  }
-  const a = attachments[Math.min(sel, attachments.length - 1)]
-  const blobFor = (f: Attachment): Blob => {
-    if (f.dataUrl) {
-      try {
-        const [head, b64] = f.dataUrl.split(',')
-        const mime = (head.match(/data:([^;]+)/) || [])[1] || 'application/octet-stream'
-        const bin = atob(b64)
-        const arr = new Uint8Array(bin.length)
-        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i)
-        return new Blob([arr], { type: mime })
-      } catch {
-        /* fall through */
-      }
-    }
-    return new Blob([f.text || ''], { type: 'text/plain' })
-  }
-  const openFile = (f: Attachment) => {
-    const url = URL.createObjectURL(blobFor(f))
-    window.open(url, '_blank', 'noopener')
-    setTimeout(() => URL.revokeObjectURL(url), 60000)
-  }
-  const downloadFile = (f: Attachment) => {
-    const url = URL.createObjectURL(blobFor(f))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = f.name
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    setTimeout(() => URL.revokeObjectURL(url), 2000)
-  }
-  if (!open) {
-    return (
-      <button
-        onClick={onToggle}
-        title="Show documents & artifacts"
-        className="hidden w-9 shrink-0 flex-col items-center gap-2 border-l border-white/[0.12] bg-white/[0.04] py-3 text-[#9fd0ff] hover:bg-white/[0.07] md:flex"
-      >
-        <FileText size={16} />
-        <span className="rounded-full bg-cyan-500/20 px-1 text-[10px] text-cyan-200">{attachments.length + built.length}</span>
-      </button>
-    )
-  }
-  return (
-    <aside className="relative hidden shrink-0 flex-col border-l border-white/[0.14] bg-white/[0.06] backdrop-blur-2xl md:flex" style={{ width }}>
-      {/* Drag handle — widen/narrow the drawer. */}
-      <div
-        onPointerDown={startResize}
-        className="group absolute left-0 top-0 z-30 h-full w-2 -translate-x-1/2 cursor-col-resize"
-        title="Drag to resize"
-      >
-        <div className="mx-auto h-full w-px bg-white/10 transition-colors group-hover:w-0.5 group-hover:bg-[#AF8C56]/70" />
-      </div>
-      <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2.5">
-        {previewMi !== null ? (
-          <>
-            <button onClick={() => setPreviewMi(null)} className="rounded p-1 text-[#9a9a9a] hover:bg-white/10 hover:text-white" title="Back">
-              <ChevronLeft size={15} />
-            </button>
-            <span className="truncate text-sm font-medium text-[#ededed]">Preview</span>
-            <button onClick={() => onJumpToMsg(previewMi)} className="ml-auto rounded p-1 text-[#9a9a9a] hover:bg-white/10 hover:text-white" title="Show in chat">
-              <ExternalLink size={14} />
-            </button>
-          </>
-        ) : (
-          <>
-            <FileText size={15} className="text-[#9fd0ff]" />
-            <span className="text-sm font-medium text-[#ededed]">Documents & artifacts</span>
-          </>
-        )}
-        <button onClick={onToggle} className="ml-auto rounded p-1 text-[#8e8e8e] hover:bg-white/10 hover:text-white" aria-label="Hide">
-          <X size={15} />
-        </button>
-      </div>
-
-      {/* Live preview of a built artifact, right in the drawer. */}
-      {previewMi !== null && messages[previewMi] ? (
-        <BuiltPreview m={messages[previewMi]} />
-      ) : (
-      <>
-      {/* Artifacts Nalu built in this chat — click to preview here; jump or delete. */}
-      {built.length > 0 && (
-        <div className="border-b border-white/10 px-3 py-2.5">
-          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8e8e8e]">Built in this chat</div>
-          <div className="space-y-0.5">
-            {built.map((bA, i) => {
-              const Icon = ARTIFACT_ICON[bA.kind] || FileText
-              return (
-                <div key={i} className="group flex items-center gap-2 rounded-md px-1.5 py-1.5 text-[12px] text-[#ededed] hover:bg-white/5">
-                  <Icon size={13} className="shrink-0 text-[#c9b891]" />
-                  <button onClick={() => setPreviewMi(bA.mi)} className="flex-1 truncate text-left hover:text-white" title="Preview here">
-                    {bA.label}
-                  </button>
-                  <button onClick={() => onJumpToMsg(bA.mi)} className="shrink-0 rounded p-0.5 text-[#9a9a9a] hover:bg-white/10 hover:text-white" title="Show in chat">
-                    <ExternalLink size={12} />
-                  </button>
-                  <button onClick={() => onDeleteBuilt(bA.mi)} className="shrink-0 rounded p-0.5 text-[#9a9a9a] hover:bg-white/10 hover:text-white" title="Delete">
-                    <X size={12} />
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {attachments.length > 1 && (
-        <div className="flex flex-wrap gap-1 border-b border-white/10 px-2 py-2">
-          {attachments.map((f, i) => (
-            <button
-              key={f.id}
-              onClick={() => setSel(i)}
-              className={`max-w-[140px] truncate rounded-md px-2 py-1 text-[11px] ${
-                i === sel ? 'bg-white/15 text-[#ededed]' : 'bg-white/5 text-[#9a9a9a] hover:bg-white/10'
-              }`}
-            >
-              {f.name}
-            </button>
-          ))}
-        </div>
-      )}
-      {a && (
-        <>
-          <div className="flex items-center gap-1 px-3 py-2 text-xs text-[#bdbdbd]">
-            <span className="truncate font-medium flex-1">{a.name}</span>
-            <button onClick={() => openFile(a)} className="rounded p-1 text-[#9a9a9a] hover:bg-white/10 hover:text-white" title="Open">
-              <ExternalLink size={13} />
-            </button>
-            <button onClick={() => downloadFile(a)} className="rounded p-1 text-[#9a9a9a] hover:bg-white/10 hover:text-white" title="Download">
-              <Download size={13} />
-            </button>
-            <button onClick={() => onRemove(a.id)} className="rounded p-1 text-[#9a9a9a] hover:bg-white/10 hover:text-white" title="Remove">
-              <X size={13} />
-            </button>
-          </div>
-          {(() => {
-            const isPdf = !!a.dataUrl && (a.type.includes('pdf') || /\.pdf$/i.test(a.name))
-            const isImg = !!a.dataUrl && (a.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a.name))
-            if (isPdf)
-              return (
-                <iframe
-                  title={a.name}
-                  src={`${a.dataUrl}#toolbar=0&view=FitH`}
-                  className="mx-3 mb-3 flex-1 rounded-lg border border-white/[0.12] bg-white"
-                />
-              )
-            if (isImg)
-              return (
-                <div className="mx-3 mb-3 flex-1 overflow-auto rounded-lg border border-white/[0.12] bg-white/[0.04] p-2">
-                  <img src={a.dataUrl} alt={a.name} className="mx-auto max-w-full rounded" />
-                </div>
-              )
-            // Fallback: the readable text Nalu extracted (for .docx / .txt / etc.).
-            return (
-              <div className="mx-3 mb-3 flex-1 overflow-y-auto rounded-lg border border-white/[0.1] bg-white/[0.04] p-3 text-[12px] leading-relaxed text-[#dcdcdc] whitespace-pre-wrap break-words">
-                {a.text ? (
-                  <>
-                    {a.text}
-                    {a.truncated && <div className="mt-2 text-[11px] italic text-[#8e8e8e]">… (truncated — Nalu still sees this much)</div>}
-                  </>
-                ) : (
-                  <span className="italic text-[#8e8e8e]">No preview available for this file.</span>
-                )}
-              </div>
-            )
-          })()}
-        </>
-      )}
-      </>
-      )}
-    </aside>
-  )
-}
 
 // Inline drawer under the ACTIVE chat in the left rail: uploaded attachments
 // (open / download / remove), artifacts Nalu built in the chat, and an editable
@@ -1881,20 +2632,20 @@ function ChatDrawer({
     setTimeout(() => URL.revokeObjectURL(url), 2000)
   }
   return (
-    <div className="ml-3 mt-1 border-l border-white/[0.12] pl-2">
+    <div className="ml-3 mt-1 border-l border-glass/[0.12] pl-2">
       <div className="flex gap-1">
         <button
           onClick={() => setTab((t) => (t === 'files' ? null : 'files'))}
           className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-[11px] transition-colors ${
-            tab === 'files' ? 'bg-white/10 text-[#ededed]' : 'text-[#9a9a9a] hover:bg-white/5'
+            tab === 'files' ? 'bg-glass/10 text-ink' : 'text-dim hover:bg-glass/5'
           }`}
         >
-          <Paperclip size={12} /> Files{fileCount > 0 && <span className="text-[10px] text-[#6e6e6e]">{fileCount}</span>}
+          <Paperclip size={12} /> Files{fileCount > 0 && <span className="text-[10px] text-dim">{fileCount}</span>}
         </button>
         <button
           onClick={() => setTab((t) => (t === 'notes' ? null : 'notes'))}
           className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-[11px] transition-colors ${
-            tab === 'notes' ? 'bg-white/10 text-[#ededed]' : 'text-[#9a9a9a] hover:bg-white/5'
+            tab === 'notes' ? 'bg-glass/10 text-ink' : 'text-dim hover:bg-glass/5'
           }`}
         >
           <StickyNote size={12} /> Notes{notes.trim() && <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />}
@@ -1904,21 +2655,21 @@ function ChatDrawer({
       {tab === 'files' && (
         <div className="mt-1.5 max-h-64 space-y-2 overflow-y-auto pb-1">
           <div>
-            <div className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-[#6e6e6e]">Attached</div>
+            <div className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-dim">Attached</div>
             {attachments.length === 0 ? (
-              <div className="text-[10px] text-[#6e6e6e]">Attach files with the clip in the message box.</div>
+              <div className="text-[10px] text-dim">Attach files with the clip in the message box.</div>
             ) : (
               attachments.map((a) => (
-                <div key={a.id} className="flex items-center gap-1 rounded-md px-1 py-1 text-[11px] text-[#ededed] hover:bg-white/5">
+                <div key={a.id} className="flex items-center gap-1 rounded-md px-1 py-1 text-[11px] text-ink hover:bg-glass/5">
                   <FileText size={12} className="shrink-0 text-[#9fd0ff]" />
                   <span className="truncate flex-1">{a.name}</span>
-                  <button onClick={() => open(a)} title="Open" className="shrink-0 rounded p-0.5 text-[#9a9a9a] hover:bg-white/10 hover:text-white">
+                  <button onClick={() => open(a)} title="Open" className="shrink-0 rounded p-0.5 text-dim hover:bg-glass/10 hover:text-ink">
                     <ExternalLink size={12} />
                   </button>
-                  <button onClick={() => download(a)} title="Download" className="shrink-0 rounded p-0.5 text-[#9a9a9a] hover:bg-white/10 hover:text-white">
+                  <button onClick={() => download(a)} title="Download" className="shrink-0 rounded p-0.5 text-dim hover:bg-glass/10 hover:text-ink">
                     <Download size={12} />
                   </button>
-                  <button onClick={() => onRemove(a.id)} title="Remove" className="shrink-0 rounded p-0.5 text-[#9a9a9a] hover:bg-white/10 hover:text-white">
+                  <button onClick={() => onRemove(a.id)} title="Remove" className="shrink-0 rounded p-0.5 text-dim hover:bg-glass/10 hover:text-ink">
                     <X size={12} />
                   </button>
                 </div>
@@ -1927,19 +2678,19 @@ function ChatDrawer({
           </div>
           {built.length > 0 && (
             <div>
-              <div className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-[#6e6e6e]">Built in this chat</div>
+              <div className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-dim">Built in this chat</div>
               {built.map((bA, i) => {
                 const Icon = ARTIFACT_ICON[bA.kind] || FileText
                 return (
-                  <div key={i} className="flex items-center gap-1 rounded-md px-1 py-1 text-[11px] text-[#ededed] hover:bg-white/5">
-                    <Icon size={12} className="shrink-0 text-[#c9b891]" />
-                    <button onClick={() => onOpenBuilt(bA.mi)} className="flex-1 truncate text-left hover:text-white" title="Open in chat (download from there)">
+                  <div key={i} className="flex items-center gap-1 rounded-md px-1 py-1 text-[11px] text-ink hover:bg-glass/5">
+                    <Icon size={12} className="shrink-0 text-gold" />
+                    <button onClick={() => onOpenBuilt(bA.mi)} className="flex-1 truncate text-left hover:text-ink" title="Open in chat (download from there)">
                       {bA.label}
                     </button>
-                    <button onClick={() => onOpenBuilt(bA.mi)} title="Open" className="shrink-0 rounded p-0.5 text-[#9a9a9a] hover:bg-white/10 hover:text-white">
+                    <button onClick={() => onOpenBuilt(bA.mi)} title="Open" className="shrink-0 rounded p-0.5 text-dim hover:bg-glass/10 hover:text-ink">
                       <ExternalLink size={12} />
                     </button>
-                    <button onClick={() => onDeleteBuilt(bA.mi)} title="Delete" className="shrink-0 rounded p-0.5 text-[#9a9a9a] hover:bg-white/10 hover:text-white">
+                    <button onClick={() => onDeleteBuilt(bA.mi)} title="Delete" className="shrink-0 rounded p-0.5 text-dim hover:bg-glass/10 hover:text-ink">
                       <X size={12} />
                     </button>
                   </div>
@@ -1955,7 +2706,7 @@ function ChatDrawer({
           value={notes}
           onChange={(e) => onNotes(e.target.value)}
           placeholder="Keep facts, context, instructions… Nalu reads these on every message in this chat."
-          className="mt-1.5 h-28 w-full resize-y rounded-md border border-white/15 bg-white/[0.05] px-2 py-1.5 text-[11px] text-[#ededed] outline-none focus:border-white/30"
+          className="mt-1.5 h-28 w-full resize-y rounded-md border border-glass/15 bg-glass/[0.05] px-2 py-1.5 text-[11px] text-ink outline-none focus:border-glass/30"
         />
       )}
     </div>
@@ -1974,6 +2725,10 @@ function Composer({
   attaching,
   attachments,
   onRemoveAttachment,
+  dismissedIntent,
+  onDismissIntent,
+  deepThink,
+  onToggleThink,
 }: {
   input: string
   setInput: (v: string) => void
@@ -1986,39 +2741,79 @@ function Composer({
   attaching: boolean
   attachments: Attachment[]
   onRemoveAttachment: (id: string) => void
+  dismissedIntent: string | null
+  onDismissIntent: () => void
+  deepThink: boolean
+  onToggleThink: () => void
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
-  const intent = detectIntent(input)
+  const [showTools, setShowTools] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
+  // Hide the chip when the user ×'d out of it for this exact prompt — editing
+  // the text brings it back (the stored dismissal no longer matches).
+  const intent = dismissedIntent === input.trim() ? null : detectIntent(input, attachments.some((a) => a.isImage))
+  const pickTool = (t: (typeof STUDIO_TOOLS)[number]) => {
+    setInput(t.tmpl(input.trim(), ''))
+    setShowTools(false)
+    setTimeout(() => taRef.current?.focus(), 20)
+  }
   return (
-    <div className={`rounded-2xl border bg-white/[0.11] backdrop-blur-2xl px-3 py-2.5 transition-colors ${intent ? 'border-[#AF8C56]/55 shadow-[0_0_0_1px_rgba(175,140,86,0.25)]' : 'border-white/[0.14] focus-within:border-white/20'}`}>
+    <div
+      onDragOver={(e) => { e.preventDefault(); if (!dragOver) setDragOver(true) }}
+      onDragEnter={(e) => { e.preventDefault(); setDragOver(true) }}
+      onDragLeave={(e) => { e.preventDefault(); if (e.currentTarget === e.target) setDragOver(false) }}
+      onDrop={(e) => {
+        e.preventDefault()
+        setDragOver(false)
+        if (e.dataTransfer?.files?.length) onAttach(e.dataTransfer.files)
+      }}
+      className={`relative rounded-2xl border bg-glass/[0.11] backdrop-blur-2xl px-3 py-2.5 transition-colors ${dragOver ? 'border-accent ring-2 ring-accent/40' : intent ? 'border-accent/55 shadow-[0_0_0_1px_rgba(175,140,86,0.25)]' : 'border-glass/[0.14] focus-within:border-glass/20'}`}
+    >
+      {dragOver && (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent/70 bg-panel/80 backdrop-blur-sm">
+          <span className="flex items-center gap-2 text-sm font-medium text-gold"><Paperclip size={15} /> Drop files or photos to attach</span>
+        </div>
+      )}
       {/* Live intent — highlights what this prompt will build. */}
       {intent && (
         <div className="mb-2 flex items-center gap-1.5">
-          <span className="flex items-center gap-1.5 rounded-full border border-[#AF8C56]/40 bg-[#AF8C56]/15 px-2.5 py-1 text-[11px] font-medium text-[#e2c896]">
+          <span className="flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/15 py-1 pl-2.5 pr-1.5 text-[11px] font-medium text-gold">
             <Sparkles size={11} /> Creating: {intent}
+            <button
+              onClick={onDismissIntent}
+              title="Just answer in text instead"
+              aria-label="Answer in text instead"
+              className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-full text-gold/70 hover:bg-accent/25 hover:text-ink"
+            >
+              <X size={11} />
+            </button>
           </span>
-          <span className="text-[10px] text-[#6e7686]">press Enter to build</span>
+          <span className="text-[10px] text-dim">press Enter to build · × for a text answer</span>
         </div>
       )}
       {/* Attached files — shown right in the prompt so you can see they're there. */}
       {(attachments.length > 0 || attaching) && (
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           {attachments.map((a) => (
-            <span key={a.id} className="flex max-w-[200px] items-center gap-1.5 rounded-lg border border-white/15 bg-white/[0.06] px-2 py-1 text-[11px] text-[#ededed]">
-              <FileText size={12} className="shrink-0 text-[#9fd0ff]" />
+            <span key={a.id} className="flex max-w-[200px] items-center gap-1.5 rounded-lg border border-glass/15 bg-glass/[0.06] px-2 py-1 text-[11px] text-ink">
+              {a.isImage && a.dataUrl ? (
+                <img src={a.dataUrl} alt="" className="h-5 w-5 shrink-0 rounded object-cover" />
+              ) : (
+                <FileText size={12} className="shrink-0 text-[#9fd0ff]" />
+              )}
               <span className="truncate">{a.name}</span>
-              <button onClick={() => onRemoveAttachment(a.id)} className="shrink-0 text-[#8e8e8e] hover:text-white" aria-label="Remove">
+              <button onClick={() => onRemoveAttachment(a.id)} className="shrink-0 text-dim hover:text-ink" aria-label="Remove">
                 <X size={11} />
               </button>
             </span>
           ))}
           {attaching && (
-            <span className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/[0.06] px-2 py-1 text-[11px] text-[#9a9a9a]">
+            <span className="flex items-center gap-1.5 rounded-lg border border-glass/15 bg-glass/[0.06] px-2 py-1 text-[11px] text-dim">
               <Loader2 size={11} className="animate-spin" /> reading…
             </span>
           )}
           {attachments.length > 0 && !attaching && (
-            <span className="w-full text-[10px] text-[#6e6e6e]">Kept in this chat for Nalu to reference — cleared from your prompt when you send.</span>
+            <span className="w-full text-[10px] text-dim">Kept in this chat for Nalu to reference — cleared from your prompt when you send.</span>
           )}
         </div>
       )}
@@ -2028,20 +2823,58 @@ function Composer({
         type="file"
         multiple
         className="hidden"
-        accept=".pdf,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.yaml,.yml,.xml,.html,.htm,.css,.js,.ts,.tsx,.jsx,.py,.java,.c,.cpp,.cs,.go,.rs,.rb,.php,.sh,.sql,.log,.tex,text/*,application/pdf,application/json"
         onChange={(e) => {
           if (e.target.files && e.target.files.length) onAttach(e.target.files)
           e.target.value = ''
         }}
       />
+      <div className="relative mb-0.5 shrink-0">
+        <button
+          onClick={() => setShowTools((v) => !v)}
+          title="Studio tools — website, logo, deck, palette…"
+          className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${showTools ? 'bg-accent text-[#15170f]' : 'bg-glass/10 text-ink hover:bg-glass/20'}`}
+          aria-label="Studio tools"
+        >
+          <Wand2 size={15} />
+        </button>
+        {showTools && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setShowTools(false)} />
+            <div className="absolute bottom-full left-0 z-40 mb-2 w-64 rounded-xl border border-glass/[0.12] bg-panel/95 p-1.5 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.7)] backdrop-blur-xl">
+              <div className="px-2 py-1 text-[9.5px] font-semibold uppercase tracking-[0.18em] text-gold">Studio — build anything</div>
+              <div className="grid max-h-72 grid-cols-2 gap-1 overflow-y-auto p-0.5">
+                {STUDIO_TOOLS.map((t) => {
+                  const Icon = t.icon
+                  return (
+                    <button key={t.key} onClick={() => pickTool(t)}
+                      className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-glass/[0.07]">
+                      <Icon size={13} strokeWidth={1.6} className="shrink-0 text-gold" />
+                      <span className="truncate text-[12px] text-ink">{t.name}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
       <button
         onClick={() => fileRef.current?.click()}
         disabled={attaching}
-        title="Attach a document for Nalu to examine"
-        className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 text-[#ededed] hover:bg-white/20 disabled:opacity-50"
+        title="Attach any file — photos, PDFs, docs, spreadsheets, code, data"
+        className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-glass/10 text-ink hover:bg-glass/20 disabled:opacity-50"
         aria-label="Attach"
       >
         {attaching ? <Loader2 size={15} className="animate-spin" /> : <Paperclip size={15} />}
+      </button>
+      <button
+        onClick={onToggleThink}
+        title={deepThink ? 'Deep thinking ON — slower, more thorough reasoning' : 'Deep thinking OFF — fast replies. Click for harder questions.'}
+        aria-label="Toggle deep thinking"
+        aria-pressed={deepThink}
+        className={`mb-0.5 flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-medium transition-colors ${deepThink ? 'bg-accent text-[#15170f]' : 'bg-glass/10 text-ink hover:bg-glass/20'}`}
+      >
+        <Brain size={15} /> <span className="hidden sm:inline">Think</span>
       </button>
       <textarea
         ref={taRef}
@@ -2050,7 +2883,7 @@ function Composer({
         onKeyDown={onKey}
         rows={1}
         placeholder="Ask Nalu to do anything"
-        className="flex-1 bg-transparent outline-none resize-none text-[15px] placeholder:text-[#6e6e6e] max-h-40 py-1"
+        className="flex-1 bg-transparent outline-none resize-none text-[13.5px] placeholder:text-dim max-h-40 py-1"
         style={{ height: 'auto' }}
         onInput={(e) => {
           const t = e.currentTarget
@@ -2061,7 +2894,7 @@ function Composer({
       {streaming ? (
         <button
           onClick={onStop}
-          className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 flex items-center justify-center shrink-0"
+          className="w-8 h-8 rounded-lg bg-glass/10 hover:bg-glass/20 flex items-center justify-center shrink-0"
           aria-label="Stop"
         >
           <Square size={14} />
@@ -2070,7 +2903,7 @@ function Composer({
         <button
           onClick={onSend}
           disabled={!input.trim()}
-          className="w-8 h-8 rounded-lg bg-white text-black disabled:bg-white/15 disabled:text-white/40 flex items-center justify-center shrink-0 transition-colors"
+          className="w-8 h-8 rounded-lg bg-white text-black disabled:bg-glass/15 disabled:text-glass/40 flex items-center justify-center shrink-0 transition-colors"
           aria-label="Send"
         >
           <ArrowUp size={16} strokeWidth={2.5} />

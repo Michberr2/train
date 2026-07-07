@@ -316,19 +316,19 @@ export default function CanvasCard({ art }: { art: CanvasArtifact }) {
   }, [name, sceneW, sceneH, exportMultiplier])
 
   const toolBtn =
-    'flex items-center gap-1.5 rounded-lg bg-white/[0.07] px-2.5 py-1.5 text-xs text-[#ededed] hover:bg-white/[0.12] disabled:opacity-40'
+    'flex items-center gap-1.5 rounded-lg bg-glass/[0.07] px-2.5 py-1.5 text-xs text-ink hover:bg-glass/[0.12] disabled:opacity-40'
   const exportBtn =
     'flex items-center gap-1.5 rounded-lg bg-fuchsia-500/20 px-2.5 py-1.5 text-xs font-medium text-fuchsia-200 hover:bg-fuchsia-500/30 disabled:opacity-40'
 
   return (
-    <div className="my-2 overflow-hidden rounded-xl border border-white/[0.16] bg-white/[0.04]">
-      <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.12] px-4 py-2.5">
+    <div className="my-2 overflow-hidden rounded-xl border border-glass/[0.16] bg-glass/[0.04]">
+      <div className="flex flex-wrap items-center gap-2 border-b border-glass/[0.12] px-4 py-2.5">
         <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-fuchsia-500/15 text-fuchsia-300">
           <Brush size={15} />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-[#ededed]">Nalu Studio</div>
-          <div className="text-xs text-[#8e8e8e]">
+          <div className="text-sm font-medium text-ink">Nalu Studio</div>
+          <div className="text-xs text-dim">
             Editable canvas — {sceneW}×{sceneH}
           </div>
         </div>
@@ -347,7 +347,7 @@ export default function CanvasCard({ art }: { art: CanvasArtifact }) {
       </div>
 
       {/* Edit toolbar */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.08] bg-black/20 px-4 py-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-glass/[0.08] bg-black/20 px-4 py-2">
         <button onClick={addText} disabled={!ready} className={toolBtn} title="Add text">
           <Type size={13} /> Text
         </button>
@@ -363,20 +363,20 @@ export default function CanvasCard({ art }: { art: CanvasArtifact }) {
         <button onClick={deleteActive} disabled={!ready} className={toolBtn} title="Delete selected">
           <Trash2 size={13} /> Delete
         </button>
-        <span className="ml-auto hidden text-[11px] text-[#6f6f6f] sm:block">
+        <span className="ml-auto hidden text-[11px] text-dim sm:block">
           Click to select · drag to move · double-click text to edit
         </span>
       </div>
 
       {/* Stage */}
-      <div className="relative max-h-[34rem] overflow-auto bg-[#0a0a0a] p-4">
+      <div className="relative max-h-[34rem] overflow-auto bg-canvas p-4">
         {error && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 p-6 text-center text-xs text-red-300">
             {error}
           </div>
         )}
         {!ready && !error && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center text-xs text-[#8e8e8e]">
+          <div className="absolute inset-0 z-10 flex items-center justify-center text-xs text-dim">
             Loading canvas editor…
           </div>
         )}

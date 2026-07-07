@@ -3,15 +3,19 @@
 // rows, and real Excel formulas), which the client renders + exports to
 // .xlsx / .pdf. Branded "Nalu Sheets"; provider hidden.
 
+import { cors } from './_cors'
+import { groundFromPrompt } from './_grounding'
+import { chatCompleteContinued } from './_llm'
+import { identityForRequest, identityBlock } from './_db'
+import { normalizeSheets } from './_validate'
+import { reserveStudioQuota, studioLimitMessage } from './_limits'
+
 function env(name: string): string | undefined {
   const v = process.env[name]
   return v && v.trim() ? v : undefined
 }
 
-const LLM_BASE = (
-  env('GLM_BASE_URL') || 'https://tinker.thinkingmachines.dev/services/tinker-prod/oai/api/v1'
-).replace(/\/+$/, '')
-const LLM_KEY = env('GLM_API_KEY') || ''
+const LLM_KEY = env('TINKER_API_KEY') || ''
 const LLM_MODEL = env('NALU_SHEET_MODEL') || 'deepseek-ai/DeepSeek-V3.1'
 
 const SYSTEM = `You are a world-class spreadsheet engineer — better than anyone at Excel.
@@ -22,9 +26,12 @@ IDENTITY: If the spreadsheet is about "Nalu" — or about the assistant/company 
 Output ONLY valid minified JSON (no markdown fences, no prose) of this exact shape:
 {"title": string, "sheets": [{"name": string, "columns": [string], "rows": [[cell]]}]}
 
+CELL COORDINATES — get this exactly right or every formula breaks: the "columns" array is the header and becomes Excel ROW 1. The FIRST inner array in "rows" is Excel ROW 2, the next is ROW 3, and so on. The first column is A, second B, third C, etc. Write every "=" formula's A1 references to match THAT mapping: a formula on the first data row that multiplies its own B and C is "=B2*C2"; a column total under 24 data rows (rows 2–25) is "=SUM(B2:B25)". Data starts at row 2 — never reference row 1 as data, and never be off by one.
+RAW VALUES — numeric cells must be RAW numbers (1200, 0.08, -45000), NEVER strings with currency symbols, commas, or percent signs ("$1,200", "8%", "1,200"). A quoted number breaks every formula that references it; display formatting is applied separately. Only genuine text labels are strings; dates as ISO strings ("2026-01-31").
+
 DEPTH — this is critical. Build a real, multi-tab MODEL, not a toy table:
 - Produce MULTIPLE sheets when the topic warrants it (it usually does). E.g. a financial model = "Assumptions", "Revenue", "Expenses", "P&L", "Cash Flow", "Summary/Dashboard". A budget = "Assumptions", "Monthly Detail" (12 months), "Summary". A plan = inputs + calc + output tabs.
-- Make tables WIDE and DEEP: typically 8–16 columns and 20–60 data rows of realistic, specific values (real categories, names, dates, amounts) — not 3 placeholder rows.
+- Make tables WIDE and DEEP: typically 8–16 columns and 20–60 data rows of realistic, specific values (real categories, names, dates, amounts) — not 3 placeholder rows. Anything "monthly" gets ALL 12 months; a budget's detail tab lists 15–30 real line items across categories (housing, utilities, groceries, transport, insurance, subscriptions, dining, savings…) — never a handful.
 - Use REAL Excel formulas heavily, as strings starting with "=" with correct A1 references: arithmetic ("=B2*C2"), aggregates ("=SUM(B2:B25)","=AVERAGE(...)","=MAX(...)"), growth ("=B2*(1+$B$3)"), conditionals ("=IF(...)","=SUMIF(...)","=COUNTIF(...)"), look-ups ("=VLOOKUP(...)"/"=XLOOKUP(...)"), and percentages/margins. Totals rows AND derived columns should be formulas, not hardcoded.
 - Use absolute refs ($B$3) for assumptions referenced across rows. Reference other sheets where natural ("=Assumptions!B4") to wire the model together.
 - Add a total/summary row and, where useful, a small KPI/dashboard sheet.
@@ -69,6 +76,7 @@ function extractJson(text: string): unknown | null {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default async function handler(req: any, res: any) {
+  if (cors(req, res)) return
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'POST only' })
     return
@@ -86,39 +94,47 @@ export default async function handler(req: any, res: any) {
     return
   }
   const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
+  const prevSheet = typeof body.prevSheet === 'string' && body.prevSheet.length > 50 ? body.prevSheet.slice(0, 90000) : ''
   if (!prompt) {
     res.status(400).json({ error: 'prompt required' })
     return
   }
+  const grounded = await groundFromPrompt(prompt)
+  const today = new Date().toISOString().slice(0, 10)
 
+  const quota = await reserveStudioQuota(req, 'sheet')
+  if (!quota.ok) {
+    res.status(429).json({ error: studioLimitMessage('spreadsheet', quota) })
+    return
+  }
+  let succeeded = false
   try {
-    const upstream = await fetch(`${LLM_BASE}/chat/completions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${LLM_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: LLM_MODEL,
-        stream: false,
-        max_tokens: 7000,
-        messages: [
-          { role: 'system', content: SYSTEM },
-          { role: 'user', content: prompt },
-        ],
-      }),
-    })
-    if (!upstream.ok) {
-      const t = await upstream.text().catch(() => '')
-      res.status(502).json({ error: `Sheet upstream ${upstream.status}: ${t.slice(0, 200)}` })
-      return
-    }
-    const d = (await upstream.json()) as { choices?: Array<{ message?: { content?: string } }> }
-    const content = d?.choices?.[0]?.message?.content || ''
+    // Robust: timeout + provider failover + truncation continuation. Low temp +
+    // JSON mode for deterministic, valid output (formulas/numbers must be exact).
+    const { content } = await chatCompleteContinued(
+      [
+        { role: 'system', content: `${SYSTEM}\n\nToday is ${today}. Use it for any month/quarter/year labels, projections, or "next 12 months" ranges.` + identityBlock(await identityForRequest(req).catch(() => null)) },
+        { role: 'user', content: grounded + prompt + (prevSheet ? `\n\n----\nCURRENT SPREADSHEET JSON (apply the change above to THIS workbook; keep all other tabs/rows/formulas identical; output the complete updated JSON):\n${prevSheet}` : '') },
+      ],
+      { model: LLM_MODEL, maxTokens: 16000, timeoutMs: 110000, retryPrimary: false, temperature: 0.2, json: true },
+    )
     const parsed = extractJson(content) as { title?: string; sheets?: unknown[] } | null
     if (!parsed || !Array.isArray(parsed.sheets) || parsed.sheets.length === 0) {
       res.status(502).json({ error: 'Could not build the spreadsheet. Try rephrasing.' })
       return
     }
-    res.status(200).json({ title: parsed.title || 'Spreadsheet', sheets: parsed.sheets, name: 'Nalu Sheets' })
+    // Enforce the contract: coerce "$1,200"/"8%" → raw numbers (so formulas
+    // compute), make rows rectangular, sanitize + dedupe worksheet names.
+    const sheets = normalizeSheets(parsed.sheets)
+    if (!sheets.length) {
+      res.status(502).json({ error: 'Could not build the spreadsheet. Try rephrasing.' })
+      return
+    }
+    res.status(200).json({ title: parsed.title || 'Spreadsheet', sheets, name: 'Nalu Sheets' })
+    succeeded = true
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'sheet error' })
+  } finally {
+    if (!succeeded) await quota.release()
   }
 }

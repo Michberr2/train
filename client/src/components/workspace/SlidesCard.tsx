@@ -1,9 +1,8 @@
 import { useState } from 'react'
 import pptxgen from 'pptxgenjs'
 import { jsPDF } from 'jspdf'
-import { Presentation, Download, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 import { getBrand, toRgb } from './brandKit'
-import { coverImageDataUrl } from './coverImage'
+import { coverImageDataUrl, coverImageUrl } from './coverImage'
 import { chartDataUrl, hasChartData, type ChartSpec } from './chartRender'
 
 export type Slide = { title?: string; bullets?: string[]; notes?: string; image?: string; chart?: ChartSpec }
@@ -34,41 +33,34 @@ function deckStyle() {
   }
 }
 
-export default function SlidesCard({ data }: { data: Deck }) {
+// Fetch the cover + per-slide photos (no key) in parallel, robustly. Returns a
+// map index→dataURL ('cover' for the title slide). Missing/failed images are
+// simply absent, so the deck still renders on a solid brand color.
+async function fetchDeckPhotos(data: Deck, slides: Slide[]): Promise<Record<string, string>> {
+  const jobs: Promise<void>[] = []
+  const out: Record<string, string> = {}
+  if (data.cover && data.cover.trim())
+    jobs.push(coverImageDataUrl(data.cover, 1600, 900).then((u) => { if (u) out.cover = u }))
+  slides.forEach((sl, i) => {
+    if (sl.image && sl.image.trim())
+      jobs.push(coverImageDataUrl(sl.image, 1100, 1300).then((u) => { if (u) out[String(i)] = u }))
+  })
+  await Promise.all(jobs)
+  return out
+}
+
+/** Build the branded .pptx as a Blob (shared with the Agents output nodes). */
+export async function buildPptxBlob(data: Deck): Promise<{ blob: Blob; filename: string }> {
   const slides = data.slides && data.slides.length ? data.slides : []
   const name = cleanName(data.title)
-  const [idx, setIdx] = useState(0)
-  const [busy, setBusy] = useState<'pptx' | 'pdf' | null>(null)
-  const cur = slides[idx]
   const s = deckStyle()
-
-  // Fetch the cover + per-slide photos (no key) in parallel, robustly. Returns a
-  // map index→dataURL ('cover' for the title slide). Missing/failed images are
-  // simply absent, so the deck still renders on a solid brand color.
-  const fetchPhotos = async (): Promise<Record<string, string>> => {
-    const jobs: Promise<void>[] = []
-    const out: Record<string, string> = {}
-    if (data.cover && data.cover.trim())
-      jobs.push(coverImageDataUrl(data.cover, 1600, 900).then((u) => { if (u) out.cover = u }))
-    slides.forEach((sl, i) => {
-      if (sl.image && sl.image.trim())
-        jobs.push(coverImageDataUrl(sl.image, 1100, 1300).then((u) => { if (u) out[String(i)] = u }))
-    })
-    await Promise.all(jobs)
-    return out
+  let photos: Record<string, string> = {}
+  try {
+    photos = await fetchDeckPhotos(data, slides)
+  } catch {
+    /* no photos — fall back to solid covers */
   }
-
-  // ---- PowerPoint (.pptx) --------------------------------------------------
-  const downloadPptx = async () => {
-    if (busy) return
-    setBusy('pptx')
-    let photos: Record<string, string> = {}
-    try {
-      photos = await fetchPhotos()
-    } catch {
-      /* no photos — fall back to solid covers */
-    }
-    const pptx = new pptxgen()
+  const pptx = new pptxgen()
     pptx.layout = 'LAYOUT_WIDE' // 13.333 x 7.5 in
     const W = 13.333
     const H = 7.5
@@ -89,7 +81,7 @@ export default function SlidesCard({ data }: { data: Deck }) {
       x: 0.9, y: 2.35, w: 11, h: 0.4, fontSize: 12, color: s.gold, fontFace: s.body, charSpacing: 6, bold: true,
     })
     t0.addText(data.title || 'Presentation', {
-      x: 0.88, y: 2.75, w: 11.5, h: 1.6, fontSize: 46, color: 'FFFFFF', fontFace: s.head, italic: false,
+      x: 0.88, y: 2.75, w: 11.5, h: 1.6, fontSize: 46, color: 'FFFFFF', fontFace: s.head, italic: false, fit: 'shrink',
     })
     t0.addShape(pptx.ShapeType.line, { x: 0.95, y: 4.5, w: 2.2, h: 0, line: { color: s.gold, width: 1.5 } })
     if (data.subtitle)
@@ -105,8 +97,10 @@ export default function SlidesCard({ data }: { data: Deck }) {
     slides.forEach((sl, i) => {
       const slide = pptx.addSlide()
       slide.background = { color: s.paper }
-      const img = photos[String(i)]
-      const chart = !img && hasChartData(sl.chart) ? sl.chart! : null
+      // A data slide's CHART wins over a decorative photo (charts were vanishing
+      // when the model added an image to a chart slide). Photo only when no chart.
+      const chart = hasChartData(sl.chart) ? sl.chart! : null
+      const img = chart ? undefined : photos[String(i)]
       const textW = img ? 6.7 : chart ? 5.7 : 11.4
       if (img) {
         // full-height photo band on the right
@@ -117,6 +111,7 @@ export default function SlidesCard({ data }: { data: Deck }) {
       })
       slide.addText(sl.title || '', {
         x: 0.88, y: 0.95, w: img ? textW : 11.4, h: 1.0, fontSize: 30, color: s.navy, fontFace: s.head,
+        fit: 'shrink', // message-titles are full sentences — shrink instead of clipping
       })
       slide.addShape(pptx.ShapeType.line, { x: 0.95, y: 1.95, w: 1.6, h: 0, line: { color: s.gold, width: 1.5 } })
       const runs: { text: string; options: Record<string, unknown> }[] = []
@@ -159,12 +154,44 @@ export default function SlidesCard({ data }: { data: Deck }) {
       slide.addText(num(i), { x: 0.9 + footW - 1, y: 7.0, w: 1, h: 0.3, fontSize: 9, color: '9A8E78', fontFace: s.body, align: 'right' })
       if (sl.notes) slide.addNotes(sl.notes)
     })
+  const blob = (await pptx.write({ outputType: 'blob' })) as Blob
+  return { blob, filename: `${name}.pptx` }
+}
+
+export default function SlidesCard({ data }: { data: Deck }) {
+  // harden against imperfect model JSON: bullets must be an array of strings
+  const slides = (Array.isArray(data.slides) ? data.slides : [])
+    .filter((sl) => sl && typeof sl === 'object')
+    .map((sl) => ({
+      ...sl,
+      title: typeof sl.title === 'string' ? sl.title : String(sl.title ?? ''),
+      bullets: Array.isArray(sl.bullets) ? sl.bullets.map((b) => (typeof b === 'string' ? b : String(b ?? ''))) : typeof sl.bullets === 'string' ? [sl.bullets] : [],
+    }))
+  const name = cleanName(data.title)
+  const [busy, setBusy] = useState<'pptx' | 'pdf' | null>(null)
+  const s = deckStyle()
+
+  // ---- PowerPoint (.pptx) --------------------------------------------------
+  const downloadPptx = async () => {
+    if (busy) return
+    setBusy('pptx')
     try {
-      await pptx.writeFile({ fileName: `${name}.pptx` })
+      const { blob, filename } = await buildPptxBlob(data)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 3000)
     } finally {
       setBusy(null)
     }
   }
+  // photos for the export are fetched inside buildPptxBlob; the PDF path below
+  // still fetches its own set.
+  const fetchPhotos = () => fetchDeckPhotos(data, slides)
 
   // ---- PDF -----------------------------------------------------------------
   const downloadPdf = async () => {
@@ -263,10 +290,13 @@ export default function SlidesCard({ data }: { data: Deck }) {
       pdf.setLineWidth(1.5)
       pdf.line(M, y - 8, M + 90, y - 8)
       y += 22
-      // bullets — gold dash + ink text
+      // bullets — gold dash + ink text. Guard against overrunning the footer:
+      // stop once the next bullet wouldn't fit above the footer rule.
       pdf.setFontSize(14)
+      const bulletFloor = H - 58
       for (const b of sl.bullets || []) {
         const lines = pdf.splitTextToSize(b, textR - M - 26)
+        if (y + lines.length * 20 > bulletFloor) break // out of room — don't draw past the footer
         pdf.setTextColor(gold[0], gold[1], gold[2])
         pdf.setFont('times', 'bold')
         pdf.text('—', M, y)
@@ -297,95 +327,74 @@ export default function SlidesCard({ data }: { data: Deck }) {
   const gold = '#' + s.gold
   const navy = '#' + s.navy
 
+  // The FULL deck renders in the chat — every slide, photos and charts —
+  // in a flat minimal frame that matches the export styling.
   return (
-    <div className="my-2 overflow-hidden rounded-xl border border-white/[0.16] bg-white/[0.04]">
-      <div className="flex items-center gap-2.5 border-b border-white/[0.12] px-4 py-2.5">
-        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/15 text-amber-300">
-          <Presentation size={15} />
+    <div className="my-4 border-y border-glass/[0.12]">
+      <div className="flex items-baseline gap-3 px-1 py-2">
+        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-dim">PowerPoint</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
+          {data.title || 'Presentation'}
+          <span className="ml-2 text-xs font-normal text-dim">{slides.length} slides</span>
         </span>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-[#ededed]">{data.title || 'Presentation'}</div>
-          <div className="text-xs text-[#8e8e8e]">{slides.length} slides · PowerPoint &amp; PDF</div>
-        </div>
-        <button
-          onClick={() => void downloadPptx()}
-          disabled={busy !== null}
-          className="flex items-center gap-1.5 rounded-lg bg-amber-500/20 px-2.5 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-500/30 disabled:opacity-50"
-        >
-          {busy === 'pptx' ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}{' '}
+        <button onClick={() => void downloadPptx()} disabled={busy !== null}
+          className="shrink-0 text-xs font-medium text-gold underline-offset-4 hover:underline disabled:opacity-50">
           {busy === 'pptx' ? 'Designing…' : 'PowerPoint'}
         </button>
-        <button
-          onClick={() => void downloadPdf()}
-          disabled={busy !== null}
-          className="flex items-center gap-1.5 rounded-lg bg-white/[0.07] px-2.5 py-1.5 text-xs text-[#ededed] hover:bg-white/[0.12] disabled:opacity-50"
-        >
-          {busy === 'pdf' ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}{' '}
+        <span className="text-xs text-dim">·</span>
+        <button onClick={() => void downloadPdf()} disabled={busy !== null}
+          className="shrink-0 text-xs font-medium text-gold underline-offset-4 hover:underline disabled:opacity-50">
           {busy === 'pdf' ? 'Designing…' : 'PDF'}
         </button>
       </div>
 
-      {/* Slide preview — a luxury linen slide (matches the export) */}
-      <div className="bg-[#0c0e14] p-4">
-        <div
-          className="mx-auto flex aspect-[16/9] w-full max-w-2xl flex-col rounded-lg border border-black/10 p-7 shadow-sm"
-          style={{ backgroundColor: '#' + PAPER }}
-        >
-          <div
-            className="mb-1 text-[11px] font-semibold uppercase"
-            style={{ color: gold, letterSpacing: '0.18em' }}
-          >
-            {String(idx + 1).padStart(2, '0')}
-          </div>
-          <div
-            className="mb-2 text-2xl leading-tight"
-            style={{ color: navy, fontFamily: 'Georgia, "Times New Roman", serif' }}
-          >
-            {cur?.title || `Slide ${idx + 1}`}
-          </div>
-          <div className="mb-3 h-px w-12" style={{ backgroundColor: gold }} />
-          {hasChartData(cur?.chart) ? (
-            <div className="flex flex-1 items-center justify-center overflow-hidden">
-              <img
-                src={chartDataUrl(cur!.chart!, 900, 560, { paper: '#F7F5F0' }) || ''}
-                alt="chart"
-                className="max-h-full max-w-full object-contain"
-              />
+      {/* every slide, stacked — the whole deck is visible right here */}
+      <div className="max-h-[78vh] space-y-4 overflow-y-auto py-3">
+        <div className="mx-auto flex aspect-[16/9] w-full max-w-2xl flex-col justify-center p-8" style={{ backgroundColor: '#' + s.dark }}>
+          <div className="text-[10px] font-bold uppercase" style={{ color: gold, letterSpacing: '0.3em' }}>{s.label}</div>
+          <div className="mt-2 text-3xl leading-tight text-white" style={{ fontFamily: 'Georgia, "Times New Roman", serif' }}>{data.title || 'Presentation'}</div>
+          <div className="mt-3 h-px w-16" style={{ backgroundColor: gold }} />
+          {data.subtitle && <div className="mt-3 text-sm italic" style={{ color: '#C9B891' }}>{data.subtitle}</div>}
+        </div>
+        {slides.map((sl, i) => (
+          <div key={i} className="mx-auto flex aspect-[16/9] w-full max-w-2xl flex-col p-7" style={{ backgroundColor: '#' + PAPER }}>
+            <div className="mb-1 text-[11px] font-semibold uppercase" style={{ color: gold, letterSpacing: '0.18em' }}>{String(i + 1).padStart(2, '0')}</div>
+            <div className="mb-2 text-2xl leading-tight" style={{ color: navy, fontFamily: 'Georgia, "Times New Roman", serif' }}>{sl.title || `Slide ${i + 1}`}</div>
+            <div className="mb-3 h-px w-12" style={{ backgroundColor: gold }} />
+            {hasChartData(sl.chart) ? (
+              <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
+                <img src={chartDataUrl(sl.chart!, 900, 560, { paper: '#F7F5F0' }) || ''} alt="chart" className="max-h-full max-w-full object-contain" />
+              </div>
+            ) : sl.image && sl.image.trim() ? (
+              <div className="flex min-h-0 flex-1 gap-4 overflow-hidden">
+                <ul className="min-w-0 flex-1 space-y-2 overflow-hidden">
+                  {(sl.bullets || []).map((b, j) => (
+                    <li key={j} className="flex gap-2.5 text-sm" style={{ color: '#2A2A2A' }}>
+                      <span style={{ color: gold }}>—</span>
+                      <span>{b}</span>
+                    </li>
+                  ))}
+                </ul>
+                <img src={coverImageUrl(sl.image, 550, 650)} alt="" loading="lazy"
+                  className="h-full w-[38%] shrink-0 object-cover" style={{ backgroundColor: '#E4DED2' }}
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+              </div>
+            ) : (
+              <ul className="space-y-2 overflow-hidden">
+                {(sl.bullets || []).map((b, j) => (
+                  <li key={j} className="flex gap-2.5 text-sm" style={{ color: '#2A2A2A' }}>
+                    <span style={{ color: gold }}>—</span>
+                    <span>{b}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-auto flex items-center justify-between pt-3 text-[9px] uppercase" style={{ color: '#9A8E78', letterSpacing: '0.15em', borderTop: '1px solid #E4DED2' }}>
+              <span>{s.label}</span>
+              <span>{String(i + 1).padStart(2, '0')}</span>
             </div>
-          ) : (
-          <ul className="space-y-2 overflow-hidden">
-            {(cur?.bullets || []).map((b, i) => (
-              <li key={i} className="flex gap-2.5 text-sm" style={{ color: '#2A2A2A' }}>
-                <span style={{ color: gold }}>—</span>
-                <span>{b}</span>
-              </li>
-            ))}
-          </ul>
-          )}
-          <div className="mt-auto flex items-center justify-between pt-3 text-[9px] uppercase" style={{ color: '#9A8E78', letterSpacing: '0.15em', borderTop: '1px solid #E4DED2' }}>
-            <span>{s.label}</span>
-            <span>{String(idx + 1).padStart(2, '0')}</span>
           </div>
-        </div>
-        <div className="mt-3 flex items-center justify-center gap-3">
-          <button
-            onClick={() => setIdx((i) => Math.max(0, i - 1))}
-            disabled={idx === 0}
-            className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/[0.07] text-[#ededed] hover:bg-white/[0.12] disabled:opacity-40"
-          >
-            <ChevronLeft size={15} />
-          </button>
-          <span className="text-xs tabular-nums text-[#8e8e8e]">
-            {idx + 1} / {slides.length}
-          </span>
-          <button
-            onClick={() => setIdx((i) => Math.min(slides.length - 1, i + 1))}
-            disabled={idx >= slides.length - 1}
-            className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/[0.07] text-[#ededed] hover:bg-white/[0.12] disabled:opacity-40"
-          >
-            <ChevronRight size={15} />
-          </button>
-        </div>
+        ))}
       </div>
     </div>
   )

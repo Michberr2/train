@@ -73,3 +73,66 @@ export async function userIdForToken(client: Client, token: string | null): Prom
   const r = await client.query('SELECT user_id FROM nalu_sessions WHERE token = $1', [token])
   return r.rows[0]?.user_id ?? null
 }
+
+
+// ---- Signed-in identity + learned profile (personalization everywhere) -----
+export type UserIdentity = { id: string; name: string; profile: string }
+
+/** Resolve who is calling (from the Bearer token) + their learned profile.
+ *  Best-effort: returns null for anonymous or on any failure. */
+export async function identityForRequest(req: { headers: Record<string, unknown>; body?: unknown }): Promise<UserIdentity | null> {
+  const token = readToken(req)
+  if (!token || !process.env.DATABASE_URL) return null
+  const c = getClient()
+  try {
+    await c.connect()
+    const u = await c.query(
+      `SELECT u.id, u.display_name FROM nalu_sessions s JOIN nalu_users u ON u.id = s.user_id WHERE s.token = $1`,
+      [token],
+    )
+    if (!u.rows.length) return null
+    const id = String(u.rows[0].id)
+    const name = String(u.rows[0].display_name || id.split('@')[0])
+    let profile = ''
+    try {
+      const pr = await c.query('SELECT value FROM nalu_user_data WHERE user_id = $1 AND key = $2', [id, 'nalu-ai-profile'])
+      if (pr.rows.length && typeof pr.rows[0].value === 'string') profile = pr.rows[0].value
+    } catch { /* no profile yet */ }
+    return { id, name, profile: profile.slice(0, 2000) }
+  } catch {
+    return null
+  } finally {
+    await c.end().catch(() => {})
+  }
+}
+
+/** Persist the learned profile for a user. */
+export async function saveProfile(userId: string, profile: string): Promise<void> {
+  if (!process.env.DATABASE_URL) return
+  const c = getClient()
+  try {
+    await c.connect()
+    await c.query(
+      `INSERT INTO nalu_user_data (user_id, key, value, updated_at) VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [userId, 'nalu-ai-profile', JSON.stringify(profile.slice(0, 2000))],
+    )
+  } catch { /* best-effort */ } finally {
+    await c.end().catch(() => {})
+  }
+}
+
+/** One personalization block usable in ANY engine's prompt. */
+export function identityBlock(u: UserIdentity | null): string {
+  if (!u) return ''
+  // Profiles may arrive as plain text, a JSON-quoted string, or (from an over-
+  // eager model) a JSON object — normalize ALL of them to plain text.
+  let profile = (u.profile || '').trim()
+  try {
+    const parsed = JSON.parse(profile) as unknown
+    if (typeof parsed === 'string') profile = parsed.trim()
+    else if (parsed && typeof parsed === 'object')
+      profile = String(Object.values(parsed as Record<string, unknown>).find((v) => typeof v === 'string') || '').trim()
+  } catch { /* already plain text */ }
+  return `\n\nSIGNED-IN USER: ${u.name}. Address them by name where natural, and personalize to them.${profile ? `\nWHAT YOU HAVE LEARNED ABOUT ${u.name.toUpperCase()} (use for personalization; never recite wholesale): ${profile}` : ''}`
+}

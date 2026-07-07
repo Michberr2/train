@@ -6,8 +6,10 @@ import {
   Server,
   LogOut,
   Moon,
+  Sun,
   Info,
 } from 'lucide-react'
+import { useTheme } from '../ThemeProvider'
 
 // The Nalu "Settings" panel.
 
@@ -19,17 +21,18 @@ interface Props {
 export default function SettingsPanel({ displayName, onLogout }: Props) {
   const name = displayName?.trim() || 'You'
   const initial = name.charAt(0).toUpperCase()
+  const { isDark, toggleTheme } = useTheme()
 
   return (
-    <div className="flex h-full flex-col bg-white/[0.09] backdrop-blur-2xl text-[#ededed] font-sans">
+    <div className="flex h-full flex-col bg-glass/[0.09] backdrop-blur-2xl text-ink font-sans">
       {/* Header */}
-      <header className="flex items-center gap-3 px-6 py-5 border-b border-white/[0.18] shrink-0">
-        <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
-          <Settings size={18} className="text-[#ededed]" />
+      <header className="flex items-center gap-3 px-6 py-5 border-b border-glass/[0.18] shrink-0">
+        <div className="w-9 h-9 rounded-xl bg-glass/10 flex items-center justify-center">
+          <Settings size={18} className="text-ink" />
         </div>
         <div className="min-w-0">
           <h1 className="text-base font-semibold tracking-tight leading-tight">Settings</h1>
-          <p className="text-xs text-[#8e8e8e]">Manage your account, model, and connection</p>
+          <p className="text-xs text-dim">Manage your account, model, and connection</p>
         </div>
       </header>
 
@@ -38,17 +41,17 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
         <div className="max-w-2xl mx-auto px-6 py-6 space-y-8">
           {/* Account */}
           <Section icon={<UserIcon size={15} />} title="Account" desc="Signed-in identity">
-            <div className="flex items-center gap-3 rounded-xl border border-white/[0.18] bg-white/[0.11] backdrop-blur-2xl px-4 py-3.5">
-              <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-sm font-medium shrink-0">
+            <div className="flex items-center gap-3 rounded-xl border border-glass/[0.18] bg-glass/[0.11] backdrop-blur-2xl px-4 py-3.5">
+              <div className="w-10 h-10 rounded-full bg-glass/10 flex items-center justify-center text-sm font-medium shrink-0">
                 {initial}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-[#ededed] truncate">{name}</div>
-                <div className="text-xs text-[#8e8e8e]">Nalu account</div>
+                <div className="text-sm font-medium text-ink truncate">{name}</div>
+                <div className="text-xs text-dim">Nalu account</div>
               </div>
               <button
                 onClick={onLogout}
-                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm bg-white/5 hover:bg-white/10 text-[#ededed] transition-colors shrink-0"
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm bg-glass/5 hover:bg-glass/10 text-ink transition-colors shrink-0"
               >
                 <LogOut size={14} /> Sign out
               </button>
@@ -57,13 +60,13 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
 
           {/* Model */}
           <Section icon={<Cpu size={15} />} title="Model" desc="The model behind Nalu">
-            <div className="flex items-center gap-3 rounded-xl border border-white/[0.18] bg-white/[0.11] backdrop-blur-2xl px-4 py-3.5">
+            <div className="flex items-center gap-3 rounded-xl border border-glass/[0.18] bg-glass/[0.11] backdrop-blur-2xl px-4 py-3.5">
               <div className="w-9 h-9 rounded-lg bg-white/90 flex items-center justify-center shrink-0">
                 <img src="/wolf-icon.png" alt="" className="brightness-0 h-4 w-4" />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-[#ededed]">Nalu Catalina</div>
-                <div className="text-xs text-[#8e8e8e]">Nalu's flagship model — long-horizon coding &amp; agents</div>
+                <div className="text-sm font-medium text-ink">Nalu Catalina</div>
+                <div className="text-xs text-dim">Nalu's flagship model — long-horizon coding &amp; agents</div>
               </div>
               <span className="rounded-full bg-emerald-500/20 px-2.5 py-1 text-xs font-medium text-emerald-300 shrink-0">
                 Active
@@ -73,29 +76,32 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
 
           {/* Appearance */}
           <Section icon={<Palette size={15} />} title="Appearance" desc="Theme and visual style">
-            <div className="flex items-center gap-3 rounded-xl border border-white/[0.18] bg-white/[0.11] backdrop-blur-2xl px-4 py-3.5">
-              <div className="w-9 h-9 rounded-lg bg-white/5 flex items-center justify-center shrink-0">
-                <Moon size={16} className="text-[#afafaf]" />
+            <button
+              onClick={(e) => toggleTheme(e)}
+              className="w-full flex items-center gap-3 rounded-xl border border-glass/[0.18] bg-glass/[0.11] backdrop-blur-2xl px-4 py-3.5 text-left transition-colors hover:bg-glass/[0.16]"
+            >
+              <div className="w-9 h-9 rounded-lg bg-glass/5 flex items-center justify-center shrink-0">
+                {isDark ? <Moon size={16} className="text-dim" /> : <Sun size={16} className="text-dim" />}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-[#ededed]">Theme</div>
-                <div className="text-xs text-[#8e8e8e]">Dark — tuned to match the Codex desktop app</div>
+                <div className="text-sm font-medium text-ink">Theme</div>
+                <div className="text-xs text-dim">{isDark ? 'Dark — tap to switch to light' : 'Light — tap to switch to dark'}</div>
               </div>
               <span className="rounded-full bg-emerald-500/20 px-2.5 py-1 text-xs font-medium text-emerald-300 shrink-0">
-                Dark
+                {isDark ? 'Dark' : 'Light'}
               </span>
-            </div>
+            </button>
           </Section>
 
           {/* Backend */}
           <Section icon={<Server size={15} />} title="Backend" desc="How replies are generated">
-            <div className="rounded-xl border border-white/[0.18] bg-white/[0.11] backdrop-blur-2xl px-4 py-3.5 space-y-3">
+            <div className="rounded-xl border border-glass/[0.18] bg-glass/[0.11] backdrop-blur-2xl px-4 py-3.5 space-y-3">
               <div className="flex items-center gap-2.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-                <span className="text-sm text-[#ededed]">Connected to the Nalu engine</span>
+                <span className="text-sm text-ink">Connected to the Nalu engine</span>
               </div>
-              <div className="flex items-start gap-2 rounded-lg bg-white/5 px-3 py-2.5 text-xs text-[#afafaf]">
-                <Info size={14} className="mt-0.5 shrink-0 text-[#8e8e8e]" />
+              <div className="flex items-start gap-2 rounded-lg bg-glass/5 px-3 py-2.5 text-xs text-dim">
+                <Info size={14} className="mt-0.5 shrink-0 text-dim" />
                 <span>Replies are generated by the Nalu engine. If responses fail, your engine endpoint may need attention.</span>
               </div>
             </div>
@@ -120,9 +126,9 @@ function Section({
   return (
     <section>
       <div className="flex items-center gap-2 mb-3">
-        <span className="text-[#afafaf]">{icon}</span>
-        <h2 className="text-sm font-semibold text-[#ededed]">{title}</h2>
-        <span className="text-xs text-[#6e6e6e]">· {desc}</span>
+        <span className="text-dim">{icon}</span>
+        <h2 className="text-sm font-semibold text-ink">{title}</h2>
+        <span className="text-xs text-dim">· {desc}</span>
       </div>
       {children}
     </section>

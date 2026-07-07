@@ -263,14 +263,64 @@ export default function Blueprint3D({ floors, mode, storeKey, startWalk, initial
     const hardMat = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.95 })
     matsRef.current = { wall: wallMat, inner: innerMat, slab: slabMat, trim: trimMat, water: waterMat, build: buildMat }
 
-    const wall = (ax: number, az: number, bx: number, bz: number, y0: number, t: number, m: THREE.Material) => {
+    // Door openings: each floor's doors become "cut" spans; axis-aligned walls
+    // are split around them (with a header above door height), so the
+    // first-person walkthrough can genuinely WALK between rooms through the
+    // doorways instead of facing solid boxes.
+    const DOOR_H = 7
+    let cutH: Array<{ z: number; from: number; to: number }> = [] // doors in horizontal walls
+    let cutV: Array<{ x: number; from: number; to: number }> = [] // doors in vertical walls
+    // Ground-floor wall footprints (for walk-mode collision).
+    const solids: Array<{ x1: number; z1: number; x2: number; z2: number }> = []
+    const wallSeg = (ax: number, az: number, bx: number, bz: number, y0: number, t: number, m: THREE.Material, yBase = 0, hgt = WALL_H) => {
       const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz)
       if (len < 0.1) return
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(len + t, WALL_H, t), m)
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(len + t, hgt, t), m)
       mesh.castShadow = true; mesh.receiveShadow = true
-      mesh.position.set((ax + bx) / 2, y0 + WALL_H / 2, (az + bz) / 2)
+      mesh.position.set((ax + bx) / 2, y0 + yBase + hgt / 2, (az + bz) / 2)
       mesh.rotation.y = -Math.atan2(dz, dx)
       root.add(mesh)
+      // full-height ground-floor walls block the walker
+      if (y0 === 0 && yBase === 0) {
+        solids.push({
+          x1: Math.min(ax, bx) - t / 2, z1: Math.min(az, bz) - t / 2,
+          x2: Math.max(ax, bx) + t / 2, z2: Math.max(az, bz) + t / 2,
+        })
+      }
+    }
+    const wall = (ax: number, az: number, bx: number, bz: number, y0: number, t: number, m: THREE.Material) => {
+      // Horizontal wall: split around any door spans on this line.
+      if (Math.abs(az - bz) < 0.01) {
+        const z = az
+        const x1 = Math.min(ax, bx), x2 = Math.max(ax, bx)
+        const cuts = cutH.filter((c) => Math.abs(c.z - z) < 0.9 && c.to > x1 + 0.05 && c.from < x2 - 0.05).sort((a, b) => a.from - b.from)
+        if (cuts.length) {
+          let cur = x1
+          for (const c of cuts) {
+            if (c.from > cur + 0.1) wallSeg(cur, z, Math.min(c.from, x2), z, y0, t, m)
+            // header above the opening keeps the wall reading as one plane
+            wallSeg(Math.max(c.from, x1), z, Math.min(c.to, x2), z, y0, t, m, DOOR_H, WALL_H - DOOR_H)
+            cur = Math.max(cur, c.to)
+          }
+          if (cur < x2 - 0.1) wallSeg(cur, z, x2, z, y0, t, m)
+          return
+        }
+      } else if (Math.abs(ax - bx) < 0.01) {
+        const x = ax
+        const z1 = Math.min(az, bz), z2 = Math.max(az, bz)
+        const cuts = cutV.filter((c) => Math.abs(c.x - x) < 0.9 && c.to > z1 + 0.05 && c.from < z2 - 0.05).sort((a, b) => a.from - b.from)
+        if (cuts.length) {
+          let cur = z1
+          for (const c of cuts) {
+            if (c.from > cur + 0.1) wallSeg(x, cur, x, Math.min(c.from, z2), y0, t, m)
+            wallSeg(x, Math.max(c.from, z1), x, Math.min(c.to, z2), y0, t, m, DOOR_H, WALL_H - DOOR_H)
+            cur = Math.max(cur, c.to)
+          }
+          if (cur < z2 - 0.1) wallSeg(x, cur, x, z2, y0, t, m)
+          return
+        }
+      }
+      wallSeg(ax, az, bx, bz, y0, t, m)
     }
     const perimeter = (x: number, y: number, rw: number, rh: number, y0: number) => {
       wall(x, y, x + rw, y, y0, WALL_T, wallMat); wall(x, y + rh, x + rw, y + rh, y0, WALL_T, wallMat)
@@ -304,6 +354,17 @@ export default function Blueprint3D({ floors, mode, storeKey, startWalk, initial
     const renderFloor = (f: Floor, y0: number, site: boolean) => {
       const ext = extentOf(f)
       const floorArea = Math.max(1, ext.w * ext.h)
+      // Collect this floor's door openings BEFORE any wall is drawn.
+      cutH = []; cutV = []
+      if (!site) {
+        for (const s of f.shapes || []) {
+          if (s?.type !== 'door') continue
+          const dx0 = num(s.x), dy0 = num(s.y), dw = Math.max(2.4, num(s.w, 3))
+          const pad = 0.35
+          if ((s as { dir?: string }).dir === 'v') cutV.push({ x: dx0, from: dy0 - pad, to: dy0 + dw + pad })
+          else cutH.push({ z: dy0, from: dx0 - pad, to: dx0 + dw + pad })
+        }
+      }
       if (!site) perimeter(ext.x, ext.y, ext.w, ext.h, y0)
       for (const s of f.shapes || []) {
         const t = s?.type, label = lc(s?.label)
@@ -340,11 +401,19 @@ export default function Blueprint3D({ floors, mode, storeKey, startWalk, initial
           fol.position.set(num(s.cx), y0 + WALL_H * 0.7 + r * 0.7, num(s.cy)); fol.castShadow = true; root.add(fol)
         } else if (t === 'window' && !site) {
           const x = num(s.x), y = num(s.y), ww = num(s.w, 1)
-          const glass = new THREE.Mesh(new THREE.BoxGeometry(ww * 0.85, WALL_H * 0.36, WALL_T * 0.35), new THREE.MeshStandardMaterial({ color: 0x9fd0ff, roughness: 0.08, transparent: true, opacity: 0.45 }))
-          glass.position.set(x + ww / 2, y0 + WALL_H * 0.55, y); root.add(glass)
+          // dir:"v" = the opening sits in a vertical (side) wall → the glass
+          // runs along Z instead of X, so side-wall windows aren't rotated 90°.
+          const vert = (s as { dir?: string }).dir === 'v'
+          const glass = new THREE.Mesh(
+            new THREE.BoxGeometry(vert ? WALL_T * 0.35 : ww * 0.85, WALL_H * 0.36, vert ? ww * 0.85 : WALL_T * 0.35),
+            new THREE.MeshStandardMaterial({ color: 0x9fd0ff, roughness: 0.08, transparent: true, opacity: 0.45 }),
+          )
+          glass.position.set(vert ? x : x + ww / 2, y0 + WALL_H * 0.55, vert ? y + ww / 2 : y); root.add(glass)
         } else if (t === 'door' && !site) {
           const x = num(s.x), y = num(s.y), dw = num(s.w, 1)
-          block(x, y, dw, WALL_T * 1.3, y0 + 0.02, 0.08, trimMat, false)
+          const vert = (s as { dir?: string }).dir === 'v'
+          if (vert) block(x - (WALL_T * 1.3) / 2, y, WALL_T * 1.3, dw, y0 + 0.02, 0.08, trimMat, false)
+          else block(x, y, dw, WALL_T * 1.3, y0 + 0.02, 0.08, trimMat, false)
         }
       }
     }
@@ -517,12 +586,25 @@ export default function Blueprint3D({ floors, mode, storeKey, startWalk, initial
       prev = t
       if (orbit) orbit.update()
       if (plc && plc.isLocked) {
+        const beforeX = camera.position.x, beforeZ = camera.position.z
         const sp = 14 * dt
         if (keys['KeyW'] || keys['ArrowUp']) plc.moveForward(sp)
         if (keys['KeyS'] || keys['ArrowDown']) plc.moveForward(-sp)
         if (keys['KeyA'] || keys['ArrowLeft']) plc.moveRight(-sp)
         if (keys['KeyD'] || keys['ArrowRight']) plc.moveRight(sp)
         camera.position.y = EYE
+        // Wall collision: slide along walls, walk through DOORWAYS only.
+        const R = 0.45
+        for (const b of solids) {
+          const p = camera.position
+          if (p.x > b.x1 - R && p.x < b.x2 + R && p.z > b.z1 - R && p.z < b.z2 + R) {
+            const wasOutX = beforeX <= b.x1 - R || beforeX >= b.x2 + R
+            const wasOutZ = beforeZ <= b.z1 - R || beforeZ >= b.z2 + R
+            if (wasOutX && !wasOutZ) p.x = beforeX
+            else if (wasOutZ && !wasOutX) p.z = beforeZ
+            else if (wasOutX && wasOutZ) { p.x = beforeX; p.z = beforeZ }
+          }
+        }
       }
       renderer.render(scene, camera)
     }
@@ -609,62 +691,62 @@ export default function Blueprint3D({ floors, mode, storeKey, startWalk, initial
 
   return (
     <div className="relative">
-      <div ref={mountRef} className="h-[34rem] w-full cursor-grab bg-[#0c0e14]" />
+      <div ref={mountRef} className="h-[34rem] w-full cursor-grab bg-canvas" />
 
       {/* top toolbar */}
-      <div className="absolute left-3 top-3 flex flex-wrap items-center gap-2 rounded-lg border border-white/[0.12] bg-black/55 px-2.5 py-2 backdrop-blur">
+      <div className="absolute left-3 top-3 flex flex-wrap items-center gap-2 rounded-lg border border-glass/[0.12] bg-black/55 px-2.5 py-2 backdrop-blur">
         <button onClick={() => { setWalk((wk) => !wk); setFurnishing(false); setSelected(null) }}
-          className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${walk ? 'bg-amber-500/30 text-amber-100' : 'bg-white/10 text-[#ededed] hover:bg-white/20'}`}>
+          className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${walk ? 'bg-amber-500/30 text-amber-100' : 'bg-glass/10 text-ink hover:bg-glass/20'}`}>
           {walk ? 'Orbit view' : 'Walk through'}
         </button>
         {!walk && (
           <button onClick={() => { setFurnishing((f) => !f); setSelected(null) }}
-            className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${furnishing ? 'bg-emerald-500/30 text-emerald-100' : 'bg-white/10 text-[#ededed] hover:bg-white/20'}`}>
+            className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${furnishing ? 'bg-emerald-500/30 text-emerald-100' : 'bg-glass/10 text-ink hover:bg-glass/20'}`}>
             {furnishing ? 'Done' : 'Furnish'}
           </button>
         )}
         {!walk && !furnishing && (
           <button onClick={() => recordRef.current?.()} disabled={recording}
-            className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${recording ? 'bg-red-500/30 text-red-100' : 'bg-white/10 text-[#ededed] hover:bg-white/20'} disabled:opacity-70`}>
+            className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${recording ? 'bg-red-500/30 text-red-100' : 'bg-glass/10 text-ink hover:bg-glass/20'} disabled:opacity-70`}>
             {recording ? 'Recording…' : 'Record tour'}
           </button>
         )}
         {!furnishing && (['wall', 'floor', 'accent', 'water'] as const).map((k) => (
-          <label key={k} className="flex items-center gap-1 text-[10px] capitalize text-[#cfcfcf]">
+          <label key={k} className="flex items-center gap-1 text-[10px] capitalize text-ink">
             <input type="color" value={colors[k]} onChange={(e) => setColors((c) => ({ ...c, [k]: e.target.value }))}
-              className="h-5 w-6 cursor-pointer rounded border border-white/20 bg-transparent" />
+              className="h-5 w-6 cursor-pointer rounded border border-glass/20 bg-transparent" />
             {k}
           </label>
         ))}
         {mode === 'building' && list.length > 1 && furnishing && (
           <select value={placeFloor} onChange={(e) => setPlaceFloor(Number(e.target.value))}
-            className="rounded-md bg-white/10 px-1.5 py-1 text-[11px] text-[#ededed] outline-none">
-            {list.map((f, i) => <option key={i} value={i} className="bg-[#13151b]">{f.name || `Level ${i + 1}`}</option>)}
+            className="rounded-md bg-glass/10 px-1.5 py-1 text-[11px] text-ink outline-none">
+            {list.map((f, i) => <option key={i} value={i} className="bg-panel2">{f.name || `Level ${i + 1}`}</option>)}
           </select>
         )}
       </div>
 
       {/* furniture palette */}
       {furnishing && !walk && (
-        <div className="absolute right-3 top-3 max-h-[31rem] w-44 overflow-auto rounded-lg border border-white/[0.12] bg-black/65 p-2 backdrop-blur">
+        <div className="absolute right-3 top-3 max-h-[31rem] w-44 overflow-auto rounded-lg border border-glass/[0.12] bg-black/65 p-2 backdrop-blur">
           <div className="mb-1.5 flex flex-wrap gap-1">
             {ROOMS.map((r) => (
               <button key={r} onClick={() => setRoom(r)}
-                className={`rounded px-1.5 py-0.5 text-[9px] ${room === r ? 'bg-emerald-500/30 text-emerald-100' : 'bg-white/10 text-[#bdbdbd] hover:bg-white/20'}`}>{r}</button>
+                className={`rounded px-1.5 py-0.5 text-[9px] ${room === r ? 'bg-emerald-500/30 text-emerald-100' : 'bg-glass/10 text-dim hover:bg-glass/20'}`}>{r}</button>
             ))}
           </div>
           <div className="grid grid-cols-2 gap-1">
             {CATALOG.filter((c) => c.room === room).map((c) => (
               <button key={c.kind} onClick={() => addItem(c.kind)}
-                className="rounded bg-white/[0.06] px-2 py-1.5 text-left text-[10px] text-[#ededed] hover:bg-white/15">+ {c.label}</button>
+                className="rounded bg-glass/[0.06] px-2 py-1.5 text-left text-[10px] text-ink hover:bg-glass/15">+ {c.label}</button>
             ))}
           </div>
           {sel && (
-            <div className="mt-2 rounded border border-white/10 bg-white/[0.04] p-1.5">
-              <div className="mb-1 text-[9px] uppercase tracking-wide text-[#8e8e8e]">Selected · {footprint(sel.kind) && CATALOG.find((c) => c.kind === sel.kind)?.label}</div>
+            <div className="mt-2 rounded border border-glass/10 bg-glass/[0.04] p-1.5">
+              <div className="mb-1 text-[9px] uppercase tracking-wide text-dim">Selected · {footprint(sel.kind) && CATALOG.find((c) => c.kind === sel.kind)?.label}</div>
               <div className="flex gap-1">
                 <button onClick={() => setFurniture((arr) => arr.map((f) => f.id === sel.id ? { ...f, rot: f.rot + Math.PI / 8 } : f))}
-                  className="flex-1 rounded bg-white/10 px-2 py-1 text-[10px] text-[#ededed] hover:bg-white/20">Rotate</button>
+                  className="flex-1 rounded bg-glass/10 px-2 py-1 text-[10px] text-ink hover:bg-glass/20">Rotate</button>
                 <button onClick={() => { setFurniture((arr) => arr.filter((f) => f.id !== sel.id)); setSelected(null) }}
                   className="flex-1 rounded bg-red-500/20 px-2 py-1 text-[10px] text-red-200 hover:bg-red-500/30">Delete</button>
               </div>
@@ -672,23 +754,23 @@ export default function Blueprint3D({ floors, mode, storeKey, startWalk, initial
           )}
           {furniture.length > 0 && (
             <button onClick={() => { setFurniture([]); setSelected(null) }}
-              className="mt-1.5 w-full rounded bg-white/[0.04] px-2 py-1 text-[9px] text-[#9a9a9a] hover:bg-white/10">Clear all ({furniture.length})</button>
+              className="mt-1.5 w-full rounded bg-glass/[0.04] px-2 py-1 text-[9px] text-dim hover:bg-glass/10">Clear all ({furniture.length})</button>
           )}
-          <div className="mt-1.5 text-[9px] leading-tight text-[#7d7d7d]">Drag to place · R rotates · Del removes</div>
+          <div className="mt-1.5 text-[9px] leading-tight text-dim">Drag to place · R rotates · Del removes</div>
         </div>
       )}
 
       {/* walk overlay */}
       {walk && !locked && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="rounded-xl border border-white/15 bg-black/65 px-5 py-4 text-center backdrop-blur">
-            <div className="text-sm font-medium text-[#ededed]">Click to walk through</div>
-            <div className="mt-1 text-[11px] text-[#9a9a9a]">WASD / arrows to move · mouse to look · Esc to exit</div>
+          <div className="rounded-xl border border-glass/15 bg-black/65 px-5 py-4 text-center backdrop-blur">
+            <div className="text-sm font-medium text-ink">Click to walk through</div>
+            <div className="mt-1 text-[11px] text-dim">WASD / arrows to move · mouse to look · Esc to exit</div>
           </div>
         </div>
       )}
       {!walk && !furnishing && (
-        <div className="absolute bottom-3 right-3 rounded-md bg-black/50 px-2 py-1 text-[10px] text-[#8e8e8e] backdrop-blur">drag to orbit · scroll to zoom</div>
+        <div className="absolute bottom-3 right-3 rounded-md bg-black/50 px-2 py-1 text-[10px] text-dim backdrop-blur">drag to orbit · scroll to zoom</div>
       )}
     </div>
   )
