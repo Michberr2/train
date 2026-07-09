@@ -3,30 +3,77 @@
   "outputDirectory": "client/dist",
   "framework": null,
   "functions": {
-    "api/chat.ts": { "maxDuration": 300 },
-    "api/doc.ts": { "maxDuration": 300 },
-    "api/sheet.ts": { "maxDuration": 300 },
-    "api/slides.ts": { "maxDuration": 300 },
-    "api/design.ts": { "maxDuration": 300 },
-    "api/video.ts": { "maxDuration": 300 },
-    "api/browser.ts": { "maxDuration": 300 },
-    "api/cad.ts": { "maxDuration": 300 },
-    "api/web.ts": { "maxDuration": 300 },
-    "api/image.ts": { "maxDuration": 300 }
+    "api/chat.ts": {
+      "maxDuration": 300
+    },
+    "api/doc.ts": {
+      "maxDuration": 300
+    },
+    "api/sheet.ts": {
+      "maxDuration": 300
+    },
+    "api/slides.ts": {
+      "maxDuration": 300
+    },
+    "api/design.ts": {
+      "maxDuration": 300
+    },
+    "api/video.ts": {
+      "maxDuration": 300
+    },
+    "api/browser.ts": {
+      "maxDuration": 300
+    },
+    "api/cad.ts": {
+      "maxDuration": 300
+    },
+    "api/web.ts": {
+      "maxDuration": 300
+    },
+    "api/image.ts": {
+      "maxDuration": 300
+    },
+    "api/cron.ts": {
+      "maxDuration": 300
+    }
   },
   "rewrites": [
-    { "source": "/((?!api/|openscad/|privacy).*)", "destination": "/index.html" }
+    {
+      "source": "/((?!api/|openscad/|privacy|download).*)",
+      "destination": "/index.html"
+    }
   ],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload" },
-        { "key": "Permissions-Policy", "value": "browsing-topics=()" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "SAMEORIGIN"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=63072000; includeSubDomains; preload"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "browsing-topics=()"
+        }
       ]
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron",
+      "schedule": "0 * * * *"
     }
   ]
 }
