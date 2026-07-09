@@ -2,7 +2,6 @@
 // SITE IS CLOSED. Vercel Cron (or any external pinger) hits this; it reads every
 // user's flows from the DB, runs the ones that are due, and writes the results
 // back so they're waiting when the user next opens n4lu.com / n4lu.ai.
-import { getClient } from './_db'
 import { chatComplete } from './_llm'
 
 type Edge = { from: string; to: string }
@@ -71,46 +70,30 @@ async function runFlow(f: Flow): Promise<Record<string, string>> {
   return results
 }
 
-export default async function handler(req: { headers: Record<string, string | string[] | undefined> }, res: { status: (n: number) => { json: (v: unknown) => void }; json: (v: unknown) => void }) {
-  // Auth: Vercel Cron sends Authorization: Bearer <CRON_SECRET> when CRON_SECRET
-  // is set; an external pinger passes the same secret. Open only if no secret set.
-  const secret = process.env.CRON_SECRET
-  const auth = req.headers['authorization']
-  if (secret && auth !== `Bearer ${secret}`) { res.status(401).json({ error: 'unauthorized' }); return }
-
-  const client = getClient()
+export async function runDueCrons(client: { query: (q: string, p?: unknown[]) => Promise<{ rows: Array<{ user_id: string; value: string }> }> }): Promise<{ usersChecked: number; flowsRan: number }> {
   const now = Date.now()
   let usersChecked = 0, flowsRan = 0
-  try {
-    await client.connect()
-    const rows = (await client.query("SELECT user_id, value FROM nalu_user_data WHERE key = 'nalu-agent-flows'")).rows as Array<{ user_id: string; value: string }>
-    usersChecked = rows.length
-    for (const row of rows) {
-      let flows: Flow[]
-      try { flows = JSON.parse(row.value) } catch { continue }
-      if (!Array.isArray(flows)) continue
-      let changed = false
-      for (const f of flows) {
-        if (!isDue(f, now)) continue
-        const results = await runFlow(f)
-        f.results = results
-        f.lastRun = now
-        const day = new Date(now).toDateString()
-        f.nodes = (f.nodes || []).map((n) => (n.type === 'agent' ? { ...n, lastRunDay: day } : n))
-        changed = true; flowsRan++
-      }
-      if (changed) {
-        await client.query(
-          `INSERT INTO nalu_user_data (user_id, key, value, updated_at) VALUES ($1, 'nalu-agent-flows', $2, NOW())
-           ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
-          [row.user_id, JSON.stringify(flows)],
-        )
-      }
+  const rows = (await client.query("SELECT user_id, value FROM nalu_user_data WHERE key = 'nalu-agent-flows'")).rows
+  usersChecked = rows.length
+  for (const row of rows) {
+    let flows: Flow[]
+    try { flows = JSON.parse(row.value) } catch { continue }
+    if (!Array.isArray(flows)) continue
+    let changed = false
+    for (const f of flows) {
+      if (!isDue(f, now)) continue
+      f.results = await runFlow(f)
+      f.lastRun = now
+      const day = new Date(now).toDateString()
+      f.nodes = (f.nodes || []).map((n) => (n.type === 'agent' ? { ...n, lastRunDay: day } : n))
+      changed = true; flowsRan++
     }
-    res.json({ ok: true, usersChecked, flowsRan, at: new Date(now).toISOString() })
-  } catch (e) {
-    res.status(500).json({ error: e instanceof Error ? e.message : 'cron failed', usersChecked, flowsRan })
-  } finally {
-    try { await client.end() } catch { /* */ }
+    if (changed) {
+      await client.query(
+        "INSERT INTO nalu_user_data (user_id, key, value, updated_at) VALUES ($1, 'nalu-agent-flows', $2, NOW()) ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+        [row.user_id, JSON.stringify(flows)],
+      )
+    }
   }
+  return { usersChecked, flowsRan }
 }

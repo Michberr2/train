@@ -2,6 +2,7 @@
 // localStorage keys so conversations, projects, plugins, automations, GitHub
 // PAT, settings, etc. persist server-side and sync across n4lu.ai/.com + devices.
 // POST { action: 'load'|'set'|'setMany'|'remove', token, ... }
+import { runDueCrons } from './_cron'
 import { getClient, ensureSchema, userIdForToken, readToken, safeJson, newToken } from './_db'
 
 const SHARE_DDL =
@@ -143,6 +144,19 @@ export default async function handler(req: any, res: any) {
   try {
     await client.connect()
     await ensureSchema(client)
+
+    // Server-side AutoPilot scheduler (Vercel Cron / GitHub Action) — runs DUE
+    // flows even when nobody has the site open. Authed by CRON_SECRET, not a user
+    // token, so it's handled before the normal auth below.
+    const reqAny = req as unknown as { query?: Record<string, unknown>; url?: string; headers: Record<string, string | string[] | undefined> }
+    const isCron = action === 'cron' || String(reqAny.query?.action || '') === 'cron' || String(reqAny.url || '').includes('action=cron')
+    if (isCron) {
+      const secret = process.env.CRON_SECRET
+      if (secret && reqAny.headers['authorization'] !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' })
+      const r = await runDueCrons(client)
+      return res.status(200).json({ ok: true, ...r, at: new Date().toISOString() })
+    }
+
     const userId = await userIdForToken(client, readToken(req))
     if (!userId) return res.status(401).json({ error: 'not authenticated' })
 
