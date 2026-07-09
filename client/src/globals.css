@@ -19,7 +19,7 @@
        hairlines/tints on grey; baby-blue accent. */
     --ws-glass: 30 41 59;     /* cool slate for overlays/borders */
     --ws-ink: 28 37 54;       /* clean slate near-black text */
-    --ws-dim: 158 172 194;    /* lighter slate — readable on the dark sidebar */
+    --ws-dim: 71 85 105;      /* slate-600 — dark enough to read on the light sidebar */
     --ws-canvas: 247 249 251; /* page: super light cool grey */
     --ws-panel: 255 255 255;  /* cards/composer: white */
     --ws-panel2: 238 243 249; /* secondary: faint baby blue */
