@@ -19,7 +19,7 @@
        hairlines/tints on grey; baby-blue accent. */
     --ws-glass: 30 41 59;     /* cool slate for overlays/borders */
     --ws-ink: 28 37 54;       /* clean slate near-black text */
-    --ws-dim: 100 116 139;    /* slate-500 muted text */
+    --ws-dim: 158 172 194;    /* lighter slate — readable on the dark sidebar */
     --ws-canvas: 247 249 251; /* page: super light cool grey */
     --ws-panel: 255 255 255;  /* cards/composer: white */
     --ws-panel2: 238 243 249; /* secondary: faint baby blue */
@@ -41,8 +41,8 @@
     /* Workspace — DARK: the original hardcoded values, so dark mode is
        byte-for-byte unchanged after the token swap. Accent stays gold. */
     --ws-glass: 255 255 255;
-    --ws-ink: 237 237 237;
-    --ws-dim: 142 142 142;
+    --ws-ink: 240 242 245;
+    --ws-dim: 180 187 200;    /* lighter — readable muted text on the dark bg */
     --ws-canvas: 11 12 16;
     --ws-panel: 17 20 28;
     --ws-panel2: 19 21 27;
@@ -207,3 +207,10 @@
   mask-image: linear-gradient(105deg, #000 calc(var(--nalu-wave) - 16%), rgba(0, 0, 0, 0.35) var(--nalu-wave), transparent calc(var(--nalu-wave) + 12%));
 }
 @media (prefers-reduced-motion: reduce) { .nalu-materialize { animation: none; -webkit-mask-image: none; mask-image: none; } }
+
+/* Think-tier keywords (think / ultrathink / packmind): elegant serif that
+   gently animates in the moment the word is completed, plus a badge pop. */
+@keyframes thinkWordIn { from { opacity: .3; letter-spacing: .02em; } to { opacity: 1; letter-spacing: 0; } }
+.think-word { animation: thinkWordIn .4s ease both; }
+@keyframes thinkBadgeIn { 0% { opacity: 0; transform: translateY(4px) scale(.85); } 55% { transform: translateY(0) scale(1.08); } 100% { opacity: 1; transform: scale(1); } }
+.think-badge { animation: thinkBadgeIn .42s cubic-bezier(.2,.9,.3,1.35) both; }

@@ -65,7 +65,7 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
                 <img src="/wolf-icon.png" alt="" className="brightness-0 h-4 w-4" />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-ink">Nalu Catalina</div>
+                <div className="text-sm font-medium text-ink">Nalu</div>
                 <div className="text-xs text-dim">Nalu's flagship model — long-horizon coding &amp; agents</div>
               </div>
               <span className="rounded-full bg-emerald-500/20 px-2.5 py-1 text-xs font-medium text-emerald-300 shrink-0">

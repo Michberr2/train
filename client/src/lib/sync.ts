@@ -115,11 +115,17 @@ const origGet = localStorage.getItem.bind(localStorage)
 const safeArr = (s: string | null): Record<string, unknown>[] => {
   try { const a = s ? JSON.parse(s) : []; return Array.isArray(a) ? a : [] } catch { return [] }
 }
+// Ids the user has permanently deleted (union of local + server tombstones) —
+// a deleted chat/project is filtered out of every merge, so it never comes back.
+function deletedIds(key: string): Set<string> {
+  try { const a = JSON.parse(origGet(key) || '[]'); return new Set(Array.isArray(a) ? a.map(String) : []) } catch { return new Set() }
+}
 function mergeChats(localStr: string | null, serverStr: string): string {
+  const dead = deletedIds('nalu-deleted-chats')
   const byId = new Map<string, Record<string, unknown>>()
-  for (const c of safeArr(serverStr)) if (c && c.id) byId.set(String(c.id), c)
+  for (const c of safeArr(serverStr)) if (c && c.id && !dead.has(String(c.id))) byId.set(String(c.id), c)
   for (const c of safeArr(localStr)) {
-    if (!c || !c.id) continue
+    if (!c || !c.id || dead.has(String(c.id))) continue
     const ex = byId.get(String(c.id))
     const lm = Array.isArray(c.messages) ? c.messages.length : 0
     const em = ex && Array.isArray(ex.messages) ? ex.messages.length : -1
@@ -129,10 +135,20 @@ function mergeChats(localStr: string | null, serverStr: string): string {
   return JSON.stringify(merged)
 }
 function mergeProjects(localStr: string | null, serverStr: string): string {
+  const dead = deletedIds('nalu-deleted-projects')
   const byId = new Map<string, Record<string, unknown>>()
-  for (const p of safeArr(serverStr)) if (p && p.id) byId.set(String(p.id), p)
-  for (const p of safeArr(localStr)) if (p && p.id) byId.set(String(p.id), p) // local wins (renames)
+  for (const p of safeArr(serverStr)) if (p && p.id && !dead.has(String(p.id))) byId.set(String(p.id), p)
+  for (const p of safeArr(localStr)) if (p && p.id && !dead.has(String(p.id))) byId.set(String(p.id), p) // local wins (renames)
   return JSON.stringify([...byId.values()])
+}
+// Union tombstone lists on hydrate so a deletion made on ANY device is honored
+// everywhere (append-only — deletes never un-delete).
+function mergeIdList(localStr: string | null, serverStr: string): string {
+  const s = new Set<string>()
+  for (const raw of [serverStr, localStr]) {
+    try { const a = raw ? JSON.parse(raw) : []; if (Array.isArray(a)) for (const x of a) { const id = typeof x === 'string' ? x : String((x as Record<string, unknown>)?.id ?? ''); if (id) s.add(id) } } catch { /* skip */ }
+  }
+  return JSON.stringify([...s])
 }
 
 /** Hydrate localStorage from the server, MERGING chats/projects so nothing is lost. */
@@ -147,8 +163,14 @@ export async function loadFromServer(): Promise<void> {
     })
     const json = (await res.json()) as { data?: Record<string, unknown> }
     if (json?.data && typeof json.data === 'object') {
-      for (const [k, v] of Object.entries(json.data)) {
-        if (v == null) continue
+      const data = json.data
+      // Merge tombstones FIRST so the chat/project merges below already exclude
+      // everything the user deleted (on this or any other device).
+      for (const k of ['nalu-deleted-chats', 'nalu-deleted-projects']) {
+        if (data[k] != null) origSet(k, mergeIdList(origGet(k), typeof data[k] === 'string' ? (data[k] as string) : JSON.stringify(data[k])))
+      }
+      for (const [k, v] of Object.entries(data)) {
+        if (v == null || k === 'nalu-deleted-chats' || k === 'nalu-deleted-projects') continue
         const sv = typeof v === 'string' ? v : JSON.stringify(v)
         if (k === 'nalu-chats') origSet(k, mergeChats(origGet(k), sv))
         else if (k === 'nalu-chat-projects') origSet(k, mergeProjects(origGet(k), sv))
@@ -156,8 +178,11 @@ export async function loadFromServer(): Promise<void> {
       }
     }
     hydrated = true // server is now the confirmed source of truth — safe to sync
-    // Converge the server to the merged superset (in case local had unsynced chats).
-    for (const k of ['nalu-chats', 'nalu-chat-projects']) {
+    // Converge the server to the merged superset (in case local had unsynced items).
+    // NOTE: 'nalu-chats' is deliberately EXCLUDED — the localStorage copy may be
+    // artifact-stripped to fit quota, and pushing it here could overwrite the DB's
+    // full studio artifacts. Chats sync only via pushChatsFull (complete payload).
+    for (const k of ['nalu-chat-projects', 'nalu-deleted-chats', 'nalu-deleted-projects']) {
       const v = origGet(k)
       if (v) schedule(k, v)
     }

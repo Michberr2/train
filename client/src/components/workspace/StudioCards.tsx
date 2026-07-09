@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect, lazy, Suspense } from 'react'
+import { useMemo, useRef, useState, useEffect, useCallback, lazy, Suspense } from 'react'
 import { Palette, Sparkles, Ruler, Download, Copy, Check, FileJson, FileCode2, Image as ImageIcon, FileText, Star, Box, PencilRuler, ShoppingBag, ExternalLink, Footprints } from 'lucide-react'
 import CardErrorBoundary from './CardErrorBoundary'
 
@@ -89,6 +89,9 @@ export type LogoArt = {
   // The art-directed pictorial mark concept ("a cresting wave curling into a
   // coffee bean") — drives the AI logo image prompts.
   symbol?: string
+  // Generated logo images (url → dataUrl) persisted with the artifact so every
+  // logo is cached in the DB and browsable anytime, on any device.
+  imgCache?: Record<string, string>
   options?: LogoOption[]
   // legacy single-mark form
   concept?: string
@@ -1018,13 +1021,19 @@ function logoImgUrl(symbol: string, styleKey: string, colorDesc: string, seed: n
 // a small localStorage LRU so it survives reloads.
 const logoMemCache = new Map<string, string>()
 const LOGO_CACHE_KEY = 'nalu-logo-img-cache'
-const LOGO_CACHE_MAX = 9
+const LOGO_CACHE_MAX = 60 // ~20 logos' worth (was 9 = ~3, which evicted almost immediately)
 function logoCacheGet(url: string): string {
   const hit = logoMemCache.get(url)
   if (hit) return hit
   try {
     const store = JSON.parse(localStorage.getItem(LOGO_CACHE_KEY) || '{}') as Record<string, string>
-    if (store[url]) { logoMemCache.set(url, store[url]); return store[url] }
+    if (store[url]) {
+      logoMemCache.set(url, store[url])
+      // LRU touch: move this key to the end so it survives eviction.
+      const v = store[url]; delete store[url]; store[url] = v
+      try { localStorage.setItem(LOGO_CACHE_KEY, JSON.stringify(store)) } catch { /* quota */ }
+      return v
+    }
   } catch { /* */ }
   return ''
 }
@@ -1032,11 +1041,16 @@ function logoCachePut(url: string, dataUrl: string) {
   logoMemCache.set(url, dataUrl)
   try {
     const store = JSON.parse(localStorage.getItem(LOGO_CACHE_KEY) || '{}') as Record<string, string>
-    store[url] = dataUrl
-    const keys = Object.keys(store)
-    while (keys.length > LOGO_CACHE_MAX) delete store[keys.shift() as string]
-    localStorage.setItem(LOGO_CACHE_KEY, JSON.stringify(store))
-  } catch { /* quota — in-memory cache still holds it */ }
+    delete store[url]; store[url] = dataUrl // re-insert at end (most-recent)
+    let keys = Object.keys(store)
+    while (keys.length > LOGO_CACHE_MAX) { delete store[keys.shift() as string] }
+    // If it still won't fit the quota, drop oldest until it does — never silently lose the NEW one.
+    for (;;) {
+      try { localStorage.setItem(LOGO_CACHE_KEY, JSON.stringify(store)); break } catch {
+        keys = Object.keys(store); if (keys.length <= 1) break; delete store[keys[0]]
+      }
+    }
+  } catch { /* in-memory cache still holds it this session */ }
 }
 // Fetch one logo image through the SERVER proxy (cache-first). The proxy
 // retries with backoff and returns the bytes, so it resolves reliably.
@@ -1095,9 +1109,12 @@ function seedFor(key: string): number {
   for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619) }
   return Math.abs(h % 999983) + 1
 }
-function LogoImages({ name, brand, accent, symbol, colorNames, serif }: { name: string; brand: string; accent?: string; symbol?: string; colorNames?: string[]; serif?: boolean }) {
+function LogoImages({ name, brand, accent, symbol, colorNames, serif, saved, onCache }: { name: string; brand: string; accent?: string; symbol?: string; colorNames?: string[]; serif?: boolean; saved?: Record<string, string>; onCache?: (url: string, dataUrl: string) => void }) {
   const [style, setStyle] = useState('minimal')
   const [round, setRound] = useState(0)
+  // Seed the cache from the artifact's saved images (persisted in the DB) so every
+  // logo you ever made shows INSTANTLY on revisit — browse them all, anytime.
+  useMemo(() => { if (saved) for (const [u, d] of Object.entries(saved)) if (u && d) logoMemCache.set(u, d) }, [saved])
   // The art-directed mark concept — the difference between a distinctive logo
   // and clip-art. Falls back to a subject-neutral geometric monogram motif.
   const concept = (symbol || '').trim() || `an abstract geometric emblem evoking "${name}"`
@@ -1113,17 +1130,26 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif }: { name: 
     [name, concept, colorDesc, round, style],
   )
   const urlKey = urls.join('|')
-  const [slots, setSlots] = useState<LogoSlot[]>(() => urls.map(() => ({ st: 'loading', data: '' })))
+  // Seed each slot from what's ALREADY cached (saved-in-DB imgCache first, then the
+  // local cache) so finished logos show INSTANTLY on (hard) refresh — never reloaded.
+  const seedSlot = (u: string): LogoSlot => {
+    const c = (saved && saved[u]) || logoCacheGet(u)
+    return c ? { st: 'done', data: c } : { st: 'loading', data: '' }
+  }
+  const [slots, setSlots] = useState<LogoSlot[]>(() => urls.map(seedSlot))
   const [revealed, setRevealed] = useState(false)
 
-  // Fetch ALL slots in parallel whenever the set changes; reveal them together.
+  // Show cached logos immediately; only network-fetch the genuine cache MISSES.
   useEffect(() => {
     let alive = true
-    setRevealed(false)
-    setSlots(urls.map(() => ({ st: 'loading', data: '' })))
+    const initial = urls.map(seedSlot)
+    setSlots(initial)
+    setRevealed(initial.every((s) => s.st === 'done')) // all cached → reveal at once, no spinner
     urls.forEach((u, i) => {
+      if (initial[i].st === 'done') { if (saved && saved[u]) logoMemCache.set(u, saved[u]); return } // already have it — don't reload
       fetchLogoImage(u).then((d) => {
         if (!alive) return
+        if (d && onCache) onCache(u, d) // persist into the artifact → saved in the DB
         setSlots((prev) => {
           const next = prev.slice()
           next[i] = d ? { st: 'done', data: d } : { st: 'error', data: '' }
@@ -1133,6 +1159,23 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif }: { name: 
     })
     return () => { alive = false }
   }, [urlKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Pre-load EVERY style's logos in the background (round 0) so switching styles is
+  // instant — they're all fetched + cached + persisted before you get to them.
+  useEffect(() => {
+    let alive = true
+    const all = LOGO_STYLES.flatMap((s) => [0, 1, 2].map((n) => logoImgUrl(concept, s.key, colorDesc, seedFor(`${name}|${s.key}|0|${n}`))))
+    const queue = all.filter((u) => !logoCacheGet(u)) // skip already-cached
+    let running = 0, idx = 0
+    const pump = () => {
+      while (alive && running < 5 && idx < queue.length) {
+        const u = queue[idx++]; running++
+        fetchLogoImage(u).then((d) => { if (d && onCache) onCache(u, d) }).finally(() => { running--; if (alive) pump() })
+      }
+    }
+    const t = setTimeout(pump, 1200) // let the visible style paint first
+    return () => { alive = false; clearTimeout(t) }
+  }, [name, concept, colorDesc]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const allSettled = slots.length > 0 && slots.every((s) => s.st !== 'loading')
   const doneCount = slots.filter((s) => s.st === 'done').length
@@ -1210,7 +1253,19 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif }: { name: 
   )
 }
 
-export function LogoCard({ art }: { art: LogoArt }) {
+export function LogoCard({ art, onUpdate }: { art: LogoArt; onUpdate?: (art: LogoArt) => void }) {
+  // Accumulate generated logo images into the artifact (capped) + persist them,
+  // debounced, so all your logos are saved in the DB — browse them whenever.
+  const imgAcc = useRef<Record<string, string>>({ ...(art.imgCache || {}) })
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cacheImg = useCallback((url: string, dataUrl: string) => {
+    if (!onUpdate || imgAcc.current[url] === dataUrl) return
+    imgAcc.current[url] = dataUrl
+    const keys = Object.keys(imgAcc.current)
+    while (keys.length > 24) delete imgAcc.current[keys.shift() as string] // bound payload (~8 logos)
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => onUpdate({ ...art, imgCache: { ...imgAcc.current } }), 900)
+  }, [onUpdate, art])
   // Prefer code-generated options (reliably clean). Legacy artifacts that carry
   // freehand LLM SVG options still render via the same path.
   const options: LogoOption[] =
@@ -1343,6 +1398,8 @@ export function LogoCard({ art }: { art: LogoArt }) {
         symbol={art.symbol}
         colorNames={art.colorNames}
         serif={!!art.serif}
+        saved={art.imgCache}
+        onCache={cacheImg}
       />
 
       {colors.length > 0 && (

@@ -82,11 +82,11 @@ export default function NavBar({ activeIndex, setActiveIndex, onControlScreen, c
         {/* Download the Nalu Desktop app — only shown once the user is logged in. */}
         {user && (
           <a
-            href="https://github.com/Michberr2/nalu-desktop/releases/latest/download/Nalu-0.1.0-arm64.dmg"
+            href="/download.html" target="_blank" rel="noreferrer"
             className="hidden sm:inline-flex items-center gap-1.5 h-11 px-3.5 rounded-lg bg-primary text-surface text-xs font-medium shadow-sm hover:shadow-md transition-shadow"
           >
-            <Download size={14} strokeWidth={1.8} />
-            Download app
+            <img src="/wolf-icon.png" alt="" className="w-4 h-4 object-contain" />
+            Download Nalu Desktop
           </a>
         )}
         {/* "Nalu for Chrome" lives inside the app (Plugins panel) after login,
@@ -178,10 +178,10 @@ export default function NavBar({ activeIndex, setActiveIndex, onControlScreen, c
                 ))}
                 {user && (
                   <a
-                    href="https://github.com/Michberr2/nalu-desktop/releases/latest/download/Nalu-0.1.0-arm64.dmg"
+                    href="/download.html" target="_blank" rel="noreferrer"
                     className="mt-1 flex items-center gap-2 px-4 py-3 min-h-[44px] text-sm rounded-lg bg-primary text-surface font-medium"
                   >
-                    <Download size={16} strokeWidth={1.8} /> Download desktop app
+                    <img src="/wolf-icon.png" alt="" className="w-4 h-4 object-contain" /> Download Nalu Desktop
                   </a>
                 )}
               </div>

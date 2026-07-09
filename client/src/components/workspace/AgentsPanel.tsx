@@ -20,7 +20,7 @@ import { buildEvaluator } from './formulaEval'
 // ---- agents + output steps --------------------------------------------------
 type AgentDef = { kind: string; name: string; desc: string; icon: LucideIcon; tint: string }
 const AGENTS: AgentDef[] = [
-  { kind: 'general', name: 'Nalu Catalina', desc: 'Generalist — writing, planning, synthesis', icon: MessageSquare, tint: '#5B9BFF' },
+  { kind: 'general', name: 'Nalu', desc: 'Generalist — writing, planning, synthesis', icon: MessageSquare, tint: '#5B9BFF' },
   { kind: 'finance', name: 'Nalu Financial', desc: 'Elite markets, wealth & macro strategist', icon: CircleDollarSign, tint: '#34D399' },
   { kind: 'studio', name: 'Nalu Studio', desc: 'Design direction, brand & creative', icon: Palette, tint: '#E4B96F' },
   { kind: 'code', name: 'Nalu Code', desc: 'Engineering — writes & reviews code', icon: Code2, tint: '#9FD0FF' },
@@ -921,23 +921,8 @@ export default function AgentsPanel() {
               </div>
             )}
           </div>
-          <div className="relative">
-            <button onClick={() => setAddMenu(addMenu === 'output' ? false : 'output')}
-              className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] hover:bg-glass/[0.12] ${addMenu === 'output' ? 'bg-glass/[0.12] text-ink' : 'bg-glass/[0.07] text-ink'}`}>
-              <Plus size={13} className="text-gold" /> Output
-            </button>
-            {addMenu === 'output' && (
-              <div className="absolute left-0 top-9 z-40 max-h-[26rem] w-64 overflow-y-auto rounded-xl border border-glass/[0.14] bg-panel2 py-1 shadow-xl">
-                {OUTPUTS.map((o) => (
-                  <button key={o.type} onClick={() => addNode(o.type)} className="w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]">
-                    <span className="block text-[12px] text-ink">{o.name}</span><span className="block truncate text-[10px] text-dim">{o.desc}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
           <div className="ml-auto flex items-center gap-2">
-            {/* Output type — pick what the flow PRODUCES; it wires itself in */}
+            {/* Output type — the single place to pick what the flow PRODUCES; it wires itself in */}
             <label className="flex items-center gap-1.5 text-[11px] text-dim">
               Output
               <select value={flowOutput} onChange={(e) => setFlowOutput(e.target.value as NodeType | 'none')}

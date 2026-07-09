@@ -351,7 +351,7 @@ export async function streamChat(
   handlers: StreamHandlers,
   tools?: ToolSpec[],
   context?: RepoContext,
-  think?: boolean,
+  think?: number, // 0 off · 1 think · 2 ultrathink · 3 packmind
   // Agent pipelines force a specific Nalu specialist (bypasses keyword routing).
   specialist?: string,
 ): Promise<TurnResult> {
@@ -361,7 +361,7 @@ export async function streamChat(
     res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, model, ...(tools && tools.length ? { tools } : {}), ...(context || {}), ...(think ? { think: true } : {}), ...(specialist ? { specialist } : {}) }),
+      body: JSON.stringify({ messages, model, ...(tools && tools.length ? { tools } : {}), ...(context || {}), ...(think && think > 0 ? { think: true, thinkLevel: think } : {}), ...(specialist ? { specialist } : {}) }),
       signal,
     })
   } catch (e) {

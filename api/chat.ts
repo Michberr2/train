@@ -279,7 +279,10 @@ Close substantive investment answers with ONE short line noting this is educatio
 // Gemini's OpenAI-compatible endpoint (multimodal, fast, no per-month credit cap
 // — the HF router hit "402 credits depleted"), reusing the existing GEMINI key.
 // Env-overridable per usual.
-const VISION_MODEL = 'gemini-2.5-flash'
+// Best available multimodal model for screen understanding + image analysis
+// (gemini-2.5-pro reads fine detail, UI layouts, and text most accurately;
+// override with NALU_VISION_MODEL). Falls back cleanly if unset.
+const VISION_MODEL = 'gemini-2.5-pro'
 const VISION_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai'
 const GEMINI_KEY = (process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_GENAI_API_KEY || '').trim()
 const VISION: Specialist = {
@@ -291,7 +294,7 @@ const VISION: Specialist = {
 }
 const GENERAL: Specialist = {
   kind: 'general',
-  name: 'Nalu Catalina',
+  name: 'Nalu',
   // Catalina runs DeepSeek-V3.1: fast (~8s first token) and clean, like the
   // specialists. (The 397B vision model hung on Tinker, making general chat
   // unusable.) Image questions still route to Nalu Vision, so general never
@@ -725,6 +728,10 @@ export default async function handler(req: any, res: any) {
     think?: boolean
     specialist?: string
   }
+  // Thinking tier from the chat keywords: 1 think · 2 ultrathink · 3 packmind.
+  // Scales the reasoning/answer token budget so "packmind" thinks much harder.
+  const thinkLevel = Math.max(0, Math.min(3, Number((body as { thinkLevel?: number }).thinkLevel) || (think ? 1 : 0)))
+  const thinkTokens = [8192, 14000, 22000, 32000][thinkLevel]
   if (!Array.isArray(messages)) {
     res.status(400).json({ error: 'messages array required' })
     return
@@ -953,14 +960,14 @@ export default async function handler(req: any, res: any) {
           model: backend.model,
           messages: fullMessages,
           stream,
-          max_tokens: think ? 16384 : 8192,
+          max_tokens: thinkTokens,
           temperature: chatTemp,
         }
       : {
           model: backend.model,
           messages: fullMessages,
           stream,
-          max_tokens: think ? 16384 : 8192, // deep think needs room for reasoning + answer
+          max_tokens: thinkTokens, // deep think needs room for reasoning + answer
           temperature: chatTemp,
           top_p: 0.9,
           frequency_penalty: 0.3,

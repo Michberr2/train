@@ -32,7 +32,7 @@ export default function DesignArtifactCard({ art, onUpdate }: { art: DesignArtif
     case 'blueprint':
       return <BlueprintCard art={art} />
     case 'logo':
-      return <LogoCard art={art} />
+      return <LogoCard art={art} onUpdate={onUpdate} />
     case 'shopping':
       return <ShoppingCard art={art} />
     case 'carousel':

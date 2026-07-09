@@ -2213,24 +2213,34 @@ export default async function handler(req: any, res: any) {
       return
     }
 
-    // JSON kinds (brand/canvas/palette/blueprint): low temp + native JSON mode.
-    const content = await callModel(system, user, maxTokens, 0.3, true)
+    // JSON kinds (brand/canvas/palette/blueprint/logo/shopping): low temp + native
+    // JSON mode. RETRY a few times — DeepSeek occasionally emits unparseable JSON,
+    // and (unlike HTML) there's no partial to repair, so ONE bad roll was a hard
+    // failure. This is exactly why logos intermittently "wouldn't generate."
+    let content = ''
+    let jsonOut: Record<string, unknown> | null = null
+    for (let attempt = 0; attempt < 3 && !jsonOut; attempt++) {
+      try {
+        content = await callModel(system, user, maxTokens, attempt === 0 ? 0.3 : 0.5, true)
+      } catch { continue }
+      const got = kind === 'brand' ? extractJson(content) : buildJsonPayload(kind, content)
+      if (got && typeof got === 'object') jsonOut = got as Record<string, unknown>
+    }
 
     // brand: the model returns structured CONTENT; we render the fixed book.
     if (kind === 'brand') {
-      const parsed = extractJson(content)
-      if (!parsed || typeof parsed !== 'object') {
+      if (!jsonOut) {
         res.status(502).json({ error: 'Could not build the brand book. Try rephrasing.' })
         return
       }
-      const html = buildBrandBookHtml(parsed as Record<string, unknown>)
+      const html = buildBrandBookHtml(jsonOut)
       succeeded = true
       res.status(200).json({ kind: 'brand', html, name: 'Nalu Studio' })
       return
     }
 
-    // JSON kinds: canvas | palette | blueprint.
-    let payload = buildJsonPayload(kind, content)
+    // JSON kinds: canvas | palette | blueprint | logo | shopping.
+    let payload = jsonOut
     if (!payload) {
       res.status(502).json({ error: 'Could not build the design. Try rephrasing.' })
       return

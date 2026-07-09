@@ -116,9 +116,81 @@ type View = 'chat' | 'studio' | 'map' | 'agents' | 'projects' | 'skills' | 'auto
 const CHATS_KEY = 'nalu-chats'
 const ACTIVE_KEY = 'nalu-active-chat'
 const MODEL_KEY = 'nalu-model'
+// Tombstones: ids the user explicitly deleted. Append-only + synced, so a
+// deletion is PERMANENT and never resurrected by a stale copy on any device.
+const DELETED_CHATS_KEY = 'nalu-deleted-chats'
+const DELETED_PROJECTS_KEY = 'nalu-deleted-projects'
+function addTombstone(key: string, id: string): void {
+  try {
+    const cur = JSON.parse(localStorage.getItem(key) || '[]')
+    const arr: string[] = Array.isArray(cur) ? cur : []
+    if (!arr.includes(id)) { arr.push(id); localStorage.setItem(key, JSON.stringify(arr)) }
+  } catch { localStorage.setItem(key, JSON.stringify([id])) }
+}
 // Client-facing model id only. The server maps this to the real backend model
 // (kept server-side), so the browser/console never references it.
 const DEFAULT_MODEL = 'nalu-catalina'
+
+// Thinking tiers you trigger by TYPING the word in your message:
+//   think (basic) · ultrathink (deeper) · packmind (insane). Highest one wins.
+const THINK_WORDS = /\b(packmind|ultrathink|think)\b/gi
+// On-brand tier colors (site is blue + gold): think = brand blue, ultrathink =
+// brand gold, packmind = deep bold blue. Text-only, no fills, no gradients.
+const THINK_COLORS: Record<string, string> = { think: '#6B9FFF', ultrathink: '#AF8C56', packmind: '#2563EB' }
+const THINK_NAMES: Record<number, string> = { 1: 'think', 2: 'ultrathink', 3: 'packmind' }
+// Elegant high-contrast serif (Four Seasons vibe) — all preinstalled on macOS.
+const THINK_FONT = '"Didot", "Bodoni 72", "Playfair Display", Georgia, serif'
+function detectThinkLevel(text: string): number {
+  const t = text.toLowerCase()
+  if (/\bpackmind\b/.test(t)) return 3
+  if (/\bultrathink\b/.test(t)) return 2
+  if (/\bthink\b/.test(t)) return 1
+  return 0
+}
+// A greeting that knows the user by name, nods to their last project, and keeps
+// a bit of wolf-pack personality — so the home screen feels catered to them.
+function personalGreeting(name?: string, chatTitles?: string[]): string {
+  const first = (name || '').trim().split(/\s+/)[0] || 'friend'
+  const lastTitle = (chatTitles || []).find((t) => t && !/^new chat$/i.test(t))
+  const options = [
+    `What are we building today, ${first}?`,
+    `Ready when you are, ${first}. What are we building?`,
+    `The pack's assembled, ${first}. What's the hunt?`,
+    `Point me at something, ${first}, and I'll chase it down.`,
+    `${first}, what impossible thing are we making possible today?`,
+    `Fresh page, ${first}. Let's fill it with something great.`,
+    `I've been sharpening my claws, ${first}. What's first?`,
+    `Dream big, ${first}. I'll handle the boring parts.`,
+    `Good to see you, ${first}. What are we creating?`,
+    `Your move, ${first}. What are we making today?`,
+    `The wolf's awake and caffeinated, ${first}. What's the plan?`,
+    `Let's turn today into a win, ${first}.`,
+    `Whatever you're dreaming up, ${first}, let's go build it.`,
+    `New day, new hunt, ${first}. Where to?`,
+    `Give me the hard problem, ${first}. I like those.`,
+    `Let's make something you'll be proud of, ${first}.`,
+    `I'm all ears and teeth, ${first}. What are we tackling?`,
+    `Big or small, ${first}, what's on your mind today?`,
+    `Let's build something the pack will howl about, ${first}.`,
+    `Ready to make magic, ${first}?`,
+  ]
+  if (lastTitle) options.push(`Back to “${lastTitle}”, ${first}? Or something brand new?`, `We left “${lastTitle}” open, ${first}. Pick it up or start fresh?`)
+  return options[Math.floor(Math.random() * options.length)]
+}
+
+// Split text into segments, marking the trigger words for highlighting.
+function thinkSegments(text: string): { t: string; word?: string }[] {
+  const out: { t: string; word?: string }[] = []
+  let last = 0
+  text.replace(THINK_WORDS, (m, _w, idx: number) => {
+    if (idx > last) out.push({ t: text.slice(last, idx) })
+    out.push({ t: m, word: m.toLowerCase() })
+    last = idx + m.length
+    return m
+  })
+  if (last < text.length) out.push({ t: text.slice(last) })
+  return out
+}
 
 const NAV_ITEMS: { view: View; label: string; icon: LucideIcon }[] = [
   { view: 'chat', label: 'Chats', icon: MessageSquare },
@@ -748,7 +820,12 @@ function AssistantThink({
 }
 
 export default function Workspace({ user, onLogout }: Props) {
-  const [view, setView] = useState<View>('chat')
+  // Restore the last view on refresh (Studio/Map/AutoPilot/Chats) — back to your
+  // last touch point. Skip 'settings' so a refresh never dumps you into settings.
+  const [view, setView] = useState<View>(() => {
+    const v = localStorage.getItem('nalu-view') as View | null
+    return v && v !== 'settings' ? v : 'chat'
+  })
   const [model] = useState<string>(() => loadModel())
   const [chats, setChats] = useState<Chat[]>(() => loadChats())
   const [projects, setProjects] = useState<Project[]>(() => loadProjects())
@@ -765,18 +842,23 @@ export default function Workspace({ user, onLogout }: Props) {
   const [dismissedIntent, setDismissedIntent] = useState<string | null>(null)
   // Deep-think toggle: when on, the base model reasons before answering (slower,
   // stronger). Off by default for fast replies.
-  const [deepThink, setDeepThink] = useState(false)
+  // Thinking level is now driven by keywords typed in the message (think /
+  // ultrathink / packmind) — no button.
+  const thinkLevel = useMemo(() => detectThinkLevel(input), [input])
+  // A fresh, delightful greeting each time you land on a new chat.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const greeting = useMemo(() => personalGreeting(user?.displayName, chats.map((c) => c.title)), [activeId, user?.displayName])
   const [streaming, setStreaming] = useState(false)
   const { isDark, toggleTheme } = useTheme()
   // Light mode = black logo; dark mode = white (inverted) logo.
   const logoClass = `brightness-0 ${isDark ? 'invert' : ''}`
-  const [routeName, setRouteName] = useState('Nalu Catalina')
+  const [routeName, setRouteName] = useState('Nalu')
   const [query, setQuery] = useState('')
   // Sidebar is a push-column on desktop but an off-canvas overlay on phones, so
   // it defaults open on desktop and closed on mobile (chat gets the full width).
-  const [sidebarOpen, setSidebarOpen] = useState(
-    () => typeof window === 'undefined' || window.innerWidth >= 768,
-  )
+  // Start collapsed so the chat gets the full, clean width on open; the user
+  // can flip it open with the panel toggle whenever they want.
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const closeSidebarOnMobile = useCallback(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) setSidebarOpen(false)
   }, [])
@@ -850,6 +932,8 @@ export default function Workspace({ user, onLogout }: Props) {
     if (activeId) localStorage.setItem(ACTIVE_KEY, activeId)
     setPendingIds([]) // a different chat → no carried-over prompt chips
   }, [activeId])
+  // Remember the current view so a refresh returns to your last touch point.
+  useEffect(() => { if (view !== 'settings') localStorage.setItem('nalu-view', view) }, [view])
   useEffect(() => {
     try {
       localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects))
@@ -867,6 +951,7 @@ export default function Workspace({ user, onLogout }: Props) {
     setNewProjectName(null)
   }, [])
   const deleteProject = useCallback((id: string) => {
+    addTombstone(DELETED_PROJECTS_KEY, id) // permanent — survives re-sync from any device
     // Unfile this project's chats (keep them under "All"), then drop the project.
     setChats((cs) => cs.map((c) => (c.projectId === id ? { ...c, projectId: undefined } : c)))
     setProjects((ps) => ps.filter((p) => p.id !== id))
@@ -960,6 +1045,7 @@ export default function Workspace({ user, onLogout }: Props) {
   }, [])
 
   const deleteChat = useCallback((id: string) => {
+    addTombstone(DELETED_CHATS_KEY, id) // permanent — survives re-sync from any device
     setChats((cs) => cs.filter((c) => c.id !== id))
     setActiveId((cur) => (cur === id ? null : cur))
   }, [])
@@ -1347,7 +1433,7 @@ export default function Workspace({ user, onLogout }: Props) {
           if (r.ok && Array.isArray(data.blocks) && data.blocks.length) { accDoc = normalizeDoc(data); acc = '' }
           else acc = `⚠️ ${data.error || `Edit failed ${r.status}`}`
         } catch (e) { accLoading = undefined; if (!ctrl.signal.aborted) acc = `⚠️ ${e instanceof Error ? e.message : 'Edit failed'}` }
-        flush(); setStreaming(false); setRouteName('Nalu Catalina'); abortRef.current = null
+        flush(); setStreaming(false); setRouteName('Nalu'); abortRef.current = null
         return
       }
       if (editTarget?.type === 'sheet' && lastArts.sheet) {
@@ -1365,7 +1451,7 @@ export default function Workspace({ user, onLogout }: Props) {
           if (r.ok && Array.isArray(data.sheets) && data.sheets.length) { accSheet = data; acc = '' }
           else acc = `⚠️ ${data.error || `Edit failed ${r.status}`}`
         } catch (e) { accLoading = undefined; if (!ctrl.signal.aborted) acc = `⚠️ ${e instanceof Error ? e.message : 'Edit failed'}` }
-        flush(); setStreaming(false); setRouteName('Nalu Catalina'); abortRef.current = null
+        flush(); setStreaming(false); setRouteName('Nalu'); abortRef.current = null
         return
       }
       if (editTarget?.type === 'deck' && lastArts.deck) {
@@ -1383,7 +1469,7 @@ export default function Workspace({ user, onLogout }: Props) {
           if (r.ok && Array.isArray(data.slides) && data.slides.length) { accDeck = data; acc = '' }
           else acc = `⚠️ ${data.error || `Edit failed ${r.status}`}`
         } catch (e) { accLoading = undefined; if (!ctrl.signal.aborted) acc = `⚠️ ${e instanceof Error ? e.message : 'Edit failed'}` }
-        flush(); setStreaming(false); setRouteName('Nalu Catalina'); abortRef.current = null
+        flush(); setStreaming(false); setRouteName('Nalu'); abortRef.current = null
         return
       }
 
@@ -1455,7 +1541,7 @@ export default function Workspace({ user, onLogout }: Props) {
         }
         flush()
         setStreaming(false)
-        setRouteName('Nalu Catalina')
+        setRouteName('Nalu')
         abortRef.current = null
         return
       }
@@ -1843,7 +1929,7 @@ export default function Workspace({ user, onLogout }: Props) {
           },
           tools,
           context,
-          deepThink,
+          thinkLevel,
         )
         // Recover tool calls a model emitted as plain text instead of the
         // tool_calls field (known serving gap: GLM emits JSON, DeepSeek emits
@@ -1907,7 +1993,7 @@ export default function Workspace({ user, onLogout }: Props) {
       setStreaming(false)
       abortRef.current = null
     },
-    [activeId, chats, streaming, model, activeRepo, activeProjectId, dismissedIntent, deepThink],
+    [activeId, chats, streaming, model, activeRepo, activeProjectId, dismissedIntent, thinkLevel],
   )
 
   const stop = useCallback(() => {
@@ -2061,8 +2147,8 @@ export default function Workspace({ user, onLogout }: Props) {
           </div>
         </div>
 
-        {/* Nav group */}
-        <nav className="px-2 pb-2">
+        {/* Nav — compact 2×2 tiles instead of a stack of full-width buttons */}
+        <nav className="grid grid-cols-2 gap-1.5 px-2 pb-2">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon
             const activeNav = view === item.view
@@ -2070,8 +2156,8 @@ export default function Workspace({ user, onLogout }: Props) {
               <button
                 key={item.view}
                 onClick={() => { setView(item.view); closeSidebarOnMobile() }}
-                className={`w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors ${
-                  activeNav ? 'bg-glass/10 text-ink' : 'text-dim hover:bg-glass/5'
+                className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] transition-colors ${
+                  activeNav ? 'bg-primary/[0.14] text-primary font-medium ring-1 ring-primary/25' : 'text-dim hover:bg-glass/[0.06] hover:text-ink'
                 }`}
               >
                 <Icon size={15} className="shrink-0" />
@@ -2161,28 +2247,28 @@ export default function Workspace({ user, onLogout }: Props) {
         )}
         {view !== 'chat' && <div className="flex-1" />}
 
-        <div className="border-t border-glass/[0.18] p-2 space-y-1">
+        <div className="border-t border-glass/[0.18] p-2 space-y-0.5">
           <button
             onClick={() => setView('settings')}
-            className={`w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors ${
+            className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[12px] transition-colors ${
               view === 'settings' ? 'bg-glass/10 text-ink' : 'text-dim hover:bg-glass/5'
             }`}
           >
-            <Settings size={15} className="shrink-0" /> Settings
+            <Settings size={13} className="shrink-0" /> Settings
           </button>
           <a
-            href="https://github.com/Michberr2/nalu-desktop/releases/latest/download/Nalu-0.1.0-arm64.dmg"
-            className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-dim hover:bg-glass/5 transition-colors"
+            href="/download.html" target="_blank" rel="noreferrer"
+            className="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[12px] text-dim hover:bg-glass/5 transition-colors"
           >
-            <Download size={15} className="shrink-0" /> Download app
+            <img src="/wolf-icon.png" alt="" className="w-3.5 h-3.5 shrink-0 object-contain" /> Download Nalu Desktop
           </a>
           <a
             href="/privacy.html"
             target="_blank"
             rel="noreferrer"
-            className="w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-dim hover:bg-glass/5 transition-colors"
+            className="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[12px] text-dim hover:bg-glass/5 transition-colors"
           >
-            <Shield size={15} className="shrink-0" /> Privacy Policy
+            <Shield size={13} className="shrink-0" /> Privacy Policy
           </a>
           <div className="flex items-center gap-2 rounded-lg px-2.5 py-2 hover:bg-glass/5">
             <div className="w-7 h-7 rounded-full bg-glass/10 flex items-center justify-center text-xs font-medium">
@@ -2206,7 +2292,7 @@ export default function Workspace({ user, onLogout }: Props) {
         <div className="h-12 flex items-center gap-2 px-3 border-b border-glass/[0.18] shrink-0">
           <button
             onClick={() => setSidebarOpen((v) => !v)}
-            className="w-8 h-8 rounded-md hover:bg-glass/10 flex items-center justify-center text-dim"
+            className="w-8 h-8 rounded-md hover:bg-glass/10 flex items-center justify-center text-white"
             aria-label="Toggle sidebar"
           >
             <PanelLeft size={16} />
@@ -2242,14 +2328,7 @@ export default function Workspace({ user, onLogout }: Props) {
                     <GitBranch size={13} /> <span className="hidden sm:inline">{activeRepo.owner}/{activeRepo.repo}</span>
                   </button>
                 </>
-              ) : (
-                <button
-                  onClick={() => setShowConnect(true)}
-                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-glass/[0.06] hover:bg-glass/10 text-dim"
-                >
-                  <GitBranch size={13} /> <span className="hidden sm:inline">Connect repo</span>
-                </button>
-              )}
+              ) : null}
               <div className="hidden sm:flex items-center text-xs text-dim px-2.5 py-1.5 rounded-lg bg-glass/[0.06]">
                 Talking to {routeName}
               </div>
@@ -2388,8 +2467,9 @@ export default function Workspace({ user, onLogout }: Props) {
         {view === 'chat' &&
           (messages.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center px-4">
+              <img src="/wolf-icon.png" alt="Nalu" className="w-12 h-12 mb-4 object-contain drop-shadow" />
               <h1 className="text-2xl sm:text-3xl font-light mb-8 text-center">
-                What should we work on?
+                {greeting}
               </h1>
               <div className="w-full max-w-2xl">
                 <Composer
@@ -2406,8 +2486,8 @@ export default function Workspace({ user, onLogout }: Props) {
                   onRemoveAttachment={removeAttachment}
                   dismissedIntent={dismissedIntent}
                   onDismissIntent={() => setDismissedIntent(input.trim())}
-                  deepThink={deepThink}
-                  onToggleThink={() => setDeepThink((v) => !v)}
+                  thinkLevel={thinkLevel}
+                  
                 />
               </div>
             </div>
@@ -2552,8 +2632,8 @@ export default function Workspace({ user, onLogout }: Props) {
                     onRemoveAttachment={removeAttachment}
                     dismissedIntent={dismissedIntent}
                     onDismissIntent={() => setDismissedIntent(input.trim())}
-                    deepThink={deepThink}
-                    onToggleThink={() => setDeepThink((v) => !v)}
+                    thinkLevel={thinkLevel}
+                    
                   />
                 </div>
               </div>
@@ -2727,8 +2807,7 @@ function Composer({
   onRemoveAttachment,
   dismissedIntent,
   onDismissIntent,
-  deepThink,
-  onToggleThink,
+  thinkLevel,
 }: {
   input: string
   setInput: (v: string) => void
@@ -2743,8 +2822,7 @@ function Composer({
   onRemoveAttachment: (id: string) => void
   dismissedIntent: string | null
   onDismissIntent: () => void
-  deepThink: boolean
-  onToggleThink: () => void
+  thinkLevel: number
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [showTools, setShowTools] = useState(false)
@@ -2829,15 +2907,7 @@ function Composer({
         }}
       />
       <div className="relative mb-0.5 shrink-0">
-        <button
-          onClick={() => setShowTools((v) => !v)}
-          title="Studio tools — website, logo, deck, palette…"
-          className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${showTools ? 'bg-accent text-[#15170f]' : 'bg-glass/10 text-ink hover:bg-glass/20'}`}
-          aria-label="Studio tools"
-        >
-          <Wand2 size={15} />
-        </button>
-        {showTools && (
+        {false && showTools && (
           <>
             <div className="fixed inset-0 z-30" onClick={() => setShowTools(false)} />
             <div className="absolute bottom-full left-0 z-40 mb-2 w-64 rounded-xl border border-glass/[0.12] bg-panel/95 p-1.5 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.7)] backdrop-blur-xl">
@@ -2867,30 +2937,51 @@ function Composer({
       >
         {attaching ? <Loader2 size={15} className="animate-spin" /> : <Paperclip size={15} />}
       </button>
-      <button
-        onClick={onToggleThink}
-        title={deepThink ? 'Deep thinking ON — slower, more thorough reasoning' : 'Deep thinking OFF — fast replies. Click for harder questions.'}
-        aria-label="Toggle deep thinking"
-        aria-pressed={deepThink}
-        className={`mb-0.5 flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-medium transition-colors ${deepThink ? 'bg-accent text-[#15170f]' : 'bg-glass/10 text-ink hover:bg-glass/20'}`}
-      >
-        <Brain size={15} /> <span className="hidden sm:inline">Think</span>
-      </button>
-      <textarea
-        ref={taRef}
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={onKey}
-        rows={1}
-        placeholder="Ask Nalu to do anything"
-        className="flex-1 bg-transparent outline-none resize-none text-[13.5px] placeholder:text-dim max-h-40 py-1"
-        style={{ height: 'auto' }}
-        onInput={(e) => {
-          const t = e.currentTarget
-          t.style.height = 'auto'
-          t.style.height = Math.min(t.scrollHeight, 160) + 'px'
-        }}
-      />
+      {/* Composer with an inline highlight backdrop: typing think / ultrathink /
+          packmind lights up gold/blue so you SEE the thinking tier engage. */}
+      <div className="relative min-w-0 flex-1">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words text-[13.5px] py-1 leading-normal text-ink"
+        >
+          {thinkSegments(input).map((s, i) =>
+            s.word ? (
+              <span
+                key={`${s.word}-${i}`}
+                className="think-word"
+                style={{ color: THINK_COLORS[s.word!], fontFamily: THINK_FONT, fontStyle: 'italic', fontWeight: 500 }}
+              >{s.t}</span>
+            ) : (
+              <span key={i}>{s.t}</span>
+            ),
+          )}
+        </div>
+        <textarea
+          ref={taRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={onKey}
+          rows={1}
+          placeholder="Ask Nalu anything…"
+          className="relative w-full bg-transparent text-transparent caret-ink outline-none resize-none text-[13.5px] placeholder:text-dim max-h-40 py-1 leading-normal"
+          style={{ height: 'auto' }}
+          onInput={(e) => {
+            const t = e.currentTarget
+            t.style.height = 'auto'
+            t.style.height = Math.min(t.scrollHeight, 160) + 'px'
+          }}
+        />
+      </div>
+      {thinkLevel > 0 && (
+        <div
+          key={thinkLevel}
+          className="think-badge mb-0.5 flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-[12px]"
+          style={{ color: THINK_COLORS[THINK_NAMES[thinkLevel]], borderColor: THINK_COLORS[THINK_NAMES[thinkLevel]] }}
+          title={thinkLevel === 3 ? 'Packmind — maximum reasoning' : thinkLevel === 2 ? 'Ultrathink — deeper reasoning' : 'Think — step-by-step reasoning'}
+        >
+          <Brain size={13} /> <span style={{ fontFamily: THINK_FONT, fontStyle: 'italic', fontWeight: 500 }}>{thinkLevel === 3 ? 'Packmind' : thinkLevel === 2 ? 'Ultrathink' : 'Think'}</span>
+        </div>
+      )}
       {streaming ? (
         <button
           onClick={onStop}
