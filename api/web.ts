@@ -674,7 +674,8 @@ async function proxyImage(url: string): Promise<{ dataUrl?: string; error?: stri
     const u = attempt >= 3 ? url.replace(/model=flux/i, 'model=turbo') : url
     try {
       const ctrl = new AbortController()
-      const t = setTimeout(() => ctrl.abort(), 40000)
+      // 18s per try (flux answers in ~4-10s) — recover fast instead of hanging 40s.
+      const t = setTimeout(() => ctrl.abort(), 18000)
       const r = await fetch(u, { headers: { 'User-Agent': UA }, signal: ctrl.signal })
       clearTimeout(t)
       const ct = r.headers.get('content-type') || ''

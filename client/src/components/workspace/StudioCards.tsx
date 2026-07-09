@@ -1168,12 +1168,12 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, saved, onC
     const queue = all.filter((u) => !logoCacheGet(u)) // skip already-cached
     let running = 0, idx = 0
     const pump = () => {
-      while (alive && running < 5 && idx < queue.length) {
+      while (alive && running < 3 && idx < queue.length) { // low concurrency: don't starve the VISIBLE logos
         const u = queue[idx++]; running++
         fetchLogoImage(u).then((d) => { if (d && onCache) onCache(u, d) }).finally(() => { running--; if (alive) pump() })
       }
     }
-    const t = setTimeout(pump, 1200) // let the visible style paint first
+    const t = setTimeout(pump, 4000) // wait for the visible style to finish first
     return () => { alive = false; clearTimeout(t) }
   }, [name, concept, colorDesc]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1207,14 +1207,8 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, saved, onC
         </button>
       </div>
       <div className="grid grid-cols-3 gap-3">
-        {!revealed
-          ? // single cohesive loading state — all three appear together when ready
-            [0, 1, 2].map((i) => (
-              <div key={i} className="flex aspect-square items-center justify-center rounded-xl border border-glass/10 bg-white">
-                <span className="h-6 w-6 animate-spin rounded-full border-2 border-black/15 border-t-accent" />
-              </div>
-            ))
-          : slots.map((s, i) => (
+        {/* Each logo appears the instant IT finishes — no waiting for all three. */}
+        {slots.map((s, i) => (
               <div key={i} className="group relative aspect-square overflow-hidden rounded-xl border border-glass/10 bg-white animate-fadeIn">
                 {s.st === 'done' ? (
                   <>
