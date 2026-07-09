@@ -2219,7 +2219,7 @@ export default async function handler(req: any, res: any) {
     // failure. This is exactly why logos intermittently "wouldn't generate."
     let content = ''
     let jsonOut: Record<string, unknown> | null = null
-    for (let attempt = 0; attempt < 3 && !jsonOut; attempt++) {
+    for (let attempt = 0; attempt < 5 && !jsonOut; attempt++) {
       try {
         content = await callModel(system, user, maxTokens, attempt === 0 ? 0.3 : 0.5, true)
       } catch { continue }
@@ -2241,6 +2241,23 @@ export default async function handler(req: any, res: any) {
 
     // JSON kinds: canvas | palette | blueprint | logo | shopping.
     let payload = jsonOut
+    // Logos must NEVER fail: if the model couldn't produce valid JSON after the
+    // retries, synthesize a clean, valid brand direction from the prompt so a logo
+    // ALWAYS renders (the client draws the marks + generates the images).
+    if (!payload && kind === 'logo') {
+      const raw = String(prompt || '').trim()
+      const m = raw.match(/(?:for|called|named|brand[:\s]+)\s+([A-Za-z][\w&.'-]*(?:\s+[A-Za-z][\w&.'-]*){0,2})/i)
+      let nm = (m ? m[1] : raw.split(/[\s,.]+/).filter(Boolean).slice(0, 2).join(' ') || 'Brand').replace(/[^\w\s&.'-]/g, '').trim() || 'Brand'
+      nm = nm.replace(/\b(a|an|the|logo|for|my|brand|company|startup)\b/gi, '').replace(/\s+/g, ' ').trim() || 'Brand'
+      const words = nm.split(/\s+/).filter(Boolean)
+      const initials = (words.length >= 2 ? words[0][0] + words[1][0] : nm.slice(0, 1)).toUpperCase()
+      payload = {
+        kind: 'logo', name: nm, initials,
+        serif: /luxury|elegant|law|estate|heritage|classic|boutique|editorial|fashion/i.test(raw),
+        colors: ['#0F1B2D', '#AF8C56'], colorNames: ['deep midnight navy', 'antique gold'],
+        concept: 'refined geometric', symbol: `an abstract geometric emblem evoking "${nm}"`,
+      }
+    }
     if (!payload) {
       res.status(502).json({ error: 'Could not build the design. Try rephrasing.' })
       return
