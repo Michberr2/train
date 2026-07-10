@@ -5,12 +5,14 @@
 import { chatComplete } from './_llm'
 
 type Edge = { from: string; to: string }
-type PNode = { id: string; type?: string; agent?: string; role?: string; prompt?: string; label?: string; lastRunDay?: string }
+type PNode = { id: string; type?: string; agent?: string; role?: string; prompt?: string; label?: string; lastRunDay?: string; roleTitle?: string; roleNotes?: string }
+type Company = { what?: string; mission?: string; notes?: string }
 type Flow = {
   id: string; name?: string; nodes?: PNode[]; edges?: Edge[]
   schedule?: 'manual' | 'hourly' | 'daily' | 'weekly' | 'continuous' | 'members'
-  time?: string; enabled?: boolean; lastRun?: number; results?: Record<string, string>
+  time?: string; enabled?: boolean; lastRun?: number; results?: Record<string, string>; company?: Company
 }
+const ROLE_TITLES: Record<string, string> = { ceo: 'CEO', coo: 'COO', cfo: 'CFO', cto: 'CTO', cio: 'CIO', cmo: 'CMO', design: 'Head of Design', accountant: 'Accountant', legal: 'Legal Counsel', analyst: 'Analyst', ea: 'Executive Assistant', pm: 'Product Manager', sales: 'Sales Lead', hr: 'Head of People', support: 'Support Lead' }
 
 // Is this flow due to run right now?
 function isDue(f: Flow, now: number): boolean {
@@ -62,6 +64,18 @@ async function runFlow(f: Flow): Promise<Record<string, string>> {
     else if (input) prompt += `\n\n--- INPUT FROM THE PREVIOUS AGENT ---\n${input}`
     const prev = f.results?.[nid]
     if (prev) prompt += `\n\n--- YOUR PREVIOUS WORK (build on it, update what changed, never repeat verbatim) ---\n${prev.slice(0, 3000)}`
+    // Role + company + notes context (mirrors the client) so scheduled runs are
+    // just as accurate — the user's company notes and per-agent notes are honored.
+    const title = node.roleTitle || ROLE_TITLES[node.role || ''] || ''
+    const co = f.company
+    const charter = [
+      title ? `You are the ${title} of "${f.name || 'the company'}".` : '',
+      co?.what ? `THE COMPANY: ${co.what}` : '',
+      co?.mission ? `THE MANDATE: ${co.mission}` : '',
+      co?.notes ? `IMPORTANT COMPANY NOTES — hard rules that OVERRIDE defaults, follow exactly: ${co.notes}` : '',
+      node.roleNotes ? `HOW YOU MUST WORK — exact instructions for you that OVERRIDE defaults: ${node.roleNotes}` : '',
+    ].filter(Boolean).join(' ')
+    if (charter) prompt = `${charter}\n\nYOUR TASK:\n${prompt}`
     try {
       const out = await chatComplete([{ role: 'user', content: prompt }], { maxTokens: 2200, timeoutMs: 90000, temperature: 0.6 })
       if (out && out.trim()) results[nid] = out.slice(0, 24000)

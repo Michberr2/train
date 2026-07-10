@@ -84,6 +84,7 @@ const roleCharter = (r: RoleDef, f: { name: string; company?: Company }) =>
     `You are the ${r.title} of "${f.name}".`,
     f.company?.what ? `THE COMPANY: ${f.company.what}` : '',
     f.company?.mission ? `THE MANDATE — what this company is supposed to do: ${f.company.mission}` : '',
+    f.company?.notes ? `IMPORTANT COMPANY NOTES — treat these as hard rules that OVERRIDE any default behavior, follow them exactly: ${f.company.notes}` : '',
     r.charter,
     'You have FULL live web access on every turn (web_search, fetch_url, deep_research) — research anything current before deciding, and cite what you used. Act autonomously like a real executive: deliver finished work and decisions, never questions back.',
   ].filter(Boolean).join(' ')
@@ -99,10 +100,10 @@ const nodeMeta = (n: PNode): { name: string; icon: LucideIcon; tint: string } =>
 
 // ---- flow model + persistence -----------------------------------------------
 type NodeState = 'idle' | 'queued' | 'running' | 'done' | 'error' | 'skipped'
-type PNode = { id: string; x: number; y: number; type: NodeType; agent?: string; role?: string; label: string; prompt: string; to?: string; subject?: string; auto?: boolean; time?: string; lastRunDay?: string; platform?: string; webhook?: string; format?: string }
+type PNode = { id: string; x: number; y: number; type: NodeType; agent?: string; role?: string; label: string; prompt: string; to?: string; subject?: string; auto?: boolean; time?: string; lastRunDay?: string; platform?: string; webhook?: string; format?: string; roleTitle?: string; roleNotes?: string }
 type Edge = { from: string; to: string }
 type Schedule = 'manual' | 'hourly' | 'daily' | 'weekly' | 'continuous' | 'members'
-type Company = { what: string; mission: string }
+type Company = { what: string; mission: string; notes?: string }
 type Flow = { id: string; name: string; nodes: PNode[]; edges: Edge[]; schedule: Schedule; time: string; enabled: boolean; lastRun?: number; results?: Record<string, string>; company?: Company; artifacts?: Record<string, OutputMeta> }
 type Run = { id: string; flowId: string; flowName: string; startedAt: number; finishedAt?: number; status: 'running' | 'done' | 'error' | 'stopped'; note?: string }
 const FLOWS_KEY = 'nalu-agent-flows'
@@ -203,7 +204,8 @@ export default function AgentsPanel() {
   const [mouse, setMouse] = useState({ x: 0, y: 0 })
   const [expanded, setExpanded] = useState<string | null>(null)
   const [addMenu, setAddMenu] = useState<false | 'model' | 'company' | 'output'>(false)
-  const [coSetup, setCoSetup] = useState<null | { name: string; what: string; mission: string }>(null)
+  const [coSetup, setCoSetup] = useState<null | { name: string; what: string; mission: string; notes: string }>(null)
+  const [coNotesOpen, setCoNotesOpen] = useState(false)
   const [runWarn, setRunWarn] = useState<string | null>(null)
   const [durs, setDurs] = useState<Record<string, number>>({})
   const [railOpen, setRailOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 900)
@@ -447,12 +449,14 @@ export default function AgentsPanel() {
       let prompt = node.prompt.trim() || `You are the ${agentDef(node.agent || 'general').name} step in a pipeline. Do your specialty on the input.`
       if (prompt.includes('{{input}}')) prompt = prompt.split('{{input}}').join(input || '(no upstream input)')
       else if (input) prompt += `\n\n--- INPUT FROM THE PREVIOUS AGENT ---\n${input}`
-      const role = roleDef(node.role)
+      // Predefined role OR a user-defined custom role (node.roleTitle).
+      const role = roleDef(node.role) || (node.roleTitle ? { key: 'custom', title: node.roleTitle, engine: node.agent || 'general', desc: '', charter: '' } : undefined)
       if (role) {
         // self-sustaining continuity: each member sees their own last work and
         // builds on it instead of starting cold every day.
         const prevOwn = f.results?.[node.id]
-        prompt = `${roleCharter(role, f)}\n\nYOUR TASK TODAY:\n${prompt}${prevOwn ? `\n\n--- YOUR PREVIOUS WORK (last run — build on it, update what changed, never repeat verbatim) ---\n${prevOwn.slice(0, 3500)}` : ''}`
+        const notes = node.roleNotes ? `\n\nHOW YOU MUST WORK — these are exact instructions for you and OVERRIDE any default behavior: ${node.roleNotes}` : ''
+        prompt = `${roleCharter(role, f)}${notes}\n\nYOUR TASK TODAY:\n${prompt}${prevOwn ? `\n\n--- YOUR PREVIOUS WORK (last run — build on it, update what changed, never repeat verbatim) ---\n${prevOwn.slice(0, 3500)}` : ''}`
       }
       let out = ''
       const r = await streamChat([{ role: 'user', content: prompt }], undefined, { signal: ctrl.signal, onDelta: (t) => { out += t; onLive(out) } }, undefined, undefined, undefined, node.agent)
@@ -761,7 +765,7 @@ export default function AgentsPanel() {
   // burned into every member's charter. Solid across the board: research →
   // CEO → every department → EA office work (meetings .ics + email rules) →
   // daily report. Tweak any position after.
-  const createCompany = (name: string, what: string, mission: string) => {
+  const createCompany = (name: string, what: string, mission: string, notes: string) => {
     const mk = (role: string, x: number, y: number, time: string, prompt: string): PNode => {
       const r = roleDef(role) as RoleDef
       return { id: uid(), x, y, type: 'agent', agent: r.engine, role: r.key, label: r.title, prompt, time }
@@ -787,7 +791,7 @@ export default function AgentsPanel() {
     const rpt: PNode = { id: uid(), x: 1480, y: 100, type: 'doc', label: 'Daily company report', prompt: 'A crisp internal daily report: decisions, department output, pipeline, numbers, legal flags, books, tomorrow.' }
     const f: Flow = {
       id: uid(), name: name.trim() || 'My Company', schedule: 'members', time: '08:00', enabled: false,
-      company: { what: what.trim(), mission: mission.trim() },
+      company: { what: what.trim(), mission: mission.trim(), notes: notes.trim() || undefined },
       nodes: [analyst, ceo, coo, cfo, cmo, cto, des, legal, acct, ea, pm, sales, hr, cal, rules, prospects, outreach, rolodex, rpt],
       edges: [
         { from: analyst.id, to: ceo.id },
@@ -838,7 +842,7 @@ export default function AgentsPanel() {
           <div className="flex items-center justify-between px-3 pb-1 pt-3">
             <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-dim">Pipelines</span>
             <span className="flex items-center gap-0.5">
-              <button onClick={() => setCoSetup({ name: '', what: '', mission: '' })} title="New company — full baseline team" className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-gold hover:bg-glass/10">+ Co</button>
+              <button onClick={() => setCoSetup({ name: '', what: '', mission: '', notes: '' })} title="New company — full baseline team" className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-gold hover:bg-glass/10">+ Co</button>
               <button onClick={newAutoPoster} title="Auto-poster — daily social posts on a schedule" className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-gold hover:bg-glass/10">+ Post</button>
               <button onClick={newFlow} title="New pipeline" className="flex h-6 w-6 items-center justify-center rounded-md text-gold hover:bg-glass/10"><Plus size={13} /></button>
             </span>
@@ -890,6 +894,12 @@ export default function AgentsPanel() {
           <button onClick={() => setRailOpen((v) => !v)} title="Toggle sidebar" className="flex h-7 w-7 items-center justify-center rounded-lg text-dim hover:bg-glass/10 hover:text-ink"><PanelLeft size={14} /></button>
           <input value={flow.name} onChange={(e) => patchFlow(flow.id, { name: e.target.value })}
             className="w-48 rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm font-medium text-ink outline-none focus:border-glass/20" placeholder="Pipeline name" />
+          {flow.company && (
+            <button onClick={() => setCoNotesOpen((v) => !v)} title="Company notes — hard rules every agent follows"
+              className={`flex items-center gap-1 rounded-lg px-2 py-1.5 text-[12px] hover:bg-glass/[0.12] ${flow.company.notes ? 'bg-amber-500/15 text-amber-200' : 'bg-glass/[0.07] text-ink'}`}>
+              <FileText size={13} /> Notes
+            </button>
+          )}
           {/* Three dedicated dropdowns: models, company roles, and outputs. */}
           <div className="relative">
             <button onClick={() => setAddMenu(addMenu === 'model' ? false : 'model')}
@@ -963,6 +973,15 @@ export default function AgentsPanel() {
           </div>
         </div>
 
+        {coNotesOpen && flow.company && (
+          <div className="border-b border-glass/[0.08] px-3 py-2">
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-200/80">Company notes — hard rules every agent follows</div>
+            <textarea value={flow.company.notes || ''} onChange={(e) => patchFlow(flow.id, { company: { ...flow.company!, notes: e.target.value } })} rows={2}
+              placeholder="e.g. Voice: warm + direct, never salesy. Only operate in Texas. Prices in USD. Anything over $5k needs my approval first."
+              className="w-full resize-none rounded-lg border border-amber-400/20 bg-amber-500/[0.04] p-2 text-[12px] leading-relaxed text-ink outline-none placeholder:text-dim focus:border-amber-400/40" />
+          </div>
+        )}
+
         {runWarn && (
           <div className="flex items-center gap-2 border-b border-amber-400/20 bg-amber-500/[0.08] px-3 py-1.5 text-[11.5px] text-amber-200">
             <span className="min-w-0 flex-1 truncate">{runWarn}</span>
@@ -1007,9 +1026,15 @@ export default function AgentsPanel() {
                   style={{ left: n.x, top: n.y, width: NODE_W }}>
                   <div onPointerDown={(e) => onNodeDragStart(e, n)} className="flex cursor-grab items-center gap-2 rounded-t-xl border-b border-glass/[0.08] px-2.5 py-1.5 active:cursor-grabbing" style={{ background: `${meta.tint}12` }}>
                     {n.type === 'agent' && n.role ? (
-                      <select value={n.role} onChange={(e) => { const r = roleDef(e.target.value); patchNode(n.id, { role: e.target.value, agent: r?.engine || n.agent }) }} onPointerDown={(e) => e.stopPropagation()}
+                      <select value={n.roleTitle ? '__custom__' : n.role} onChange={(e) => {
+                        if (e.target.value === '__new__') { const t = window.prompt('Name the new role (e.g. "VP of Partnerships")'); if (t && t.trim()) patchNode(n.id, { role: 'custom', roleTitle: t.trim(), label: t.trim() }); return }
+                        if (e.target.value === '__custom__') return
+                        const r = roleDef(e.target.value); patchNode(n.id, { role: e.target.value, roleTitle: undefined, agent: r?.engine || n.agent, label: r?.title || n.label })
+                      }} onPointerDown={(e) => e.stopPropagation()}
                         className="rounded bg-transparent text-[11.5px] font-medium text-ink outline-none">
                         {COMPANY_ROLES.map((r) => <option key={r.key} value={r.key} className="bg-panel2">{r.title}</option>)}
+                        {n.roleTitle && <option value="__custom__" className="bg-panel2">{n.roleTitle}</option>}
+                        <option value="__new__" className="bg-panel2">＋ New role…</option>
                       </select>
                     ) : n.type === 'agent' ? (
                       <select value={n.agent} onChange={(e) => patchNode(n.id, { agent: e.target.value })} onPointerDown={(e) => e.stopPropagation()}
@@ -1071,6 +1096,12 @@ export default function AgentsPanel() {
                     <textarea value={n.prompt} onChange={(e) => patchNode(n.id, { prompt: e.target.value })} rows={4}
                       placeholder={n.type === 'agent' ? `What should this employee do? {{input}} = upstream output.` : n.type === 'email' ? 'Email body — {{input}} = upstream output.' : `Style/brief for the ${meta.name.toLowerCase()} (the upstream output is the material).`}
                       className="w-full resize-none rounded-lg border border-glass/[0.1] bg-glass/[0.04] p-1.5 text-[11.5px] leading-relaxed text-ink outline-none placeholder:text-dim focus:border-glass/25" />
+                    {n.type === 'agent' && (
+                      <textarea value={n.roleNotes || ''} onChange={(e) => patchNode(n.id, { roleNotes: e.target.value })} rows={2}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        placeholder="How this agent must work (notes) — exact rules that override defaults: e.g. always cite sources, keep under 200 words, use our brand voice, never contact competitors."
+                        className="mt-1.5 w-full resize-none rounded-lg border border-amber-400/20 bg-amber-500/[0.04] p-1.5 text-[11px] leading-relaxed text-ink outline-none placeholder:text-dim/70 focus:border-amber-400/40" />
+                    )}
                     {flow.artifacts?.[n.id] && (
                       <button onClick={() => void redownload(flow.artifacts![n.id])} onPointerDown={(e) => e.stopPropagation()}
                         title="Download this file again"
@@ -1121,11 +1152,14 @@ export default function AgentsPanel() {
             <label className="mt-3 block text-[10px] font-semibold uppercase tracking-[0.16em] text-dim">What it's supposed to do</label>
             <textarea value={coSetup.mission} onChange={(e) => setCoSetup({ ...coSetup, mission: e.target.value })} rows={3} placeholder="Grow to $50k/mo: land 3 new wholesale accounts weekly, ship 2 marketing campaigns a month, keep margins above 60%, book tastings with prospects."
               className="mt-1 w-full resize-none rounded-lg border border-glass/[0.12] bg-glass/[0.05] px-2.5 py-1.5 text-[12.5px] leading-relaxed text-ink outline-none placeholder:text-dim focus:border-glass/30" />
+            <label className="mt-3 block text-[10px] font-semibold uppercase tracking-[0.16em] text-dim">Notes for every agent <span className="text-dim/60 normal-case tracking-normal">— hard rules they all follow</span></label>
+            <textarea value={coSetup.notes} onChange={(e) => setCoSetup({ ...coSetup, notes: e.target.value })} rows={3} placeholder="e.g. Voice: warm + direct, never salesy. Never contact anyone outside Texas. Always price in USD. Approvals over $5k go to me first."
+              className="mt-1 w-full resize-none rounded-lg border border-glass/[0.12] bg-glass/[0.05] px-2.5 py-1.5 text-[12.5px] leading-relaxed text-ink outline-none placeholder:text-dim focus:border-glass/30" />
             <div className="mt-4 flex items-center justify-end gap-2">
               <button onClick={() => setCoSetup(null)} className="rounded-lg px-3 py-1.5 text-[12px] text-dim hover:bg-glass/10 hover:text-ink">Cancel</button>
               <button
                 disabled={!coSetup.name.trim() || !coSetup.what.trim() || !coSetup.mission.trim()}
-                onClick={() => { createCompany(coSetup.name, coSetup.what, coSetup.mission); setCoSetup(null) }}
+                onClick={() => { createCompany(coSetup.name, coSetup.what, coSetup.mission, coSetup.notes); setCoSetup(null) }}
                 className="rounded-lg bg-gradient-to-r from-[#c9a86a] to-accent px-3.5 py-1.5 text-[12.5px] font-semibold text-[#15170f] hover:brightness-110 disabled:opacity-40">
                 Create company
               </button>
