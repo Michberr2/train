@@ -504,6 +504,7 @@ Rules:
 - Draw shapes whenever the question names a place, area, route, or comparison ("outline downtown", "where is the flood-prone part", "best neighborhoods for X", "route from A to B") — the map should SHOW the answer, not just say it.
 - ALWAYS return "center" and "zoom", framed TIGHTLY on the exact place the question is about, zoomed IN enough to actually see it: a country ~5, a state/region ~7, a city ~11-12, a district/neighborhood ~14, a specific street/address/venue ~16-17. Never leave the map on the old view — every answer must pan and zoom to where the user is asking about. If they name a place, go there; if the question is about the current view, still return a tight center+zoom on the relevant part.
 - "search" only for concrete findable places (businesses, POIs, addresses) — it pins live results; null otherwise.
+- FINDING A PLACE ("where is the best korean food in Orlando", "tire shop near me", "find a coffee shop in Austin"): set "search" to a PRECISE Google Places query that INCLUDES the location when the user named one (e.g. "korean restaurant in Orlando FL", "tire shop") so results are filtered to the right area; set "center"+"zoom" ON that location; and make "answer" name 2-4 SPECIFIC real places (use the LIVE RESEARCH names/ratings when given) with a one-line why for each — never a vague "there are many options".
 - Enable data layers only when they genuinely visualize the topic (flood → flood zones, wildfire → fire layers, ...).
 - COMPARISONS ("compare A vs B", "best places/neighborhoods/cities for X", "where should I ..."): fill "comparison" with real scored criteria the asker cares about (schools, affordability, safety, commute, lifestyle...), score every place on every criterion honestly (differentiate — not all 7s, and TOTALS MUST NOT TIE: real places have real tradeoffs, let the scores show them), add a marker shape per place, pick the winner, and set center/zoom to frame them all. Use the LIVE RESEARCH when provided for current facts (prices, rankings).`
 
@@ -571,8 +572,11 @@ async function mapAI(body: Record<string, unknown>, req?: { headers: Record<stri
   let researchNote = ''
   if (/\b(compare|vs\.?|versus|best (place|city|cities|neighborhood|area|town|suburb|state)s?|where (should|to) (i|we|move|live|buy|invest)|top \d+|rank|price|cost|market|current|latest|today|now|202\d|rate|news|crime|school rating)\w*\b/i.test(q)) {
     try {
-      const rr = await research(q.slice(0, 300), 3, 'realestate')
-      if (rr?.text) researchNote = `\n\nLIVE RESEARCH (current facts — use for scoring):\n${rr.text.slice(0, 5000)}`
+      // Use the RIGHT research lens: real-estate only for property questions,
+      // otherwise general (restaurants, shops, services, trivia — not realtor-speak).
+      const reSpecialist = /\b(neighborhood|home|house|proper|real ?estate|invest|rent|move|relocat|live|suburb|zip ?code|school district|hoa|apartment|condo|acre|lot|zoning|mortgage)\w*/i.test(q) ? 'realestate' : 'general'
+      const rr = await research(q.slice(0, 300), 3, reSpecialist)
+      if (rr?.text) researchNote = `\n\nLIVE RESEARCH (current facts — use these real names/ratings/prices):\n${rr.text.slice(0, 5000)}`
     } catch { /* research is best-effort */ }
   }
   const user = `QUESTION: ${q}\n\nCURRENT VIEW: ${lat != null && lng != null ? `lat ${lat.toFixed(4)}, lng ${lng.toFixed(4)}, zoom ${zoom ?? '?'}` : '(unknown)'}\n\nCATEGORIES: ${cats}\n\nDATA LAYERS:\n${catList || '(none)'}${researchNote}\n\nJSON:`

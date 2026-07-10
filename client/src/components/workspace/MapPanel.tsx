@@ -1080,9 +1080,11 @@ export default function MapPanel() {
   }
 
   // Places lookup (Google Places → free OSM fallback server-side); plots pins.
-  const runPlaces = async (q: string, fit: boolean): Promise<Place[]> => {
+  const runPlaces = async (q: string, fit: boolean, biasAt?: { lat: number; lng: number } | null): Promise<Place[]> => {
+    // Bias the search to WHERE THE QUESTION IS ABOUT (the AI's center), not the
+    // stale current view — otherwise "korean food in Orlando" searches the old spot.
     const c = mapRef.current?.getCenter?.()
-    const bias = c ? { lat: c.lat(), lng: c.lng() } : {}
+    const bias = biasAt && typeof biasAt.lat === 'number' ? biasAt : (c ? { lat: c.lat(), lng: c.lng() } : {})
     const r = await fetch('/api/web', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'places', query: q, ...bias }) })
     const d = (await r.json()) as { results?: Place[]; error?: string }
     const res = (d.results || []).filter((p) => p.lat != null && p.lng != null)
@@ -1184,7 +1186,7 @@ export default function MapPanel() {
       const compareMarkers: AIShape[] = (d.comparison?.places || []).map((pl) => ({ type: 'marker', category: 'area', label: pl.name, point: { lat: pl.lat, lng: pl.lng } }))
       const allShapes = [...(d.shapes || []), ...compareMarkers.filter((m) => !(d.shapes || []).some((sh) => sh.type === 'marker' && sh.label === m.label))]
       const shapeBounds = allShapes.length ? drawAIShapes(allShapes) : null
-      if (d.search) await runPlaces(d.search, !hasView && !shapeBounds)
+      if (d.search) await runPlaces(d.search, !hasView && !shapeBounds, d.center)
       else setResults([])
       // ALWAYS frame the view on where they're asking about: AI's explicit
       // center wins, then the drawn shapes, then a live geocode of the place —

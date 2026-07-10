@@ -123,7 +123,15 @@ export default function SheetCard({ data }: { data: SheetDoc }) {
   const headBg = '#' + (brand?.primary || '0F1B2D')
 
   // Evaluate formulas so the preview + PDF show real values, not "=SUM(...)".
-  const ev = useMemo(() => buildEvaluator(sheets), [sheets])
+  // NEVER let a bad/recursive formula crash the whole card — fall back to the raw
+  // cell so the spreadsheet ALWAYS renders.
+  const ev = useMemo(() => {
+    try { return buildEvaluator(sheets) }
+    catch { return { value: (si: number, ri: number, ci: number) => sheets[si]?.rows?.[ri]?.[ci] ?? '' } }
+  }, [sheets])
+  const cellValue = (si: number, ri: number, ci: number): unknown => {
+    try { return ev.value(si, ri, ci) } catch { return sheets[si]?.rows?.[ri]?.[ci] ?? '' }
+  }
   const fmts = useMemo(() => (sheet?.columns || []).map((c) => colFormat(c)), [sheet])
 
   const downloadXlsx = () =>
@@ -147,7 +155,7 @@ export default function SheetCard({ data }: { data: SheetDoc }) {
         pdf.setTextColor(0, 0, 0)
         autoTable(pdf, {
           head: [s.columns || []],
-          body: (s.rows || []).map((r, ri) => r.map((_, ci) => sf[ci].display(ev.value(si, ri, ci)))),
+          body: (s.rows || []).map((r, ri) => r.map((_, ci) => { try { return (sf[ci] || { display: (x: unknown) => String(x ?? '') }).display(cellValue(si, ri, ci)) } catch { return String(r[ci] ?? '') } })),
           startY: 20,
           margin: { bottom: 16 },
           styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
@@ -220,7 +228,7 @@ export default function SheetCard({ data }: { data: SheetDoc }) {
               {(sheet.rows || []).map((r, ri) => (
                 <tr key={ri}>
                   {(sheet.columns || []).map((_, ci) => {
-                    const v = ev.value(Math.min(active, sheets.length - 1), ri, ci)
+                    const v = cellValue(Math.min(active, sheets.length - 1), ri, ci)
                     const isFormula = typeof r[ci] === 'string' && (r[ci] as string).startsWith('=')
                     return (
                       <td
