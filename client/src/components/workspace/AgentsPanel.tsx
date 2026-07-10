@@ -6,6 +6,7 @@ import {
   Mail, Download, CheckCircle2, XCircle, PanelLeft, Users, type LucideIcon,
 } from 'lucide-react'
 import { streamChat } from './agentApi'
+import { HEDGE_FUND_ROLES, hedgeFundTeam } from './hedgeFund'
 import { getBrand } from './brandKit'
 import Markdown from './Markdown'
 import { listOutputs, storeOutput, getOutputBlob, deleteOutput, downloadBlobFile, buildEmlBlob, openMailto, buildIcsBlob, buildGmailFiltersXml, buildVcfBlob, type OutputMeta, type IcsEvent, type MailRule, type VcfContact } from './agentOutputs'
@@ -78,7 +79,7 @@ const COMPANY_ROLES: RoleDef[] = [
   { key: 'hr', title: 'Head of People', engine: 'hr', desc: 'Hiring, onboarding, culture', charter: 'You build the team: hiring plans tied to the roadmap, job posts that attract the right people, structured interview loops with scorecards, 30/60/90 onboarding, comp bands with market data, and culture rituals that scale. DELIVERABLE FORMAT: for any role — the post, the loop (stages and what each screens for), the scorecard, the onboarding checklist. KPIs: time-to-hire, 90-day retention, offer-accept rate.' },
   { key: 'support', title: 'Support Lead', engine: 'general', desc: 'Customers, replies, FAQs', charter: 'You own the customer: reply drafts in the company voice (empathetic, direct, solution-first), macros for the top issues, FAQ and doc updates driven by real tickets, churn-risk flags, and escalation calls with clear reasoning. DELIVERABLE FORMAT: replies ready to send verbatim + a top-issues table (issue, count, root cause, fix owner). KPIs: first-response time, resolution rate, CSAT. Every ticket teaches the product team something — say what.' },
 ]
-const roleDef = (key?: string) => COMPANY_ROLES.find((r) => r.key === key)
+const roleDef = (key?: string): RoleDef | undefined => COMPANY_ROLES.find((r) => r.key === key) || (HEDGE_FUND_ROLES.find((r) => r.key === key) as RoleDef | undefined)
 const roleCharter = (r: RoleDef, f: { name: string; company?: Company }) =>
   [
     `You are the ${r.title} of "${f.name}".`,
@@ -216,6 +217,7 @@ export default function AgentsPanel() {
   const [addMenu, setAddMenu] = useState<false | 'model' | 'company' | 'output'>(false)
   const [coSetup, setCoSetup] = useState<null | { name: string; what: string; mission: string; notes: string }>(null)
   const [coNotesOpen, setCoNotesOpen] = useState(false)
+  const [hfSetup, setHfSetup] = useState<null | { name: string; tickers: string }>(null)
   const [runWarn, setRunWarn] = useState<string | null>(null)
   const [durs, setDurs] = useState<Record<string, number>>({})
   const [railOpen, setRailOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 900)
@@ -820,6 +822,32 @@ export default function AgentsPanel() {
     }
     setFlows((fs) => [f, ...fs]); setFlowId(f.id); setStates({}); setLive({})
   }
+  // Nalu Hedge Fund model — a full AI investment committee for the given tickers:
+  // persona + analytical agents + a real-time macro/events analyst feed the Risk
+  // Manager and the Portfolio Manager, which writes the decision memo.
+  const createHedgeFund = (name: string, tickers: string) => {
+    const team = hedgeFundTeam(tickers)
+    const mk = (n: { key: string; title: string; engine: string; task: string }, x: number, y: number): PNode =>
+      ({ id: uid(), x, y, type: 'agent', agent: n.engine, role: n.key, label: n.title, prompt: n.task })
+    const analysts = team.analysts.map((n, i) => mk(n, 40 + (i % 3) * 340, 40 + Math.floor(i / 3) * 210))
+    const macro = mk(team.macro, 40 + (analysts.length % 3) * 340, 40 + Math.floor(analysts.length / 3) * 210)
+    const risk = mk(team.risk, 1220, 120)
+    const portfolio = mk(team.portfolio, 1580, 120)
+    const memo: PNode = { id: uid(), x: 1940, y: 120, type: 'doc', label: 'Investment decision memo', prompt: "A clean investment-committee memo: each analyst's signal, the real-time macro/event risk landscape, the Risk Manager's position limits, and the Portfolio Manager's final decision table (ticker · action · quantity · confidence · why) with the overall stance and cash level." }
+    const feeders = [...analysts, macro]
+    const f: Flow = {
+      id: uid(), name: name.trim() || 'Nalu Hedge Fund', schedule: 'daily', time: '07:00', enabled: false,
+      company: { what: `An AI-run hedge fund analyzing ${tickers.trim() || 'a watchlist'} with a full investment committee — famous investor personas plus analytical, macro, risk and portfolio agents.`, mission: 'Make disciplined, risk-managed investment decisions daily using real-time data and multiple investing philosophies.' },
+      nodes: [...analysts, macro, risk, portfolio, memo],
+      edges: [
+        ...feeders.map((a) => ({ from: a.id, to: risk.id })),
+        ...feeders.map((a) => ({ from: a.id, to: portfolio.id })),
+        { from: risk.id, to: portfolio.id },
+        { from: portfolio.id, to: memo.id },
+      ],
+    }
+    setFlows((fs) => [f, ...fs]); setFlowId(f.id); setStates({}); setLive({})
+  }
   const deleteFlow = (fid: string) => {
     setFlows((fs) => { const next = fs.filter((f) => f.id !== fid); return next.length ? next : [starterFlow()] })
   }
@@ -854,6 +882,7 @@ export default function AgentsPanel() {
             <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-dim">Pipelines</span>
             <span className="flex items-center gap-0.5">
               <button onClick={() => setCoSetup({ name: '', what: '', mission: '', notes: '' })} title="New company — full baseline team" className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-gold hover:bg-glass/10">+ Co</button>
+              <button onClick={() => setHfSetup({ name: 'Nalu Hedge Fund', tickers: '' })} title="Nalu Hedge Fund — a full AI investment committee" className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300 hover:bg-glass/10">+ Fund</button>
               <button onClick={newAutoPoster} title="Auto-poster — daily social posts on a schedule" className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-gold hover:bg-glass/10">+ Post</button>
               <button onClick={newFlow} title="New pipeline" className="flex h-6 w-6 items-center justify-center rounded-md text-gold hover:bg-glass/10"><Plus size={13} /></button>
             </span>
@@ -939,6 +968,12 @@ export default function AgentsPanel() {
                   <span className="block text-[12px] font-semibold text-gold">＋ New role…</span><span className="block truncate text-[10px] text-dim">A custom role — name it, then give it working notes</span>
                 </button>
                 {COMPANY_ROLES.map((r) => (
+                  <button key={r.key} onClick={() => addNode('agent', r.engine, r.key)} className="w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]">
+                    <span className="block text-[12px] text-ink">{r.title}</span><span className="block truncate text-[10px] text-dim">{r.desc}</span>
+                  </button>
+                ))}
+                <div className="mt-1 border-t border-glass/[0.08] px-3 py-1 text-[9.5px] font-semibold uppercase tracking-[0.16em] text-emerald-300/80">Nalu Hedge Fund</div>
+                {HEDGE_FUND_ROLES.map((r) => (
                   <button key={r.key} onClick={() => addNode('agent', r.engine, r.key)} className="w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]">
                     <span className="block text-[12px] text-ink">{r.title}</span><span className="block truncate text-[10px] text-dim">{r.desc}</span>
                   </button>
@@ -1177,6 +1212,28 @@ export default function AgentsPanel() {
                 onClick={() => { createCompany(coSetup.name, coSetup.what, coSetup.mission, coSetup.notes); setCoSetup(null) }}
                 className="rounded-lg bg-gradient-to-r from-[#c9a86a] to-accent px-3.5 py-1.5 text-[12.5px] font-semibold text-[#15170f] hover:brightness-110 disabled:opacity-40">
                 Create company
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {hfSetup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur" onClick={() => setHfSetup(null)}>
+          <div className="w-full max-w-lg rounded-2xl border border-emerald-400/25 bg-panel2 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="text-[13px] font-semibold text-emerald-300">Nalu Hedge Fund model</div>
+            <p className="mt-1 text-[11.5px] leading-relaxed text-dim">A full AI investment committee — Buffett, Munger, Graham, Wood, Burry, Ackman, Lynch, Druckenmiller, Damodaran, Taleb, Pabrai, Jhunjhunwala + fundamentals, valuation, technicals, sentiment and growth analysts, a real-time macro/events desk (disasters, pandemics, rates), a Risk Manager and a Portfolio Manager. Every agent researches live data; the PM makes the final buy/sell/short/hold calls.</p>
+            <label className="mt-3 block text-[10px] font-semibold uppercase tracking-[0.16em] text-dim">Fund name</label>
+            <input autoFocus value={hfSetup.name} onChange={(e) => setHfSetup({ ...hfSetup, name: e.target.value })} placeholder="Nalu Hedge Fund"
+              className="mt-1 w-full rounded-lg border border-glass/[0.12] bg-glass/[0.05] px-2.5 py-1.5 text-[13px] text-ink outline-none placeholder:text-dim focus:border-glass/30" />
+            <label className="mt-3 block text-[10px] font-semibold uppercase tracking-[0.16em] text-dim">Tickers / watchlist</label>
+            <input value={hfSetup.tickers} onChange={(e) => setHfSetup({ ...hfSetup, tickers: e.target.value })} placeholder="AAPL, NVDA, MSFT, TSLA"
+              className="mt-1 w-full rounded-lg border border-glass/[0.12] bg-glass/[0.05] px-2.5 py-1.5 text-[13px] text-ink outline-none placeholder:text-dim focus:border-glass/30" />
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button onClick={() => setHfSetup(null)} className="rounded-lg px-3 py-1.5 text-[12px] text-dim hover:bg-glass/10 hover:text-ink">Cancel</button>
+              <button onClick={() => { createHedgeFund(hfSetup.name, hfSetup.tickers); setHfSetup(null) }}
+                className="rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 px-3.5 py-1.5 text-[12.5px] font-semibold text-[#08130d] hover:brightness-110">
+                Build the fund
               </button>
             </div>
           </div>
