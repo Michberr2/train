@@ -125,7 +125,17 @@ function loadFlows(): Flow[] {
   return [starterFlow()]
 }
 const saveFlows = (flows: Flow[]) => { try { localStorage.setItem(FLOWS_KEY, JSON.stringify(flows)) } catch { /* */ } }
-const loadRuns = (): Run[] => { try { const a = JSON.parse(localStorage.getItem(RUNS_KEY) || '[]'); return Array.isArray(a) ? a : [] } catch { return [] } }
+const loadRuns = (): Run[] => {
+  try {
+    const a = JSON.parse(localStorage.getItem(RUNS_KEY) || '[]')
+    if (!Array.isArray(a)) return []
+    // A run only "runs" inside a live tab. Anything still marked 'running' on load
+    // is from a tab that was closed/refreshed mid-run — it's dead, not cycling.
+    return a.map((r: Run) => (r && r.status === 'running'
+      ? { ...r, status: 'stopped' as const, finishedAt: r.finishedAt || r.startedAt, note: r.note || 'interrupted (tab closed)' }
+      : r))
+  } catch { return [] }
+}
 const saveRuns = (runs: Run[]) => { try { localStorage.setItem(RUNS_KEY, JSON.stringify(runs.slice(0, 20))) } catch { /* */ } }
 
 function topoOrder(nodes: PNode[], edges: Edge[]): string[] {
