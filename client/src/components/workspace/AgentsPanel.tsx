@@ -218,6 +218,7 @@ export default function AgentsPanel() {
   const [coSetup, setCoSetup] = useState<null | { name: string; what: string; mission: string; notes: string }>(null)
   const [coNotesOpen, setCoNotesOpen] = useState(false)
   const [hfSetup, setHfSetup] = useState<null | { name: string; tickers: string }>(null)
+  const [newMenu, setNewMenu] = useState(false)
   const [runWarn, setRunWarn] = useState<string | null>(null)
   const [durs, setDurs] = useState<Record<string, number>>({})
   const [railOpen, setRailOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 900)
@@ -880,12 +881,23 @@ export default function AgentsPanel() {
         <div className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-glass/[0.08]">
           <div className="flex items-center justify-between px-3 pb-1 pt-3">
             <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-dim">Pipelines</span>
-            <span className="flex items-center gap-0.5">
-              <button onClick={() => setCoSetup({ name: '', what: '', mission: '', notes: '' })} title="New company — full baseline team" className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-gold hover:bg-glass/10">+ Co</button>
-              <button onClick={() => setHfSetup({ name: 'Nalu Hedge Fund', tickers: '' })} title="Nalu Hedge Fund — a full AI investment committee" className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-ink hover:bg-glass/10">+ Fund</button>
-              <button onClick={newAutoPoster} title="Auto-poster — daily social posts on a schedule" className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-gold hover:bg-glass/10">+ Post</button>
-              <button onClick={newFlow} title="New pipeline" className="flex h-6 w-6 items-center justify-center rounded-md text-gold hover:bg-glass/10"><Plus size={13} /></button>
-            </span>
+            <div className="relative">
+              <button onClick={() => setNewMenu((v) => !v)} title="New pipeline — build anything" className="flex h-6 w-6 items-center justify-center rounded-md text-gold hover:bg-glass/10"><Plus size={14} /></button>
+              {newMenu && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setNewMenu(false)} />
+                  <div className="absolute right-0 top-7 z-40 w-56 overflow-hidden rounded-xl border border-glass/[0.14] bg-panel2 py-1 shadow-xl">
+                    <div className="px-3 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-dim">New pipeline</div>
+                    <button onClick={() => { newFlow(); setNewMenu(false) }} className="block w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]"><span className="block text-[12px] font-medium text-gold">Blank pipeline</span><span className="block text-[10px] text-dim">Start empty — drag in any models, roles or outputs</span></button>
+                    <div className="my-1 border-t border-glass/[0.08]" />
+                    <div className="px-3 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-dim">Start from a template</div>
+                    <button onClick={() => { setCoSetup({ name: '', what: '', mission: '', notes: '' }); setNewMenu(false) }} className="block w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]"><span className="block text-[12px] text-ink">Company</span><span className="block text-[10px] text-dim">A full baseline team (CEO, COO, CFO…)</span></button>
+                    <button onClick={() => { setHfSetup({ name: 'Nalu Hedge Fund', tickers: '' }); setNewMenu(false) }} className="block w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]"><span className="block text-[12px] text-emerald-300">Nalu Hedge Fund</span><span className="block text-[10px] text-dim">A full AI investment committee</span></button>
+                    <button onClick={() => { newAutoPoster(); setNewMenu(false) }} className="block w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]"><span className="block text-[12px] text-ink">Auto-poster</span><span className="block text-[10px] text-dim">Daily social posts on a schedule</span></button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
           {flows.map((f) => (
             <div key={f.id} className={`group mx-2 flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12.5px] ${f.id === flow.id ? 'bg-accent/12 text-gold' : 'text-ink hover:bg-glass/[0.06]'}`}>
