@@ -54,7 +54,9 @@ export async function buildWorkbookBlob(doc: SheetDoc, brand: BrandKit | null): 
   const headFont = brand?.headingFont || 'Georgia'
   const bodyFont = brand?.bodyFont || 'Calibri'
   const sheets = doc.sheets && doc.sheets.length ? doc.sheets : [{ name: 'Sheet1', columns: [], rows: [] }]
-  const ev = buildEvaluator(sheets)
+  // Never let a bad formula crash the export — fall back to the raw cell value.
+  const ev = (() => { try { return buildEvaluator(sheets) } catch { return { value: (): Cell => null } } })()
+  const evVal = (si: number, ri: number, ci: number): Cell => { try { return ev.value(si, ri, ci) as Cell } catch { return null } }
   const used = new Set<string>()
   sheets.forEach((s, si) => {
     const ws = wb.addWorksheet(safeSheetName(s.name || `Sheet${si + 1}`, used, si))
@@ -73,7 +75,7 @@ export async function buildWorkbookBlob(doc: SheetDoc, brand: BrandKit | null): 
       const row = ws.addRow(
         r.map((c, ci) => {
           if (typeof c === 'string' && c.startsWith('=')) {
-            const result = ev.value(si, ri, ci)
+            const result = evVal(si, ri, ci)
             return typeof result === 'number' ? { formula: c.slice(1), result } : { formula: c.slice(1) }
           }
           return c
