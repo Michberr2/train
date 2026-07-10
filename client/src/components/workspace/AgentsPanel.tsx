@@ -882,7 +882,7 @@ export default function AgentsPanel() {
             <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-dim">Pipelines</span>
             <span className="flex items-center gap-0.5">
               <button onClick={() => setCoSetup({ name: '', what: '', mission: '', notes: '' })} title="New company — full baseline team" className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-gold hover:bg-glass/10">+ Co</button>
-              <button onClick={() => setHfSetup({ name: 'Nalu Hedge Fund', tickers: '' })} title="Nalu Hedge Fund — a full AI investment committee" className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300 hover:bg-glass/10">+ Fund</button>
+              <button onClick={() => setHfSetup({ name: 'Nalu Hedge Fund', tickers: '' })} title="Nalu Hedge Fund — a full AI investment committee" className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-ink hover:bg-glass/10">+ Fund</button>
               <button onClick={newAutoPoster} title="Auto-poster — daily social posts on a schedule" className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-gold hover:bg-glass/10">+ Post</button>
               <button onClick={newFlow} title="New pipeline" className="flex h-6 w-6 items-center justify-center rounded-md text-gold hover:bg-glass/10"><Plus size={13} /></button>
             </span>
