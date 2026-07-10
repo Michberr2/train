@@ -1054,9 +1054,10 @@ function logoCachePut(url: string, dataUrl: string) {
 }
 // Fetch one logo image through the SERVER proxy (cache-first). The proxy
 // retries with backoff and returns the bytes, so it resolves reliably.
-async function fetchLogoImage(url: string): Promise<string> {
+async function fetchLogoImage(url: string, allowFallback = true): Promise<string> {
   const cached = logoCacheGet(url)
   if (cached) return cached
+  // 1) Pollinations via the server proxy (fast + free when it's up).
   for (let t = 0; t < 2; t++) {
     try {
       const r = await fetch('/api/web', {
@@ -1066,6 +1067,22 @@ async function fetchLogoImage(url: string): Promise<string> {
       const d = (await r.json()) as { dataUrl?: string }
       if (d.dataUrl) { logoCachePut(url, d.dataUrl); return d.dataUrl }
     } catch { /* retry */ }
+  }
+  // 2) FALLBACK to /api/image (ZAI / Gemini / fal) so logos STILL render when
+  //    pollinations is down — for the VISIBLE marks only (not the bulk pre-fetch,
+  //    to avoid hammering the paid providers with 24 requests).
+  if (allowFallback) {
+    try {
+      const prompt = decodeURIComponent((url.match(/\/prompt\/([^?]+)/) || [])[1] || '')
+      if (prompt) {
+        const r = await fetch('/api/image', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt, size: '768x768' }),
+        })
+        const d = (await r.json()) as { url?: string }
+        if (d.url) { logoCachePut(url, d.url); return d.url }
+      }
+    } catch { /* give up gracefully */ }
   }
   return ''
 }
@@ -1170,7 +1187,7 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, saved, onC
     const pump = () => {
       while (alive && running < 3 && idx < queue.length) { // low concurrency: don't starve the VISIBLE logos
         const u = queue[idx++]; running++
-        fetchLogoImage(u).then((d) => { if (d && onCache) onCache(u, d) }).finally(() => { running--; if (alive) pump() })
+        fetchLogoImage(u, false).then((d) => { if (d && onCache) onCache(u, d) }).finally(() => { running--; if (alive) pump() })
       }
     }
     const t = setTimeout(pump, 4000) // wait for the visible style to finish first
