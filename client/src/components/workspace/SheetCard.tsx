@@ -127,10 +127,10 @@ export default function SheetCard({ data }: { data: SheetDoc }) {
   // cell so the spreadsheet ALWAYS renders.
   const ev = useMemo(() => {
     try { return buildEvaluator(sheets) }
-    catch { return { value: (si: number, ri: number, ci: number) => sheets[si]?.rows?.[ri]?.[ci] ?? '' } }
+    catch { return { value: (si: number, ri: number, ci: number): Cell => (sheets[si]?.rows?.[ri]?.[ci] ?? '') as Cell } }
   }, [sheets])
-  const cellValue = (si: number, ri: number, ci: number): unknown => {
-    try { return ev.value(si, ri, ci) } catch { return sheets[si]?.rows?.[ri]?.[ci] ?? '' }
+  const cellValue = (si: number, ri: number, ci: number): Cell => {
+    try { return ev.value(si, ri, ci) as Cell } catch { return (sheets[si]?.rows?.[ri]?.[ci] ?? '') as Cell }
   }
   const fmts = useMemo(() => (sheet?.columns || []).map((c) => colFormat(c)), [sheet])
 
@@ -155,7 +155,7 @@ export default function SheetCard({ data }: { data: SheetDoc }) {
         pdf.setTextColor(0, 0, 0)
         autoTable(pdf, {
           head: [s.columns || []],
-          body: (s.rows || []).map((r, ri) => r.map((_, ci) => { try { return (sf[ci] || { display: (x: unknown) => String(x ?? '') }).display(cellValue(si, ri, ci)) } catch { return String(r[ci] ?? '') } })),
+          body: (s.rows || []).map((r, ri) => r.map((_, ci) => { try { return (sf[ci] || { display: (x: Cell) => String(x ?? '') }).display(cellValue(si, ri, ci)) } catch { return String(r[ci] ?? '') } })),
           startY: 20,
           margin: { bottom: 16 },
           styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' },
