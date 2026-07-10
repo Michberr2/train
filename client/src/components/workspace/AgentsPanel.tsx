@@ -94,7 +94,7 @@ const agentDef = (kind: string) => AGENTS.find((a) => a.kind === kind) || AGENTS
 const nodeMeta = (n: PNode): { name: string; icon: LucideIcon; tint: string } => {
   if (n.type === 'agent' && n.role) {
     const r = roleDef(n.role)
-    if (r) return { name: r.title, icon: agentDef(r.engine).icon, tint: '#7DD3FC' }
+    if (r) return { name: r.title, icon: agentDef(r.engine).icon, tint: n.role.startsWith('hf-') ? '#34D399' : '#7DD3FC' }
   }
   return n.type === 'agent' ? agentDef(n.agent || 'general') : (OUTPUTS.find((o) => o.type === n.type) || OUTPUTS[0])
 }
@@ -953,6 +953,12 @@ export default function AgentsPanel() {
                     <span className="block text-[12px] text-ink">{a.name}</span><span className="block truncate text-[10px] text-dim">{a.desc}</span>
                   </button>
                 ))}
+                <div className="mt-1 border-t border-glass/[0.08] px-3 py-1 text-[9.5px] font-semibold uppercase tracking-[0.18em] text-emerald-400">Nalu Hedge Fund</div>
+                {HEDGE_FUND_ROLES.map((r) => (
+                  <button key={r.key} onClick={() => addNode('agent', r.engine, r.key)} className="w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]">
+                    <span className="block text-[12px] text-emerald-200">{r.title}</span><span className="block truncate text-[10px] text-dim">{r.desc}</span>
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -972,10 +978,10 @@ export default function AgentsPanel() {
                     <span className="block text-[12px] text-ink">{r.title}</span><span className="block truncate text-[10px] text-dim">{r.desc}</span>
                   </button>
                 ))}
-                <div className="mt-1 border-t border-glass/[0.08] px-3 py-1 text-[9.5px] font-semibold uppercase tracking-[0.16em] text-emerald-300/80">Nalu Hedge Fund</div>
+                <div className="mt-1 border-t border-glass/[0.08] px-3 py-1 text-[9.5px] font-semibold uppercase tracking-[0.18em] text-emerald-400">Nalu Hedge Fund</div>
                 {HEDGE_FUND_ROLES.map((r) => (
                   <button key={r.key} onClick={() => addNode('agent', r.engine, r.key)} className="w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]">
-                    <span className="block text-[12px] text-ink">{r.title}</span><span className="block truncate text-[10px] text-dim">{r.desc}</span>
+                    <span className="block text-[12px] text-emerald-200">{r.title}</span><span className="block truncate text-[10px] text-dim">{r.desc}</span>
                   </button>
                 ))}
               </div>
