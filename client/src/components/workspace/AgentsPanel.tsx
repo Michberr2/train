@@ -270,7 +270,7 @@ export default function AgentsPanel() {
     panRef.current = { x: e.clientX, y: e.clientY, sl: canvasRef.current?.scrollLeft || 0, st: canvasRef.current?.scrollTop || 0 }
     ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
   }
-  const addNode = (type: NodeType, agent?: string, role?: string) => {
+  const addNode = (type: NodeType, agent?: string, role?: string, customTitle?: string) => {
     if (!flow) return
     const r = roleDef(role)
     const meta = r ? { name: r.title } : type === 'agent' ? agentDef(agent || 'general') : OUTPUTS.find((o) => o.type === type)
@@ -281,7 +281,8 @@ export default function AgentsPanel() {
       type,
       ...(type === 'agent' ? { agent: r ? r.engine : agent || 'general' } : {}),
       ...(r ? { role: r.key } : {}),
-      label: (meta?.name || 'Step').replace('Nalu ', ''),
+      ...(customTitle ? { role: 'custom', roleTitle: customTitle } : {}), // a brand-new custom role
+      label: customTitle || (meta?.name || 'Step').replace('Nalu ', ''),
       prompt: '',
     }
     patchFlow(flow.id, (f) => ({ nodes: [...f.nodes, n] }))
@@ -923,6 +924,10 @@ export default function AgentsPanel() {
             </button>
             {addMenu === 'company' && (
               <div className="absolute left-0 top-9 z-40 max-h-[26rem] w-64 overflow-y-auto rounded-xl border border-glass/[0.14] bg-panel2 py-1 shadow-xl">
+                <button onClick={() => { const t = window.prompt('Name the new role (e.g. "VP of Partnerships")'); if (t && t.trim()) { addNode('agent', 'general', undefined, t.trim()); setAddMenu(false) } }}
+                  className="w-full border-b border-glass/[0.08] px-3 py-1.5 text-left hover:bg-glass/[0.08]">
+                  <span className="block text-[12px] font-semibold text-gold">＋ New role…</span><span className="block truncate text-[10px] text-dim">A custom role — name it, then give it working notes</span>
+                </button>
                 {COMPANY_ROLES.map((r) => (
                   <button key={r.key} onClick={() => addNode('agent', r.engine, r.key)} className="w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]">
                     <span className="block text-[12px] text-ink">{r.title}</span><span className="block truncate text-[10px] text-dim">{r.desc}</span>
