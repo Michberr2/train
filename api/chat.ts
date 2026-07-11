@@ -492,9 +492,11 @@ export default async function handler(req: any, res: any) {
   // else per IP) so a scraper or runaway loop can't starve the shared model
   // capacity everyone else depends on. Fail-OPEN (a metering outage never takes
   // chat down); limits are env-tunable, <=0 disables.
+  // Defaults sized for AGENT loops (one CLI /team run ≈ 20+ requests): far above
+  // any human's real use, far below what a scraper farm needs.
   const quota = await reserveDailyQuota(req, 'chat', {
-    anonPerDay: Number(process.env.NALU_CHAT_ANON_PER_DAY ?? 500),
-    userPerDay: Number(process.env.NALU_CHAT_USER_PER_DAY ?? 3000),
+    anonPerDay: Number(process.env.NALU_CHAT_ANON_PER_DAY ?? 1500),
+    userPerDay: Number(process.env.NALU_CHAT_USER_PER_DAY ?? 6000),
   }).catch(() => ({ ok: true }) as { ok: boolean })
   if (!quota.ok) {
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
@@ -785,9 +787,10 @@ export default async function handler(req: any, res: any) {
           stream,
           // CLI turns are short tool-call/answer steps — a 4k cap keeps each step
           // FAST (an 8k cap + frequency_penalty made DeepSeek slow enough to blow
-          // the failover timeout and land on the depleted fallback). Web chat keeps
-          // the full deep-think budget.
-          max_tokens: cliMode ? 4096 : thinkTokens,
+          // the failover timeout and land on the depleted fallback). Deep-think
+          // turns (think/ultrathink/packmind) are an explicit opt-in to slower,
+          // bigger budgets — honor them even from the CLI.
+          max_tokens: cliMode && !think ? 4096 : thinkTokens,
           temperature: chatTemp,
           top_p: 0.9,
           // frequency_penalty slows structured JSON generation and isn't wanted for
@@ -832,9 +835,21 @@ export default async function handler(req: any, res: any) {
         // A text-only fallback model can't take image parts — flatten per attempt.
         const msgs = VISION_CAPABLE.test(a.model) ? fullMessages : flattenForText(fullMessages)
         // Gemini's OpenAI-compat endpoint rejects penalties/top_p/tools — send it
-        // a minimal clean payload (same rule as the vision route).
-        const payload = /generativelanguage\.googleapis/i.test(a.base)
-          ? { model: a.model, messages: msgs, stream: false, max_tokens: cliMode ? 4096 : thinkTokens, temperature: chatTemp }
+        // a minimal clean payload. Three things matter: reasoning_effort low +
+        // a full budget (flash spends max_tokens on internal thinking and returns
+        // EMPTY content on a small cap), and a PLAIN conversation — role:'tool'
+        // messages and null-content assistant tool_calls also come back empty.
+        const isGeminiAttempt = /generativelanguage\.googleapis/i.test(a.base)
+        const geminiMsgs = isGeminiAttempt
+          ? msgs.map((m) => {
+              if (m.role === 'tool') return { role: 'user' as const, content: `[tool result: ${m.name || 'tool'}]\n${typeof m.content === 'string' ? m.content : ''}` }
+              if (m.role === 'assistant' && (!m.content || Array.isArray(m.tool_calls)))
+                return { role: 'assistant' as const, content: (typeof m.content === 'string' && m.content) || (m.tool_calls || []).map((tc) => `[called ${tc.function?.name}(${(tc.function?.arguments || '').slice(0, 400)})]`).join('\n') || '(tool call)' }
+              return m
+            })
+          : msgs
+        const payload = isGeminiAttempt
+          ? { model: a.model, messages: geminiMsgs, stream: false, max_tokens: 8192, temperature: chatTemp, reasoning_effort: 'low' }
           : { ...buildPayload(false), model: a.model, messages: msgs }
         const r = await fetch(`${a.base}/chat/completions`, {
           method: 'POST',
@@ -927,7 +942,7 @@ export default async function handler(req: any, res: any) {
     // CLI agent turns carry a big context (repo files + tool outputs), so the
     // primary's first token legitimately takes longer — give it more room before
     // failing over (the fallback provider is often out of credits).
-    let stall = setTimeout(() => { try { ac.abort() } catch { /* noop */ } }, cliMode ? 20000 : 7000)
+    let stall = setTimeout(() => { try { ac.abort() } catch { /* noop */ } }, cliMode ? 30000 : 7000)
     const bumpStall = () => {
       clearTimeout(stall)
       stall = setTimeout(() => { try { ac.abort() } catch { /* noop */ } }, 25000)

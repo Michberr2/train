@@ -162,6 +162,9 @@ async function callOne(p: Provider, messages: Msg[], opts: CompleteOpts, timeout
         ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
         ...(!isGemini && opts.frequencyPenalty != null ? { frequency_penalty: opts.frequencyPenalty } : {}),
         ...(!isGemini && opts.presencePenalty != null ? { presence_penalty: opts.presencePenalty } : {}),
+        // flash models burn the budget on internal thinking and return EMPTY
+        // content unless told to keep reasoning light
+        ...(isGemini ? { reasoning_effort: 'low' } : {}),
         ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: ac.signal,

@@ -23,7 +23,7 @@ import * as readline from 'node:readline'
 import { spawn, execSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
-const VERSION = '1.3.1'
+const VERSION = '1.4.3'
 const DEFAULT_API = 'https://n4lu.com'
 const MAX_STEPS = 40 // max model↔tool round-trips per user message
 const MAX_TOOL_OUT = 30000 // chars of tool output sent back to the model
@@ -179,11 +179,23 @@ ${bold('Project memory & plans')}
   prompt needed inside .nalu/) and keeps them updated as it executes.
 
 ${bold('In-session commands')}
-  /plan <task>      Explore the code and write a step-by-step plan to .nalu/plans/
-  /search <query>   Search the live web and show results right here
+  /agent <name> [task]  Force a specific Nalu specialist (/agent lists them; sticky
+                        without a task — /agent off returns to auto)
+  /goal <goal>          Relentless mode: work + verify in rounds, and do not stop
+                        until the goal is actually achieved (Ctrl+C to stop)
+  /swarm <task>         Nalu designs the sub-agents it needs, runs them in
+                        parallel (read-only), then the lead finishes with full tools
+  /team <task>          Builds a role-based team with a leader and a LIVE task
+                        board; members work in dependency order, leader integrates
+  /plan <task>          Explore the code and write a step-by-step plan to .nalu/plans/
+  /search <query>       Search the live web and show results right here
   /help  /model  /status  /clear  /exit
   End a line with \\ to continue typing on the next line.
   Ctrl+C interrupts a running response.
+
+${bold('Deeper thinking')}
+  Type ${gold('think')}, ${gold('ultrathink')}, or ${gold('packmind')} anywhere in a message to engage
+  rising levels of deep reasoning (the thinking streams live, then the answer).
 `
 
 // ── tools ────────────────────────────────────────────────────────────────────
@@ -1012,18 +1024,29 @@ function makeSpinner(text) {
 }
 
 // ── one streamed model turn ──────────────────────────────────────────────────
-async function streamOnce(state, renderer) {
+// opts (all optional) let sub-agents share this plumbing:
+//   messages    — a WORKER's own history instead of the main conversation
+//   specialist  — force a Nalu specialist (bypasses keyword routing)
+//   tools       — restricted tool list (workers get read-only tools)
+//   think       — 1 think · 2 ultrathink · 3 packmind (streams reasoning)
+//   quiet       — no spinner, no route line, no rendering (workers run silent)
+async function streamOnce(state, renderer, opts = {}) {
+  const specialist = opts.specialist || state.forcedSpecialist || ''
+  const think = opts.think ?? state.turnThink ?? 0
   const body = {
-    messages: state.messages,
-    tools: TOOL_SPECS,
+    messages: opts.messages || state.messages,
+    tools: opts.tools || TOOL_SPECS,
     cli: true,
     cwd: process.cwd(),
     repo: path.basename(process.cwd()),
     ...(state.branch ? { branch: state.branch } : {}),
     ...(state.projectDoc ? { projectDoc: state.projectDoc } : {}),
+    ...(specialist ? { specialist } : {}),
+    ...(think > 0 ? { think: true, thinkLevel: think } : {}),
   }
   const ac = new AbortController()
-  state.abort = ac
+  if (opts.quiet) state.workerAborts.add(ac)
+  else state.abort = ac
   let idleTimer = null
   const bumpIdle = () => {
     clearTimeout(idleTimer)
@@ -1033,13 +1056,19 @@ async function streamOnce(state, renderer) {
       } catch {}
     }, 180000)
   }
-  const spinner = makeSpinner() // wolf mode — rotating wolfisms while loading
+  const spinner = opts.quiet ? { stop() {} } : makeSpinner() // wolf mode while loading
   let spinning = true
   const stopSpin = () => {
     if (spinning) {
       spinning = false
       spinner.stop()
     }
+  }
+  const cleanup = () => {
+    clearTimeout(idleTimer)
+    stopSpin()
+    if (opts.quiet) state.workerAborts.delete(ac)
+    else state.abort = null
   }
   let res
   try {
@@ -1051,15 +1080,11 @@ async function streamOnce(state, renderer) {
       signal: ac.signal,
     })
   } catch (e) {
-    clearTimeout(idleTimer)
-    stopSpin()
-    state.abort = null
+    cleanup()
     return { text: '', toolCalls: [], error: ac.signal.aborted ? 'interrupted' : `network error: ${e.message}` }
   }
   if (!res.ok || !res.body) {
-    clearTimeout(idleTimer)
-    stopSpin()
-    state.abort = null
+    cleanup()
     return { text: '', toolCalls: [], error: `server error: HTTP ${res.status}` }
   }
   const reader = res.body.getReader()
@@ -1069,6 +1094,7 @@ async function streamOnce(state, renderer) {
   let text = ''
   let errMsg = ''
   let finished = '' // finish_reason if the stream completed cleanly
+  let reasoningOpen = false
   const calls = {}
   try {
     for (;;) {
@@ -1092,15 +1118,29 @@ async function streamOnce(state, renderer) {
           continue
         }
         if (event === 'route' && typeof data.name === 'string') {
-          if (data.name !== state.lastRoute) {
+          if (!opts.quiet && data.name !== state.lastRoute) {
             state.lastRoute = data.name
             stopSpin()
-            ui(dim(`◆ ${data.name}\n`))
+            ui(dim(`◆ ${data.name}${think > 0 ? goldDim(` · ${['', 'think', 'ultrathink', 'packmind'][think]}`) : ''}\n`))
+          }
+        } else if (event === 'reasoning' && typeof data.text === 'string') {
+          // deep-think reasoning streams before the answer — show it dim gray
+          if (!opts.quiet && think > 0) {
+            stopSpin()
+            if (!reasoningOpen) {
+              reasoningOpen = true
+              ui(gray('  ── thinking ──') + '\n')
+            }
+            ui(gray(data.text.split('\n').join('\n')))
           }
         } else if (event === 'delta' && typeof data.text === 'string') {
           stopSpin()
+          if (reasoningOpen) {
+            reasoningOpen = false
+            ui('\n' + gray('  ── answer ──') + '\n')
+          }
           text += data.text
-          renderer.feed(data.text)
+          if (!opts.quiet) renderer.feed(data.text)
         } else if (event === 'tool_call_delta') {
           const i = data.index ?? 0
           if (!calls[i]) calls[i] = { id: data.id || `call_${i}`, type: 'function', function: { name: '', arguments: '' } }
@@ -1117,11 +1157,10 @@ async function streamOnce(state, renderer) {
   } catch {
     /* aborted or stream error — return what we have */
   } finally {
-    clearTimeout(idleTimer)
-    stopSpin()
-    state.abort = null
+    cleanup()
   }
-  renderer.flush()
+  if (reasoningOpen && !opts.quiet) ui('\n')
+  if (!opts.quiet) renderer.flush()
   const toolCalls = Object.values(calls).filter((c) => c.function.name)
   return { text, toolCalls, error: errMsg, finished }
 }
@@ -1394,12 +1433,120 @@ function attachDroppedFiles(userText) {
   return userText + block
 }
 
+// ── deep-think tiers ─────────────────────────────────────────────────────────
+// Typed keywords engage deeper reasoning, exactly like the website:
+//   think (basic) · ultrathink (deeper) · packmind (maximum). Highest one wins.
+function parseThinkLevel(input) {
+  if (/\bpackmind\b/i.test(input)) return 3
+  if (/\bultrathink\b/i.test(input)) return 2
+  if (/\bthink\b/i.test(input)) return 1
+  return 0
+}
+
+// ── sub-agents (for /agent, /swarm, /team, /goal) ────────────────────────────
+// Known fleet specialists (api/_specialists.ts kinds). /agent accepts ANY name —
+// unknown ones pass through to the server, so new fleet lanes work untouched.
+const SPECIALISTS = ['code', 'crypto', 'finance', 'construction', 'cre', 'realestate', 'legal', 'medical', 'health', 'studio', 'hr', 'social', 'marketing', 'math', 'science', 'reasoning', 'vision', 'general']
+
+// Workers get READ-ONLY tools: parallel agents must never fight over files or
+// interleave permission prompts. The LEAD (the main conversation) makes changes.
+const WORKER_TOOLS = TOOL_SPECS.filter((t) => SAFE_TOOLS.has(t.function.name))
+
+async function execWorkerTool(state, call) {
+  const name = call.function.name
+  if (!SAFE_TOOLS.has(name))
+    return `error: sub-agents have READ-ONLY tools (${[...SAFE_TOOLS].join(', ')}). ${name} is reserved for the lead agent — report what the lead should do instead.`
+  let args = {}
+  try {
+    const parsed = JSON.parse(call.function.arguments || '{}')
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) args = parsed
+    else if (typeof parsed === 'string' && parsed.trim()) args = { [primaryOf(name)]: parsed }
+  } catch {
+    const t = (call.function.arguments || '').trim()
+    if (t.startsWith('{') || t.startsWith('[')) return `error: malformed arguments — the call was NOT executed. Re-issue it.`
+    if (t) args = { [primaryOf(name)]: t }
+  }
+  if (name === 'read_file') return toolReadFile(args)
+  if (name === 'list_dir') return toolListDir(args)
+  if (name === 'grep') return toolGrep(args)
+  if (name === 'web_search') return toolWeb(state.api, { action: 'search', query: String(args.query || '') })
+  if (name === 'fetch_url') return toolWeb(state.api, { action: 'fetch', url: String(args.url || '') })
+  return 'tool not implemented'
+}
+
+/** Run one silent sub-agent to completion; returns its final text.
+ *  Pass tools: [] for a judge/planner that must reply in pure text. */
+async function runWorker(state, { specialist, prompt, maxSteps = 12, onStep, tools }) {
+  const workerTools = tools ?? WORKER_TOOLS
+  const messages = [{ role: 'user', content: prompt }]
+  for (let step = 0; step < maxSteps; step++) {
+    if (state.interrupted) return '(interrupted)'
+    const r = await streamOnce(state, null, { quiet: true, messages, specialist, tools: workerTools, think: 0 })
+    if (r.error && !r.text && !r.toolCalls.length) return `(agent error: ${r.error})`
+    let calls = r.toolCalls
+    let text = r.text
+    if (!calls.length && text) {
+      const rec = recoverToolCalls(text)
+      if (rec.calls.length) {
+        calls = rec.calls
+        text = rec.cleaned
+      }
+    }
+    if (!calls.length) {
+      const t = (text || '').trim()
+      if (announcesIntent(t) && step < maxSteps - 1) {
+        messages.push({ role: 'assistant', content: t || '(no response)' })
+        messages.push({ role: 'user', content: '(system note: make the tool call now, or give your final report — do not announce.)' })
+        continue
+      }
+      return t || '(no response)'
+    }
+    messages.push({ role: 'assistant', content: text || null, tool_calls: calls })
+    for (const c of calls) {
+      onStep?.(c.function.name)
+      const result = await execWorkerTool(state, c)
+      messages.push({ role: 'tool', tool_call_id: c.id, name: c.function.name, content: truncate(String(result), 12000) })
+    }
+  }
+  // out of steps — ask for the report in one final no-tools push
+  messages.push({ role: 'user', content: 'Step limit reached — give your final report NOW from what you have gathered. No tool calls.' })
+  const last = await streamOnce(state, null, { quiet: true, messages, specialist, tools: workerTools, think: 0 })
+  return (last.text || '(no response)').trim()
+}
+
+/** Bounded-concurrency map (the server rate-limits under stampedes). */
+async function pool(items, limit, fn) {
+  const ret = []
+  let next = 0
+  const lanes = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = next++
+      if (i >= items.length) return
+      ret[i] = await fn(items[i], i)
+    }
+  })
+  await Promise.all(lanes)
+  return ret
+}
+
+/** Extract the first JSON object with the expected keys from planner output. */
+function plannerJson(text, requiredKey) {
+  for (const raw of findJsonObjects(text || '')) {
+    try {
+      const o = JSON.parse(raw)
+      if (o && typeof o === 'object' && o[requiredKey]) return o
+    } catch {}
+  }
+  return null
+}
+
 // ── the agent loop for one user input ────────────────────────────────────────
 async function runTurn(state, userText) {
   // refresh project memory each turn so docs/plans written mid-session (or by
   // the user in another window) are visible on the very next message
   state.projectDoc = gatherProjectContext().doc
   userText = attachDroppedFiles(userText) // dragged-in paths → inline the file
+  state.turnThink = parseThinkLevel(userText) // think · ultrathink · packmind
   state.messages.push({ role: 'user', content: userText })
   state.interrupted = false
   state.hadError = false
@@ -1412,6 +1559,7 @@ async function runTurn(state, userText) {
   }
 }
 async function runTurnInner(state) {
+  let hardRetries = 0
   for (let step = 0; step < MAX_STEPS; step++) {
     const renderer = makeRenderer(out)
     const r = await streamOnce(state, renderer)
@@ -1421,6 +1569,15 @@ async function runTurnInner(state) {
       return
     }
     if (r.error && !r.text && !r.toolCalls.length) {
+      // transient engine hiccup (empty response / brief overload) — retry the
+      // step a couple of times before abandoning a long agent session over it
+      if (hardRetries < 2) {
+        hardRetries++
+        ui(dim(`(engine hiccup — retrying, ${hardRetries}/2)\n`))
+        await new Promise((res) => setTimeout(res, 1200 * hardRetries))
+        step--
+        continue
+      }
       ui(red(`\n${r.error}\n`))
       state.hadError = true
       // keep history consistent: record that the turn failed
@@ -1534,11 +1691,14 @@ async function main() {
     sessionAllow: new Set(),
     lastRoute: '',
     abort: null,
+    workerAborts: new Set(),
     currentChild: null,
     permAbort: null,
     busy: false,
     interrupted: false,
     hadError: false,
+    forcedSpecialist: '',
+    turnThink: 0,
     rl: null,
   }
 
@@ -1550,6 +1710,11 @@ async function main() {
     if (state.abort) {
       try {
         state.abort.abort()
+      } catch {}
+    }
+    for (const wa of state.workerAborts) {
+      try {
+        wa.abort()
       } catch {}
     }
     if (state.currentChild) killTree(state.currentChild, 'SIGTERM')
@@ -1632,16 +1797,31 @@ async function main() {
   out(dim('  /help commands · /plan to plan · /search the web · Ctrl+C interrupts') + '\n')
   out(goldDim(`  ${wolfism().replace(/…$/, '')} — ready.`) + '\n\n')
 
-  const question = () =>
-    new Promise((resolve) => rl.question(gold('❯ '), resolve))
+  // piped stdin (or Ctrl+D) closes readline — treat it as a clean /exit rather
+  // than letting the pending question throw "readline was closed"
+  let rlClosed = false
+  rl.on('close', () => {
+    rlClosed = true
+  })
+  const ask = (promptStr) =>
+    new Promise((resolve) => {
+      if (rlClosed) return resolve('/exit')
+      try {
+        rl.question(promptStr, resolve)
+      } catch {
+        resolve('/exit')
+      }
+    })
+  const question = () => ask(gold('❯ '))
 
   let pending = args.prompt || ''
   for (;;) {
     let input = pending || (await question())
     pending = ''
+    if (rlClosed && !input.trim()) input = '/exit'
     // backslash continuation for multi-line input
     while (input.endsWith('\\')) {
-      input = input.slice(0, -1) + '\n' + (await new Promise((resolve) => rl.question(dim('… '), resolve)))
+      input = input.slice(0, -1) + '\n' + (await ask(dim('… ')))
     }
     const line = input.trim()
     if (!line) continue
@@ -1657,6 +1837,191 @@ async function main() {
       state.messages = []
       state.lastRoute = ''
       out(dim('history cleared') + '\n')
+      continue
+    }
+    // /agent — force a specific Nalu specialist (sticky, or one-shot with a task)
+    if (line === '/agent' || line.startsWith('/agent ')) {
+      const rest = line.slice(6).trim()
+      if (!rest) {
+        out(`agents: ${SPECIALISTS.join(' · ')}\n${dim('usage: /agent <name> [task]  — with a task runs once; without, stays forced until /agent off')}\n`)
+        continue
+      }
+      if (rest === 'off' || rest === 'auto') {
+        state.forcedSpecialist = ''
+        out(dim('agent routing back to auto') + '\n')
+        continue
+      }
+      const [name, ...taskParts] = rest.split(/\s+/)
+      const task = taskParts.join(' ').trim()
+      const kind = name.toLowerCase()
+      if (task) {
+        const prev = state.forcedSpecialist
+        state.forcedSpecialist = kind
+        out('\n')
+        await runTurn(state, task)
+        state.forcedSpecialist = prev
+        if (!state.interrupted && !state.hadError) out(goldDim(`  — ${wolfFinisher()}`) + '\n')
+        out('\n')
+      } else {
+        state.forcedSpecialist = kind
+        out(gold(`◆ agent locked: ${kind}`) + dim(' — every message goes to this specialist until /agent off') + '\n')
+      }
+      continue
+    }
+    // /goal — do not stop until the goal is verifiably achieved
+    if (line === '/goal' || line.startsWith('/goal ')) {
+      const goal = line.slice(5).trim()
+      if (!goal) {
+        out(dim('usage: /goal <what must be true when done>  — Nalu keeps working, verifying after every round, until the goal is achieved (Ctrl+C to stop)') + '\n')
+        continue
+      }
+      out('\n' + gold(`◆ goal engaged:`) + ` ${goal}\n` + dim('  relentless mode — verifying after every round; Ctrl+C to call the pack off') + '\n\n')
+      const MAX_ROUNDS = 100
+      let achieved = false
+      for (let round = 1; round <= MAX_ROUNDS && !achieved; round++) {
+        if (round > 1) out(dim(`\n◆ goal round ${round}`) + '\n')
+        await runTurn(
+          state,
+          round === 1
+            ? `GOAL (do not stop until it is fully achieved): ${goal}\nWork toward it with your tools and VERIFY your progress with real evidence (run code, read files back, search) — do not declare success without proof.`
+            : `(goal round ${round}) The goal is NOT yet achieved: ${goal}\nContinue from where you left off. Fix what remains and verify with real evidence.`,
+        )
+        if (state.interrupted) break
+        // independent check: a fresh skeptical judge with NO tools (pure text)
+        const verdict = await runWorker(state, {
+          specialist: 'reasoning',
+          maxSteps: 1,
+          tools: [],
+          prompt: `You are a strict verifier. You have NO tools — reply with plain text only, never a tool call, never JSON. GOAL: ${goal}\n\nThe agent's latest report:\n${String(state.messages[state.messages.length - 1]?.content || '').slice(0, 6000)}\n\nBased ONLY on concrete evidence in the report (real command output, file contents), is the goal FULLY achieved? Reply with EXACTLY one line: "ACHIEVED" or "CONTINUE: <one sentence on what remains>". Be skeptical — claims without evidence are not achievement.`,
+        })
+        const v = String(verdict || '')
+        if (/^\s*ACHIEVED\b/i.test(v) || (/\bACHIEVED\b/.test(v) && !/\b(NOT ACHIEVED|CONTINUE)\b/i.test(v))) {
+          achieved = true
+          out('\n' + gold('◆ goal achieved') + goldDim(` — ${wolfFinisher()}`) + '\n')
+        } else {
+          const remains = String(verdict || '').replace(/^\s*CONTINUE:?\s*/i, '').trim()
+          if (remains) out(dim(`  verifier: ${remains.slice(0, 160)}`) + '\n')
+        }
+      }
+      if (!achieved && !state.interrupted) out(red('goal loop hit the round limit — stopping. /goal again to resume.') + '\n')
+      out('\n')
+      continue
+    }
+    // /swarm — Nalu designs and runs whatever agents the task needs
+    if (line === '/swarm' || line.startsWith('/swarm ')) {
+      const task = line.slice(6).trim()
+      if (!task) {
+        out(dim('usage: /swarm <task>  — Nalu builds the agents it needs, runs them in parallel, then the lead finishes the job') + '\n')
+        continue
+      }
+      out('\n' + gold('◆ assembling the pack…') + '\n')
+      const plan = plannerJson(
+        await runWorker(state, {
+          specialist: 'reasoning',
+          maxSteps: 1,
+          tools: [],
+          prompt: `You are a planner with NO tools — reply with ONLY the JSON asked for, nothing else. Design the smallest useful set of sub-agents (1-5) to accomplish this task:\n${task}\n\nEach agent researches/reads/searches (READ-ONLY tools) and reports back; a lead then makes any changes. Specialists available: ${SPECIALISTS.join(', ')}.\nReply with ONLY minified JSON on one line: {"agents":[{"name":"...","specialist":"one of the list","mission":"one concrete mission"}]}`,
+        }),
+        'agents',
+      )
+      const agents = (plan?.agents || []).slice(0, 5)
+      if (!agents.length) {
+        out(red('could not design the swarm — try rephrasing the task') + '\n\n')
+        continue
+      }
+      for (const a of agents) out(dim(`  ▸ ${a.name} (${a.specialist}) — ${String(a.mission).slice(0, 90)}`) + '\n')
+      const sp = makeSpinner()
+      const reports = await pool(agents, 3, async (a) => {
+        const rep = await runWorker(state, {
+          specialist: SPECIALISTS.includes(a.specialist) ? a.specialist : 'general',
+          prompt: `You are "${a.name}", a sub-agent in a swarm working on:\n${task}\n\nYOUR MISSION: ${a.mission}\nYou have READ-ONLY tools (read_file, list_dir, grep, web_search, fetch_url) — investigate for real, then report concrete findings (facts, file paths, line numbers, numbers, quotes). End with a "FINDINGS:" summary the lead can act on.`,
+        })
+        return { name: a.name, report: rep }
+      })
+      sp.stop()
+      for (const r of reports) out(dim(`  ✓ ${r.name} reported (${String(r.report).length} chars)`) + '\n')
+      if (state.interrupted) {
+        out(dim('(interrupted)') + '\n\n')
+        continue
+      }
+      out('\n' + gold('◆ lead taking over') + '\n\n')
+      await runTurn(
+        state,
+        `TASK: ${task}\n\nYour swarm of sub-agents has reported back. Use their findings to COMPLETE the task now (you have full tools — make the changes, verify them):\n\n${reports.map((r) => `===== ${r.name} =====\n${String(r.report).slice(0, 3000)}`).join('\n\n')}`,
+      )
+      if (!state.interrupted && !state.hadError) out(goldDim(`  — ${wolfFinisher()}`) + '\n')
+      out('\n')
+      continue
+    }
+    // /team — a named team with roles, a leader, and a live task board
+    if (line === '/team' || line.startsWith('/team ')) {
+      const task = line.slice(5).trim()
+      if (!task) {
+        out(dim('usage: /team <task>  — builds a role-based team with a leader and a live task board') + '\n')
+        continue
+      }
+      out('\n' + gold('◆ building the team…') + '\n')
+      const plan = plannerJson(
+        await runWorker(state, {
+          specialist: 'reasoning',
+          maxSteps: 1,
+          tools: [],
+          prompt: `You are a planner with NO tools — reply with ONLY the JSON asked for, nothing else. Build a small team (2-4 members + roles) and a task list (3-7 tasks) to accomplish:\n${task}\n\nMembers do research/analysis with READ-ONLY tools -- NEVER give a member a task that writes, creates, or modifies files (e.g. "write X.md"); ALL writing happens in the leader integration step, so omit such tasks from the list. Specialists: ${SPECIALISTS.join(', ')}.\nTasks may depend on earlier tasks (depends_on by id). Reply ONLY minified JSON on one line:\n{"leader":"<leader role name>","team":[{"member":"<name>","role":"<role>","specialist":"<one of the list>"}],"tasks":[{"id":1,"title":"...","member":"<name>","depends_on":[]}]}`,
+        }),
+        'tasks',
+      )
+      const team = plan?.team || []
+      const tasks = (plan?.tasks || []).slice(0, 7).map((t) => ({ ...t, status: 'pending', result: '' }))
+      if (!team.length || !tasks.length) {
+        out(red('could not build the team — try rephrasing the task') + '\n\n')
+        continue
+      }
+      out(gold(`◆ team`) + dim(` · leader: ${plan.leader || 'Nalu'}`) + '\n')
+      for (const m of team) out(dim(`  ${m.member} — ${m.role} (${m.specialist})`) + '\n')
+      out('\n')
+      // live board: re-render in place on TTY
+      let boardLines = 0
+      const board = () => {
+        const rows = tasks.map((t) => {
+          const mark = t.status === 'done' ? green('✓') : t.status === 'working' ? gold('▸') : dim('·')
+          return `  [${t.id}] ${mark} ${t.title}  ${dim(`(${t.member} · ${t.status})`)}`
+        })
+        if (TTY && boardLines) out(`\x1b[${boardLines}A\x1b[0J`)
+        out(rows.join('\n') + '\n')
+        boardLines = rows.length
+      }
+      board()
+      const byId = new Map(tasks.map((t) => [t.id, t]))
+      const memberSpec = new Map(team.map((m) => [m.member, SPECIALISTS.includes(m.specialist) ? m.specialist : 'general']))
+      // waves: run everything whose dependencies are done, in parallel (≤3)
+      while (tasks.some((t) => t.status === 'pending') && !state.interrupted) {
+        const ready = tasks.filter((t) => t.status === 'pending' && (t.depends_on || []).every((d) => byId.get(d)?.status === 'done'))
+        if (!ready.length) break // circular deps — bail to the leader
+        ready.forEach((t) => {
+          t.status = 'working'
+        })
+        board()
+        await pool(ready, 3, async (t) => {
+          const deps = (t.depends_on || []).map((d) => byId.get(d)).filter(Boolean)
+          t.result = await runWorker(state, {
+            specialist: memberSpec.get(t.member) || 'general',
+            prompt: `You are ${t.member} on a team working on:\n${task}\n\nYOUR TASK [${t.id}]: ${t.title}\n${deps.length ? `\nCompleted prerequisite results:\n${deps.map((d) => `--- [${d.id}] ${d.title} ---\n${String(d.result).slice(0, 4000)}`).join('\n')}` : ''}\nYou have READ-ONLY tools (read_file, list_dir, grep, web_search, fetch_url). Do the work for real and report concrete, actionable results for the leader.`,
+          })
+          t.status = 'done'
+          board()
+        })
+      }
+      if (state.interrupted) {
+        out(dim('(interrupted)') + '\n\n')
+        continue
+      }
+      out('\n' + gold(`◆ leader integrating (${plan.leader || 'Nalu'})`) + '\n\n')
+      await runTurn(
+        state,
+        `TASK: ${task}\n\nYou are the team leader (${plan.leader || 'Nalu'}). Your team has completed its work below. INTEGRATE it and finish the task now — you have full tools. FIRST produce the user's actual deliverable (create/modify exactly the files the task asks for) and verify by reading it back; THEN also save a short team summary to .nalu/plans/ as a markdown file with the task list checked off:\n\n${tasks.map((t) => `===== [${t.id}] ${t.title} (${t.member}) =====\n${String(t.result).slice(0, 2500)}`).join('\n\n')}`,
+      )
+      if (!state.interrupted && !state.hadError) out(goldDim(`  — ${wolfFinisher()}`) + '\n')
+      out('\n')
       continue
     }
     if (line === '/plan' || line.startsWith('/plan ')) {
@@ -1693,7 +2058,7 @@ async function main() {
     }
     if (line === '/status') {
       const pf = gatherProjectContext().files
-      out(`nalu ${VERSION}\napi: ${state.api}\nmodel: auto\ncwd: ${process.cwd()}${state.branch ? `\nbranch: ${state.branch}` : ''}\nproject memory: ${pf.length ? pf.join(', ') : 'none (create a .nalu/ folder or NALU.md to add docs)'}\nhistory: ${state.messages.length} messages\npermissions: ${state.yolo ? 'yolo (all auto-approved)' : state.sessionAllow.size ? `always-allow: ${[...state.sessionAllow].join(', ')}` : 'ask for shell/file changes (.nalu/ writes auto-approved)'}\nwolfisms: ${wolfismCount().toLocaleString()} unique phrases\n`)
+      out(`nalu ${VERSION}\napi: ${state.api}\nmodel: auto${state.forcedSpecialist ? ` (agent locked: ${state.forcedSpecialist})` : ''}\ncwd: ${process.cwd()}${state.branch ? `\nbranch: ${state.branch}` : ''}\nproject memory: ${pf.length ? pf.join(', ') : 'none (create a .nalu/ folder or NALU.md to add docs)'}\nhistory: ${state.messages.length} messages\npermissions: ${state.yolo ? 'yolo (all auto-approved)' : state.sessionAllow.size ? `always-allow: ${[...state.sessionAllow].join(', ')}` : 'ask for shell/file changes (.nalu/ writes auto-approved)'}\nwolfisms: ${wolfismCount().toLocaleString()} unique phrases\n`)
       continue
     }
     if (line.startsWith('/')) {
@@ -1709,7 +2074,7 @@ async function main() {
 }
 
 // Exported for tests; main() only runs when executed directly (not imported).
-export { recoverToolCalls, parseToolArgs, findJsonObjects, trimHistory, toolEditFile, toolGrep, globToRegex, execTool, runBash, announcesIntent, extractDroppedPaths, attachDroppedFiles }
+export { recoverToolCalls, parseToolArgs, findJsonObjects, trimHistory, toolEditFile, toolGrep, globToRegex, execTool, runBash, announcesIntent, extractDroppedPaths, attachDroppedFiles, parseThinkLevel, pool, plannerJson, execWorkerTool }
 
 const runDirectly = (() => {
   try {
