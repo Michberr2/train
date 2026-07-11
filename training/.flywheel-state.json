@@ -1,0 +1,25 @@
+{
+  "trainedAt": {
+    "agent": "2026-07-11T17:21:55.217Z"
+  },
+  "rowCounts": {
+    "agent": 61
+  },
+  "deployed": {
+    "agent": {
+      "model": "tinker://b254bc24-c453-5ea8-8b73-2226c7d0e1ce:train:0/sampler_weights/nalu-agent-fw-mrgmn53c",
+      "at": "2026-07-11T17:24:53.152Z",
+      "score": 79
+    }
+  },
+  "history": [
+    {
+      "at": "2026-07-11T17:23:23.693Z",
+      "lane": "agent",
+      "model": "tinker://b254bc24-c453-5ea8-8b73-2226c7d0e1ce:train:0/sampler_weights/nalu-agent-fw-mrgmn53c",
+      "candidate": 79,
+      "incumbent": 64,
+      "deployed": true
+    }
+  ]
+}

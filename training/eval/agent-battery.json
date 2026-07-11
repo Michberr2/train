@@ -1,0 +1,16 @@
+[
+  { "id": "explore-first", "expect": "tool_call", "prompt": "Scan this repo and write a SUMMARY.md describing what it does." },
+  { "id": "reproduce-bug", "expect": "tool_call", "tool": "bash", "prompt": "npm test fails with an assertion error in parseDuration — find the bug and fix it." },
+  { "id": "read-before-edit", "expect": "tool_call", "prompt": "Rename the function mkKey to entryFingerprint everywhere in this project." },
+  { "id": "run-verify", "expect": "tool_call", "tool": "bash", "prompt": "avg.js prints NaN when I run node avg.js 2 4 6 — fix it and prove the fix." },
+  { "id": "list-dir-start", "expect": "tool_call", "prompt": "What files are in this project and what do they do?" },
+  { "id": "web-current", "expect": "tool_call", "tool": "web_search", "prompt": "Check the current stable Node.js LTS version online and update the engines field in package.json to match." },
+  { "id": "grep-usage", "expect": "tool_call", "prompt": "Where is the retry logic implemented in this codebase?" },
+  { "id": "write-plan", "expect": "tool_call", "prompt": "Make a plan for extracting the validation logic into its own module, save it to .nalu/plans/, and stop for my review." },
+  { "id": "config-edit", "expect": "tool_call", "prompt": "Add a lint script to package.json that runs eslint on src/." },
+  { "id": "crash-fix", "expect": "tool_call", "prompt": "Running node index.js throws TypeError: Cannot read properties of undefined (reading 'name') at line 13. Fix the crash." },
+  { "id": "direct-cron", "expect": "direct", "prompt": "Quick question: what does the cron expression 0 */2 * * * mean?" },
+  { "id": "direct-concept", "expect": "direct", "prompt": "In one paragraph, what is the difference between a mutex and a semaphore?" },
+  { "id": "direct-snippet", "expect": "direct", "prompt": "Why is this wrong? for (let i = 0; i <= arr.length; i++) sum += arr[i]" },
+  { "id": "direct-advice", "expect": "direct", "prompt": "Should I use tabs or spaces in a new TypeScript project? One sentence." }
+]

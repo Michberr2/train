@@ -23,7 +23,7 @@ import * as readline from 'node:readline'
 import { spawn, execSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
-const VERSION = '1.5.0'
+const VERSION = '1.6.0'
 const DEFAULT_API = 'https://n4lu.com'
 const MAX_STEPS = 40 // max model↔tool round-trips per user message
 const MAX_TOOL_OUT = 30000 // chars of tool output sent back to the model
@@ -1727,6 +1727,57 @@ async function wrapSession(state, cmdline, tool) {
   } catch {}
 }
 
+// ── the training-data flywheel sink ──────────────────────────────────────────
+// Every successful Nalu turn becomes a training row (locally, in
+// ~/.nalu/data/sessions.jsonl) — Nalu's OWN sessions are the cleanest fuel for
+// training Nalu's own models. The flywheel (train repo, training/flywheel.mjs)
+// harvests these, retrains, eval-gates, and deploys winners automatically.
+// Opt out with NALU_NO_TRAINING_DATA=1.
+function turnsFromWire(slice) {
+  const turns = []
+  let pendingUser = ''
+  for (const m of slice) {
+    if (m.role === 'user') pendingUser += (pendingUser ? '\n' : '') + String(m.content ?? '')
+    else if (m.role === 'tool') pendingUser += (pendingUser ? '\n' : '') + `[tool result: ${m.name || 'tool'}]\n${String(m.content ?? '').slice(0, 1500)}`
+    else if (m.role === 'assistant') {
+      const calls = (m.tool_calls || [])
+        .map((tc) => {
+          try {
+            return JSON.stringify({ name: tc.function.name, arguments: JSON.parse(tc.function.arguments || '{}') })
+          } catch {
+            return null
+          }
+        })
+        .filter(Boolean)
+      const lead = typeof m.content === 'string' ? m.content.trim() : ''
+      const assistant = [lead, ...calls].filter(Boolean).join('\n')
+      if (!assistant) continue
+      turns.push({ user: pendingUser, assistant })
+      pendingUser = ''
+    }
+  }
+  return turns
+}
+
+function recordTrainingRow(state, startIdx) {
+  try {
+    if (process.env.NALU_NO_TRAINING_DATA) return
+    const slice = state.messages.slice(startIdx)
+    const turns = turnsFromWire(slice)
+    if (!turns.length) return
+    const last = turns[turns.length - 1].assistant
+    if (/^\(error|^\(no response/.test(last) || announcesIntent(last.trim())) return // only keep clean, finished turns
+    const row = { v: 1, ts: new Date().toISOString(), route: state.lastRoute || '', repo: path.basename(process.cwd()), turns }
+    const rowStr = JSON.stringify(row)
+    if (rowStr.length > 30000) return
+    const dataDir = path.join(os.homedir(), '.nalu', 'data')
+    fs.mkdirSync(dataDir, { recursive: true })
+    fs.appendFileSync(path.join(dataDir, 'sessions.jsonl'), rowStr + '\n')
+  } catch {
+    /* the flywheel is best-effort — never disturb the session */
+  }
+}
+
 // ── the agent loop for one user input ────────────────────────────────────────
 async function runTurn(state, userText) {
   // refresh project memory each turn so docs/plans written mid-session (or by
@@ -1734,6 +1785,7 @@ async function runTurn(state, userText) {
   state.projectDoc = gatherProjectContext().doc
   userText = attachDroppedFiles(userText) // dragged-in paths → inline the file
   state.turnThink = parseThinkLevel(userText) // think · ultrathink · packmind
+  const turnStartIdx = state.messages.length
   state.messages.push({ role: 'user', content: userText })
   state.interrupted = false
   state.hadError = false
@@ -1741,6 +1793,7 @@ async function runTurn(state, userText) {
   state.busy = true
   try {
     await runTurnInner(state)
+    if (!state.interrupted && !state.hadError) recordTrainingRow(state, turnStartIdx)
   } finally {
     state.busy = false
   }
@@ -2273,7 +2326,7 @@ async function main() {
 }
 
 // Exported for tests; main() only runs when executed directly (not imported).
-export { recoverToolCalls, parseToolArgs, findJsonObjects, trimHistory, toolEditFile, toolGrep, globToRegex, execTool, runBash, announcesIntent, extractDroppedPaths, attachDroppedFiles, parseThinkLevel, pool, plannerJson, execWorkerTool, stripAnsi, detectStruggle, wrapCommandFor }
+export { recoverToolCalls, parseToolArgs, findJsonObjects, trimHistory, toolEditFile, toolGrep, globToRegex, execTool, runBash, announcesIntent, extractDroppedPaths, attachDroppedFiles, parseThinkLevel, pool, plannerJson, execWorkerTool, stripAnsi, detectStruggle, wrapCommandFor, turnsFromWire }
 
 const runDirectly = (() => {
   try {

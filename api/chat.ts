@@ -551,6 +551,16 @@ export default async function handler(req: any, res: any) {
     }
   }
   const backend = backendFor(spec)
+  // The training flywheel deploys CLI-lane winners here: NALU_CLI_MODEL serves
+  // ONLY terminal-agent traffic (where the fine-tune is eval-gated to win),
+  // leaving the website untouched. Cleared → back to the routed default.
+  // Flywheel bases (Qwen3.5) think before answering, sometimes closing with a
+  // bare </think> and no opening tag — run them gated so reasoning never leaks
+  // (harmless if a model doesn't think: the flush fallback emits everything).
+  if (cliMode && env('NALU_CLI_MODEL')) {
+    backend.model = env('NALU_CLI_MODEL') as string
+    backend.gated = true
+  }
   if (!backend.key) {
     res.status(500).json({ error: 'Nalu engine is not configured.' })
     return
