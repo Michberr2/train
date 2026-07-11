@@ -23,7 +23,7 @@ import * as readline from 'node:readline'
 import { spawn, execSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
-const VERSION = '1.4.3'
+const VERSION = '1.5.0'
 const DEFAULT_API = 'https://n4lu.com'
 const MAX_STEPS = 40 // max model↔tool round-trips per user message
 const MAX_TOOL_OUT = 30000 // chars of tool output sent back to the model
@@ -189,6 +189,11 @@ ${bold('In-session commands')}
                         board; members work in dependency order, leader integrates
   /plan <task>          Explore the code and write a step-by-step plan to .nalu/plans/
   /search <query>       Search the live web and show results right here
+  claude · codex · chatgpt · gemini · aider   Type an AI CLI's name to run it
+                        INSIDE Nalu — full passthrough while Nalu watches,
+                        coaches when it struggles, and documents everything it
+                        learns to ~/.nalu/knowledge/<tool>.md (/wrap <cmd> for
+                        any other CLI)
   /help  /model  /status  /clear  /exit
   End a line with \\ to continue typing on the next line.
   Ctrl+C interrupts a running response.
@@ -369,10 +374,18 @@ function gatherProjectContext() {
     }
   }
   walk(path.join(root, '.nalu'), '.nalu', 0)
-  if (!files.length) return { doc: '', files: [] }
+  // tool intelligence gathered by wrapping other AI CLIs — point at it so the
+  // model knows it can read_file these when the user asks about those tools
+  let toolNote = ''
+  try {
+    const kDir = path.join(os.homedir(), '.nalu', 'knowledge')
+    const docs = fs.readdirSync(kDir).filter((f) => f.endsWith('.md'))
+    if (docs.length) toolNote = `\n\nTOOL KNOWLEDGE (what Nalu has learned watching other AI CLIs — read with read_file when relevant): ${docs.map((f) => path.join(kDir, f)).join(' · ')}`
+  } catch {}
+  if (!files.length && !toolNote) return { doc: '', files: [] }
   let doc = parts.join('\n\n')
   if (doc.length > 24000) doc = doc.slice(0, 24000) + '\n…[project context truncated — use read_file for full files]'
-  return { doc: `FILES: ${files.join(' · ')}\n\n${doc}`, files }
+  return { doc: `${files.length ? `FILES: ${files.join(' · ')}\n\n${doc}` : ''}${toolNote}`, files }
 }
 
 function killTree(child, sig) {
@@ -1540,6 +1553,180 @@ function plannerJson(text, requiredKey) {
   return null
 }
 
+// ── wrapping other AI CLIs (claude, codex/chatgpt, gemini, …) ────────────────
+// Type the tool's name at the Nalu prompt and Nalu becomes the terminal around
+// it: full interactive passthrough (the tool gets a real PTY via `script`),
+// while Nalu taps the stream, coaches when the tool struggles, and distills
+// everything it observed into ~/.nalu/knowledge/<tool>.md.
+const KNOWN_TOOLS = {
+  claude: ['claude'],
+  codex: ['codex'],
+  chatgpt: ['codex', 'chatgpt'], // ChatGPT's coding CLI ships as `codex`
+  gemini: ['gemini'],
+  aider: ['aider'],
+  copilot: ['copilot', 'gh'],
+  cursor: ['cursor-agent', 'cursor'],
+}
+
+/** Strip ANSI escapes / OSC titles / carriage returns for logs and analysis. */
+function stripAnsi(s) {
+  return String(s)
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[@-_]/g, '')
+    .replace(/\r/g, '')
+}
+
+// Signals that the wrapped tool is struggling and could use a hint.
+const STRUGGLE = /\b(error|failed|failure|exception|traceback|panic|fatal|rate.?limit|overloaded|over capacity|429|permission denied|EACCES|ETIMEDOUT|ECONNREFUSED|EADDRINUSE|command not found|no such file|cannot |can't |unable to|conflict|merge conflict|try again|retry(?:ing)?|timed? ?out|api key|unauthorized|401|403)\b/i
+
+/** True when the wrapped tool's recent output looks like it needs help. */
+function detectStruggle(recent) {
+  if (!recent) return false
+  if (STRUGGLE.test(recent)) return true
+  // the same non-trivial line repeating (stuck retry loop)
+  const lines = recent.split('\n').map((l) => l.trim()).filter((l) => l.length > 12)
+  const counts = {}
+  for (const l of lines.slice(-30)) {
+    counts[l] = (counts[l] || 0) + 1
+    if (counts[l] >= 4) return true
+  }
+  return false
+}
+
+/** Decide if a prompt line is a request to open a wrapped tool. */
+function wrapCommandFor(line) {
+  if (line.startsWith('/wrap ')) {
+    const cmdline = line.slice(6).trim()
+    return cmdline ? { cmdline, tool: path.basename(cmdline.split(/\s+/)[0]).toLowerCase() } : null
+  }
+  const first = line.split(/\s+/)[0].toLowerCase()
+  if (!KNOWN_TOOLS[first]) return null
+  // "claude" or "claude --resume" launches; "claude is better?" is a question
+  if (/^\S+(\s+--?[\w=./-]+|\s+[\w./-]+)*$/.test(line) && line.split(/\s+/).length <= 4 && !/[?!]/.test(line)) {
+    return { cmdline: line, tool: first }
+  }
+  return null
+}
+
+function resolveToolBinary(tool, cmdline) {
+  const candidates = KNOWN_TOOLS[tool] || [cmdline.split(/\s+/)[0]]
+  for (const bin of candidates) {
+    try {
+      execSync(`command -v ${bin}`, { stdio: 'ignore', shell: '/bin/bash' })
+      return bin
+    } catch {}
+  }
+  return null
+}
+
+async function wrapSession(state, cmdline, tool) {
+  const requested = cmdline.split(/\s+/)[0]
+  const bin = resolveToolBinary(tool, cmdline)
+  if (!bin) {
+    out(red(`${tool} is not installed (looked for: ${(KNOWN_TOOLS[tool] || [requested]).join(', ')})`) + '\n')
+    return
+  }
+  const realCmd = bin === requested || !KNOWN_TOOLS[tool] ? cmdline : cmdline.replace(requested, bin)
+  const kDir = path.join(os.homedir(), '.nalu', 'knowledge')
+  const sDir = path.join(os.homedir(), '.nalu', 'sessions')
+  fs.mkdirSync(kDir, { recursive: true })
+  fs.mkdirSync(sDir, { recursive: true })
+  const kPath = path.join(kDir, `${tool}.md`)
+  const logPath = path.join(sDir, `${tool}-${new Date().toISOString().replace(/[:.]/g, '-')}.log`)
+
+  out('\n' + gold(`◆ ${tool} inside Nalu`) + dim(` — full passthrough; Nalu is watching, coaching, and documenting`) + '\n')
+  out(dim(`  knowledge: ~/.nalu/knowledge/${tool}.md · transcript: ~/.nalu/sessions/`) + '\n')
+  out(dim(`  exit ${tool} normally to come back to Nalu`) + '\n\n')
+
+  state.rl.pause() // the wrapped tool owns stdin now
+  const child =
+    process.platform === 'linux'
+      ? spawn('script', ['-qefc', realCmd, '/dev/null'], { stdio: ['inherit', 'pipe', 'inherit'] })
+      : spawn('script', ['-q', '/dev/null', '/bin/bash', '-lc', realCmd], { stdio: ['inherit', 'pipe', 'inherit'] })
+
+  let tail = '' // rolling stripped transcript for analysis
+  let scanBuf = '' // output since the last struggle check that fired
+  let lastOut = Date.now()
+  let lastHintAt = 0
+  let hintBusy = false
+  const hints = []
+  const logStream = fs.createWriteStream(logPath)
+  child.stdout.on('data', (d) => {
+    process.stdout.write(d)
+    logStream.write(d)
+    const stripped = stripAnsi(d.toString('utf8'))
+    tail = (tail + stripped).slice(-20000)
+    scanBuf = (scanBuf + stripped).slice(-8000)
+    lastOut = Date.now()
+  })
+
+  // the coach: when the tool struggles and the screen is quiet, offer one hint
+  const prior = fs.existsSync(kPath) ? fs.readFileSync(kPath, 'utf8').slice(0, 4000) : ''
+  const monitor = setInterval(async () => {
+    if (hintBusy || child.exitCode !== null) return
+    if (!detectStruggle(scanBuf)) return
+    if (Date.now() - lastHintAt < 90000) return
+    if (Date.now() - lastOut < 2500) return // don't talk over an active redraw
+    hintBusy = true
+    scanBuf = ''
+    try {
+      const tip = await runWorker(state, {
+        specialist: 'code',
+        tools: [],
+        maxSteps: 1,
+        prompt: `You are Nalu, quietly coaching a developer who is using the "${tool}" CLI inside your terminal. Its recent output suggests it is struggling.${prior ? `\n\nWhat you already know about ${tool}:\n${prior}` : ''}\n\nRECENT OUTPUT (stripped):\n${tail.slice(-4000)}\n\nIn ONE or TWO short sentences, give the single most useful concrete suggestion (a command, flag, fix, or workaround). Plain text only — no preamble, no markdown.`,
+      })
+      const clean = String(tip || '').trim().split('\n')[0].slice(0, 240)
+      if (clean && !clean.startsWith('(') && child.exitCode === null) {
+        lastHintAt = Date.now()
+        hints.push(clean)
+        if (Date.now() - lastOut > 2000) out('\r\n' + gold('◆ nalu: ') + goldDim(clean) + '\r\n')
+      }
+    } catch {}
+    hintBusy = false
+  }, 5000)
+
+  const code = await new Promise((resolve) => {
+    child.on('close', (c) => resolve(c ?? 0))
+    child.on('error', (e) => {
+      out(red(`could not start ${tool}: ${e.message}`) + '\n')
+      resolve(-1)
+    })
+  })
+  clearInterval(monitor)
+  logStream.end()
+  state.rl.resume()
+  out('\n' + gold(`◆ back to Nalu`) + dim(` — ${tool} exited (${code})`) + '\n')
+
+  // distill what was observed into the tool's knowledge doc
+  if (tail.replace(/\s+/g, ' ').length > 300) {
+    const sp = makeSpinner()
+    try {
+      const priorDoc = fs.existsSync(kPath) ? fs.readFileSync(kPath, 'utf8').slice(0, 8000) : ''
+      const digest = await runWorker(state, {
+        specialist: 'code',
+        tools: [],
+        maxSteps: 1,
+        prompt: `You maintain Nalu's intelligence file on the "${tool}" CLI — everything Nalu has learned by watching it work. Update it from this session.\n\n${priorDoc ? `CURRENT FILE:\n${priorDoc}\n\n` : ''}THIS SESSION'S TRANSCRIPT (stripped, tail):\n${tail.slice(-12000)}\n${hints.length ? `\nHints Nalu gave during the session:\n- ${hints.join('\n- ')}` : ''}\n\nWrite the COMPLETE updated markdown file (max ~10k chars): start with "# ${tool} — what Nalu knows", keep an evolving summary of its capabilities, commands/flags seen, config/auth details observed, failure modes and their fixes, and workflow tips; then a "## Sessions" list — keep prior entries and append one dated entry (${new Date().toISOString().slice(0, 10)}) with 2-5 bullets on what happened this session. Merge, dedupe, keep only what is genuinely useful. Output ONLY the file content.`,
+      })
+      const docText = String(digest || '').trim()
+      if (docText.length > 100 && !docText.startsWith('(')) {
+        fs.writeFileSync(kPath, docText.slice(0, 14000) + '\n')
+        sp.stop()
+        out(dim(`  documented → ~/.nalu/knowledge/${tool}.md (${Math.round(docText.length / 1024)} KB)`) + '\n')
+      } else sp.stop()
+    } catch {
+      sp.stop()
+    }
+  }
+  // prune old transcripts (keep the newest 20)
+  try {
+    const logs = fs.readdirSync(sDir).filter((f) => f.endsWith('.log')).sort()
+    for (const f of logs.slice(0, Math.max(0, logs.length - 20))) fs.unlinkSync(path.join(sDir, f))
+  } catch {}
+}
+
 // ── the agent loop for one user input ────────────────────────────────────────
 async function runTurn(state, userText) {
   // refresh project memory each turn so docs/plans written mid-session (or by
@@ -2061,6 +2248,18 @@ async function main() {
       out(`nalu ${VERSION}\napi: ${state.api}\nmodel: auto${state.forcedSpecialist ? ` (agent locked: ${state.forcedSpecialist})` : ''}\ncwd: ${process.cwd()}${state.branch ? `\nbranch: ${state.branch}` : ''}\nproject memory: ${pf.length ? pf.join(', ') : 'none (create a .nalu/ folder or NALU.md to add docs)'}\nhistory: ${state.messages.length} messages\npermissions: ${state.yolo ? 'yolo (all auto-approved)' : state.sessionAllow.size ? `always-allow: ${[...state.sessionAllow].join(', ')}` : 'ask for shell/file changes (.nalu/ writes auto-approved)'}\nwolfisms: ${wolfismCount().toLocaleString()} unique phrases\n`)
       continue
     }
+    // typing a known AI CLI's name (claude, codex/chatgpt, gemini, …) — or
+    // /wrap <any command> — runs it INSIDE Nalu with watching + coaching
+    if (line === '/wrap') {
+      out(dim('usage: /wrap <command>  — run any CLI inside Nalu (or just type: claude, codex, chatgpt, gemini, aider)') + '\n')
+      continue
+    }
+    const wrapReq = wrapCommandFor(line)
+    if (wrapReq) {
+      await wrapSession(state, wrapReq.cmdline, wrapReq.tool)
+      out('\n')
+      continue
+    }
     if (line.startsWith('/')) {
       out(dim(`unknown command ${line.split(' ')[0]} — try /help`) + '\n')
       continue
@@ -2074,7 +2273,7 @@ async function main() {
 }
 
 // Exported for tests; main() only runs when executed directly (not imported).
-export { recoverToolCalls, parseToolArgs, findJsonObjects, trimHistory, toolEditFile, toolGrep, globToRegex, execTool, runBash, announcesIntent, extractDroppedPaths, attachDroppedFiles, parseThinkLevel, pool, plannerJson, execWorkerTool }
+export { recoverToolCalls, parseToolArgs, findJsonObjects, trimHistory, toolEditFile, toolGrep, globToRegex, execTool, runBash, announcesIntent, extractDroppedPaths, attachDroppedFiles, parseThinkLevel, pool, plannerJson, execWorkerTool, stripAnsi, detectStruggle, wrapCommandFor }
 
 const runDirectly = (() => {
   try {
