@@ -23,7 +23,7 @@ import * as readline from 'node:readline'
 import { spawn, execSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
-const VERSION = '1.2.4'
+const VERSION = '1.3.0'
 const DEFAULT_API = 'https://n4lu.com'
 const MAX_STEPS = 40 // max model↔tool round-trips per user message
 const MAX_TOOL_OUT = 30000 // chars of tool output sent back to the model
@@ -39,6 +39,7 @@ const red = esc('31')
 const green = esc('32')
 const cyan = esc('36')
 const gold = esc('38;5;179')
+const goldDim = esc('2;38;5;179')
 const gray = esc('38;5;245')
 
 function out(s) {
@@ -50,6 +51,68 @@ function ui(s) {
   if (PRINT_MODE) process.stderr.write(s)
   else process.stdout.write(s)
 }
+
+// ── the wolf ─────────────────────────────────────────────────────────────────
+// Nalu's mark is the wolf. The CLI speaks wolf while it works: a combinatorial
+// phrase engine — verbs × objects × tails — yields 12,000+ unique loading lines
+// (see wolfismCount) plus sign-offs for finished answers.
+const WOLF_VERBS = [
+  'sniffing', 'stalking', 'tracking', 'circling', 'hunting', 'shadowing', 'pawing at', 'howling at',
+  'growling at', 'gnawing on', 'nosing through', 'prowling', 'padding through', 'loping across',
+  'digging into', 'flushing out', 'cornering', 'herding', 'trailing', 'scenting', 'pouncing on',
+  'ambushing', 'patrolling', 'ranging over', 'rooting through', 'ears pricked at', 'baring teeth at',
+  'closing in on', 'running down', 'keeping watch over',
+]
+const WOLF_OBJECTS = [
+  'the trail', 'your codebase', 'the bug', 'the stack trace', 'fresh commits', 'the dependency thicket',
+  'loose semicolons', 'the moonlit repo', 'stray pointers', 'the call stack', 'wild regexes',
+  'the config den', 'runaway processes', 'the git log', 'tangled imports', 'the night build',
+  'silent errors', 'the memory woods', 'lost packets', 'the type forest', 'sleeping daemons',
+  'the branch line', 'scattered TODOs', 'the async underbrush', 'cold caches', 'the linter warnings',
+  'upstream waters', 'the test burrow', 'dark corners of main', 'the release ridge', 'orphan branches',
+  'the merge clearing', 'half-buried bugs', 'the prod perimeter',
+]
+const WOLF_TAILS = [
+  '', ' under a full moon', ' on soft paws', ' with the pack', ' ears up', ' nose to the ground',
+  ' against the wind', ' at first light', ' through fresh snow', ' along the ridge',
+  ' in the tall grass', ' by scent alone',
+]
+const WOLF_FINISHERS = [
+  'the pack has spoken', "trail's end", 'the hunt is done', 'howl delivered', 'prey secured',
+  'back to the den', 'tracks covered', 'the ridge is quiet', 'scent confirmed', 'territory marked',
+  'the moon approves', 'pack business concluded', 'fangs sheathed', 'one more tale for the den',
+  'the forest is calm again', 'nothing left to chase', 'the alpha nods', 'ears down, job done',
+  'moonlight on a clear trail', 'the howl echoes back', 'den warm, work done', 'no scent left behind',
+  'the watch continues', 'good hunt',
+]
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)]
+const wolfism = () => `${pick(WOLF_VERBS)} ${pick(WOLF_OBJECTS)}${pick(WOLF_TAILS)}…`
+const wolfFinisher = () => `${pick(WOLF_FINISHERS)}${pick(WOLF_TAILS)}`
+const wolfismCount = () =>
+  WOLF_VERBS.length * WOLF_OBJECTS.length * WOLF_TAILS.length + WOLF_FINISHERS.length * WOLF_TAILS.length
+
+// The wolf head — rendered from the real brand mark (client/public/wolf-icon.png)
+// as half-block pixels, so the banner IS the logo. Regenerate with a resize if
+// the mark ever changes.
+const WOLF_HEAD = [
+  '                ▄        ▄',
+  '               ██      ▄██',
+  '             ▄███     ▄███',
+  '            █████    █████',
+  '           ██████   ██████',
+  '         ▄███████  ███████',
+  '        ▄████████▄████████',
+  '      ▄████████████████████▄',
+  '    ▄█████████████████████████▄▄',
+  '  ▄███████████████████████████████▄▄',
+  '  ▀▀▀████████████████████████████████▄▄',
+  '   ▄████████████████████████████████████',
+  ' ▄████████████████████████████████████▀',
+  '▀▀▀▀██████████████████████████████▀▀',
+  '   ▄███████████████████████████▀',
+  '▄███████████████████████████▀',
+  '▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+]
 
 // ── config / args ────────────────────────────────────────────────────────────
 const CONFIG_PATH = path.join(os.homedir(), '.nalu', 'config.json')
@@ -924,11 +987,18 @@ function makeRenderer(write) {
 }
 
 function makeSpinner(text) {
+  // no text → wolf mode: a fresh wolfism every couple of seconds while loading
   if (!TTY || PRINT_MODE) return { stop() {} }
   const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
   let i = 0
+  let phrase = text || wolfism()
+  let phraseAt = Date.now()
   const t = setInterval(() => {
-    process.stdout.write('\r\x1b[2K' + dim(`${frames[i++ % frames.length]} ${text}`))
+    if (!text && Date.now() - phraseAt > 2200) {
+      phrase = wolfism()
+      phraseAt = Date.now()
+    }
+    process.stdout.write('\r\x1b[2K' + dim(frames[i++ % frames.length]) + ' ' + goldDim(phrase))
   }, 80)
   let stopped = false
   return {
@@ -963,7 +1033,7 @@ async function streamOnce(state, renderer) {
       } catch {}
     }, 180000)
   }
-  const spinner = makeSpinner('nalu is thinking…')
+  const spinner = makeSpinner() // wolf mode — rotating wolfisms while loading
   let spinning = true
   const stopSpin = () => {
     if (spinning) {
@@ -1274,6 +1344,7 @@ async function runTurn(state, userText) {
   state.projectDoc = gatherProjectContext().doc
   state.messages.push({ role: 'user', content: userText })
   state.interrupted = false
+  state.hadError = false
   state.nudges = 0
   state.busy = true
   try {
@@ -1497,9 +1568,11 @@ async function main() {
 
   const cwdShort = process.cwd().replace(os.homedir(), '~')
   const projFiles = gatherProjectContext().files
+  if (TTY) out('\n' + WOLF_HEAD.map((l) => gold('   ' + l)).join('\n') + '\n')
   out('\n' + gold(bold(`◆ Nalu`)) + dim(` CLI v${VERSION}`) + dim(' · model: ') + gold('auto') + dim(' (routes itself)') + '\n')
   out(dim(`  ${cwdShort}${branch ? ` · ${branch}` : ''}${projFiles.length ? ` · ${projFiles.length} doc${projFiles.length === 1 ? '' : 's'} from .nalu` : ''}`) + '\n')
-  out(dim('  /help commands · /plan to plan · /search the web · Ctrl+C interrupts') + '\n\n')
+  out(dim('  /help commands · /plan to plan · /search the web · Ctrl+C interrupts') + '\n')
+  out(goldDim(`  ${wolfism().replace(/…$/, '')} — ready.`) + '\n\n')
 
   const question = () =>
     new Promise((resolve) => rl.question(gold('❯ '), resolve))
@@ -1548,7 +1621,7 @@ async function main() {
         out(dim('usage: /search <query>') + '\n')
         continue
       }
-      const sp = makeSpinner('searching the web…')
+      const sp = makeSpinner()
       const res = await toolWeb(state.api, { action: 'search', query: q })
       sp.stop()
       out('\n' + res + '\n\n')
@@ -1562,7 +1635,7 @@ async function main() {
     }
     if (line === '/status') {
       const pf = gatherProjectContext().files
-      out(`nalu ${VERSION}\napi: ${state.api}\nmodel: auto\ncwd: ${process.cwd()}${state.branch ? `\nbranch: ${state.branch}` : ''}\nproject memory: ${pf.length ? pf.join(', ') : 'none (create a .nalu/ folder or NALU.md to add docs)'}\nhistory: ${state.messages.length} messages\npermissions: ${state.yolo ? 'yolo (all auto-approved)' : state.sessionAllow.size ? `always-allow: ${[...state.sessionAllow].join(', ')}` : 'ask for shell/file changes (.nalu/ writes auto-approved)'}\n`)
+      out(`nalu ${VERSION}\napi: ${state.api}\nmodel: auto\ncwd: ${process.cwd()}${state.branch ? `\nbranch: ${state.branch}` : ''}\nproject memory: ${pf.length ? pf.join(', ') : 'none (create a .nalu/ folder or NALU.md to add docs)'}\nhistory: ${state.messages.length} messages\npermissions: ${state.yolo ? 'yolo (all auto-approved)' : state.sessionAllow.size ? `always-allow: ${[...state.sessionAllow].join(', ')}` : 'ask for shell/file changes (.nalu/ writes auto-approved)'}\nwolfisms: ${wolfismCount().toLocaleString()} unique phrases\n`)
       continue
     }
     if (line.startsWith('/')) {
@@ -1571,6 +1644,7 @@ async function main() {
     }
     out('\n')
     await runTurn(state, input)
+    if (!state.interrupted && !state.hadError) out(goldDim(`  — ${wolfFinisher()}`) + '\n')
     out('\n')
   }
   rl.close()
