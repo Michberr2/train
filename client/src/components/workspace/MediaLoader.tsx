@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { useCallback } from 'react'
+import { useCallback, useMemo } from 'react'
 import { getBrand } from './brandKit'
+import { wolfism } from '../../lib/wolfisms'
 import { Image as ImageIcon, FileSpreadsheet, FileText, Clapperboard, Box, Globe, Presentation, type LucideIcon } from 'lucide-react'
 
 // Build-in-progress card: a refined circular progress ring (not a bar), honest
@@ -18,16 +19,17 @@ const KINDS: Record<Kind, { label: string; icon: LucideIcon; est: number; color:
   slides: { label: 'Deck', icon: Presentation, est: 70000, color: '#fbbf24', phrases: ['Storyboarding the deck', 'Choosing a palette', 'Designing the layouts', 'Writing punchy headlines', 'Aligning every pixel'] },
 }
 
-// Wolf-flavored one-word status — Nalu is a wolf; let it act like one while it
-// works. Shared with the chat thinking indicator next to the logo.
+// Wolf-flavored status — Nalu is a wolf; let it act like one while it works.
+// Backed by the shared 12,000+-phrase wolfism engine (client/src/lib/wolfisms),
+// so the wolf essentially never repeats itself. Shared with the chat thinking
+// indicator next to the logo.
 export const WOLF_WORDS = ['awooing', 'moon-howling', 'zoomies', 'den-digging', 'pack-snuggling', 'snow-romping', 'tail-floofing', 'moon-gazing', 'howl-tuning', 'fang-brushing', 'paw-typing', 'rabbit-dreaming', 'elk-chasing', 'snoot-lifting', 'star-sniffing', 'den-decorating', 'wolfing', 'fur-fluffing', 'pup-napping', 'panting']
 export function WolfWord({ className = '' }: { className?: string }) {
-  const [i, setI] = useState(() => Math.floor(Math.random() * WOLF_WORDS.length))
+  const [w, setW] = useState(() => wolfism())
   useEffect(() => {
-    const iv = setInterval(() => setI((v) => (v + 1 + Math.floor(Math.random() * 3)) % WOLF_WORDS.length), 1300)
+    const iv = setInterval(() => setW(wolfism()), 2300)
     return () => clearInterval(iv)
   }, [])
-  const w = WOLF_WORDS[i]
   return (
     <span key={w} className={`nalu-fadein italic tracking-wide text-gold ${className}`}>
       {w}<span className="opacity-60">…</span>
@@ -36,7 +38,7 @@ export function WolfWord({ className = '' }: { className?: string }) {
 }
 
 const R = 17
-const C = 2 * Math.PI * R
+void R
 
 export default function MediaLoader({ kind }: { kind: string }) {
   const k = KINDS[(kind as Kind) in KINDS ? (kind as Kind) : 'image']
@@ -57,7 +59,8 @@ export default function MediaLoader({ kind }: { kind: string }) {
   const elapsed = Math.floor(ms / 1000)
   const overdue = ms > k.est * 1.15
   const Icon = k.icon
-  const wolf = WOLF_WORDS[(phrase >> 1) % WOLF_WORDS.length]
+  // alternate the craft phrases with a fresh line from the wolfism engine
+  const wolf = useMemo(() => wolfism(), [phrase])
   const word = overdue
     ? 'Putting it all together'
     : phrase % 2

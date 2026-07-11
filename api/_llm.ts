@@ -59,6 +59,22 @@ export function fallbackProvider(): Provider | null {
   }
 }
 
+/** Last-resort emergency provider: Gemini's OpenAI-compatible endpoint on the
+ *  existing GEMINI key (already a trusted vendor here — it serves vision). Only
+ *  reached when the primary AND the fallback are down/limited, so users see an
+ *  answer instead of "over capacity". Disable with NALU_DISABLE_EMERGENCY=1. */
+export function emergencyProvider(): Provider | null {
+  if (env('NALU_DISABLE_EMERGENCY')) return null
+  const key = env('GEMINI_API_KEY') || env('GOOGLE_AI_API_KEY') || env('GOOGLE_GENAI_API_KEY')
+  if (!key) return null
+  return {
+    base: (env('NALU_EMERGENCY_BASE_URL') || 'https://generativelanguage.googleapis.com/v1beta/openai').replace(/\/+$/, ''),
+    key: key.trim(),
+    model: env('NALU_EMERGENCY_MODEL') || 'gemini-2.5-flash',
+    label: 'emergency',
+  }
+}
+
 /** Ordered provider chain for a request. */
 export function providerChain(model?: string): Provider[] {
   const chain: Provider[] = []
@@ -66,6 +82,8 @@ export function providerChain(model?: string): Provider[] {
   if (p) chain.push(p)
   const f = fallbackProvider()
   if (f) chain.push(f)
+  const e = emergencyProvider()
+  if (e) chain.push(e)
   return chain
 }
 
@@ -89,9 +107,41 @@ export interface CompleteResult {
 type Msg = { role: string; content: unknown }
 
 class TimeoutError extends Error {}
+// Carries the upstream HTTP status + body so the failover logic can tell a
+// "request too big" (shrink & retry) apart from "out of credits" (fail over).
+class ProviderError extends Error {
+  status: number
+  body: string
+  label: string
+  constructor(label: string, status: number, body: string) {
+    super(`${label} ${status}: ${body.slice(0, 200)}`)
+    this.label = label
+    this.status = status
+    this.body = body
+  }
+}
+
+// The request exceeded THIS provider's per-call token/context cap — shrinking
+// max_tokens and retrying the SAME provider usually fixes it (e.g. a 16k-token
+// sheet ask that a host caps lower). This is what surfaced as "403 out of tokens".
+const SIZE_ERR = /max_?tokens|maximum context|context (?:length|window)|too (?:long|many tokens)|reduce (?:the )?(?:length|tokens|max)|token.{0,14}(?:limit|exceed)|length limit|exceeds?.{0,24}(?:context|limit|maximum)|request too large/i
+// The provider is out of credits / rate-limited — no point re-asking IT; fail over.
+const QUOTA_ERR = /quota|credit|balance|insufficient|out of (?:credit|quota|token|balance)|billing|payment required|exceeded your|too many requests|rate.?limit|429/i
+function isSizeError(e: unknown): boolean {
+  return e instanceof ProviderError && [400, 403, 413, 422].includes(e.status) && SIZE_ERR.test(`${e.body} ${e.message}`)
+}
+function isQuotaError(e: unknown): boolean {
+  return e instanceof ProviderError && (e.status === 402 || e.status === 429 || (e.status === 403 && QUOTA_ERR.test(`${e.body} ${e.message}`)))
+}
+// A 429-style burst rate limit is TRANSIENT — a short backoff on the SAME
+// provider usually clears it (this is the #1 cause of user-visible "over
+// capacity" under load). Being genuinely out of credits (402) is not.
+function isRateLimited(e: unknown): boolean {
+  return e instanceof ProviderError && (e.status === 429 || /too many requests|rate.?limit/i.test(`${e.body} ${e.message}`))
+}
 
 /** One non-streaming completion against one provider, with a hard timeout. */
-async function callOne(p: Provider, messages: Msg[], opts: CompleteOpts, timeoutMs: number): Promise<CompleteResult> {
+async function callOne(p: Provider, messages: Msg[], opts: CompleteOpts, timeoutMs: number, maxTokens: number): Promise<CompleteResult> {
   const ac = new AbortController()
   let timedOut = false
   const timer = setTimeout(() => {
@@ -99,6 +149,8 @@ async function callOne(p: Provider, messages: Msg[], opts: CompleteOpts, timeout
     try { ac.abort() } catch { /* noop */ }
   }, timeoutMs)
   try {
+    // Gemini's OpenAI-compat endpoint 400s on the penalty fields — strip them there.
+    const isGemini = /generativelanguage\.googleapis/i.test(p.base)
     const r = await fetch(`${p.base}/chat/completions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${p.key}`, 'Content-Type': 'application/json' },
@@ -106,17 +158,17 @@ async function callOne(p: Provider, messages: Msg[], opts: CompleteOpts, timeout
         model: p.model,
         messages,
         stream: false,
-        max_tokens: opts.maxTokens ?? 4000,
+        max_tokens: maxTokens,
         ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
-        ...(opts.frequencyPenalty != null ? { frequency_penalty: opts.frequencyPenalty } : {}),
-        ...(opts.presencePenalty != null ? { presence_penalty: opts.presencePenalty } : {}),
+        ...(!isGemini && opts.frequencyPenalty != null ? { frequency_penalty: opts.frequencyPenalty } : {}),
+        ...(!isGemini && opts.presencePenalty != null ? { presence_penalty: opts.presencePenalty } : {}),
         ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: ac.signal,
     })
     if (!r.ok) {
       const t = await r.text().catch(() => '')
-      throw new Error(`${p.label} ${r.status}: ${t.slice(0, 200)}`)
+      throw new ProviderError(p.label, r.status, t)
     }
     const d = (await r.json().catch(() => null)) as
       | { choices?: Array<{ message?: { content?: string }; finish_reason?: string }> }
@@ -132,38 +184,76 @@ async function callOne(p: Provider, messages: Msg[], opts: CompleteOpts, timeout
   }
 }
 
+// Turn whatever went wrong into a SHORT, user-safe message with NO provider names
+// or raw status text — so a tool never surfaces "primary 403: out of tokens".
+function safeErrorMessage(e: unknown): string {
+  if (e instanceof TimeoutError) return 'The Nalu engine took too long to respond — please try again.'
+  if (isQuotaError(e)) return 'The Nalu engine is over capacity right now — please try again in a moment.'
+  if (isSizeError(e)) return 'That request was a bit too large to generate — try trimming it and rerun.'
+  return 'The Nalu engine is temporarily unavailable — please try again.'
+}
+
 /**
  * Non-streaming completion with timeout + multi-provider failover, returning the
- * content AND finish_reason. Throws only if EVERY attempt fails.
+ * content AND finish_reason. Throws a CLEAN, scrubbed error only if EVERY attempt
+ * fails (callers can surface it directly).
  *
- * Failover is smart: a provider that TIMES OUT is abandoned immediately (no point
- * waiting on it twice), while a provider that errors FAST gets one quick retry
- * (covers transient blips) before we move on.
+ * Failover is smart:
+ *  - a provider that TIMES OUT is abandoned immediately (don't burn a second window);
+ *  - a request that's TOO BIG for a provider is retried on that SAME provider with
+ *    max_tokens halved (down to a floor) — this is the "403 out of tokens" fix;
+ *  - a provider that's OUT OF CREDITS / rate-limited is skipped straight to the next;
+ *  - an otherwise-transient error gets one quick jittered retry on the primary.
  */
 export async function chatCompleteEx(messages: Msg[], opts: CompleteOpts = {}): Promise<CompleteResult> {
   const { timeoutMs = 45000, model, retryPrimary = true } = opts
   const chain = opts.providers || providerChain(model)
   if (!chain.length) throw new Error('Nalu engine is not configured.')
+  const baseMax = opts.maxTokens ?? 4000
 
   let lastErr: unknown = null
   for (let i = 0; i < chain.length; i++) {
     const p = chain[i]
-    const maxTries = i === 0 && retryPrimary ? 2 : 1
-    for (let t = 0; t < maxTries; t++) {
+    let curMax = baseMax
+    let shrinks = 0
+    let transientTries = 0
+    let rateTries = 0
+    const maxTransient = i === 0 && retryPrimary ? 1 : 0
+    // Burst 429s clear in well under a second — retry the SAME provider with
+    // jittered backoff before failing over (the fallback may be depleted, so
+    // failing over on a transient burst turned load spikes into user errors).
+    const maxRate = i === 0 ? 3 : 1
+    for (;;) {
       try {
-        return await callOne(p, messages, opts, timeoutMs)
+        return await callOne(p, messages, opts, timeoutMs, curMax)
       } catch (e) {
         lastErr = e
-        // A timeout means this provider is unhealthy now — fail over immediately
-        // rather than burning another full timeout window on a retry.
-        if (e instanceof TimeoutError) break
-        // Before a fast retry, wait a short JITTERED delay so a burst of concurrent
-        // requests (high load) doesn't synchronize and re-hammer the provider.
-        if (t + 1 < maxTries) await new Promise((r) => setTimeout(r, 120 + Math.floor(Math.random() * 380)))
+        if (e instanceof TimeoutError) break // unhealthy — next provider
+        // Too big for THIS provider → shrink max_tokens and retry the same one.
+        if (isSizeError(e) && shrinks < 2 && curMax > 3000) {
+          curMax = Math.max(3000, Math.floor(curMax / 2))
+          shrinks++
+          continue
+        }
+        // Transient rate limit → backoff and retry this provider.
+        if (isRateLimited(e) && rateTries < maxRate) {
+          rateTries++
+          await new Promise((r) => setTimeout(r, 350 * rateTries + Math.floor(Math.random() * 400)))
+          continue
+        }
+        // Genuinely out of credits (or still limited after retries) → fail over.
+        if (isQuotaError(e)) break
+        // Transient blip → one quick jittered retry (primary only), else next.
+        if (transientTries < maxTransient) {
+          transientTries++
+          await new Promise((r) => setTimeout(r, 120 + Math.floor(Math.random() * 380)))
+          continue
+        }
+        break
       }
     }
   }
-  throw lastErr instanceof Error ? lastErr : new Error('All providers failed')
+  throw new Error(safeErrorMessage(lastErr))
 }
 
 /** Convenience wrapper that returns just the content string. */

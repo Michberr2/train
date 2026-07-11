@@ -15,7 +15,8 @@
 
 import { cors } from './_cors'
 import { research } from './web'
-import { fallbackProvider, chatComplete } from './_llm'
+import { fallbackProvider, emergencyProvider, chatComplete } from './_llm'
+import { reserveDailyQuota } from './_limits'
 import { identityForRequest, identityBlock, saveProfile } from './_db'
 import { type Specialist, SPECIALISTS, VISION, GENERAL, VISION_CAPABLE, DS, MODEL_REASONING, hasImage, scoreSpecialistEx, pickSpecialist, pickSpecialistsMulti, classifierSystem, classifierUser, normalizeKind } from './_specialists'
 
@@ -487,6 +488,21 @@ export default async function handler(req: any, res: any) {
     return
   }
 
+  // CAPACITY PROTECTION — a generous per-subject daily cap (per signed-in user,
+  // else per IP) so a scraper or runaway loop can't starve the shared model
+  // capacity everyone else depends on. Fail-OPEN (a metering outage never takes
+  // chat down); limits are env-tunable, <=0 disables.
+  const quota = await reserveDailyQuota(req, 'chat', {
+    anonPerDay: Number(process.env.NALU_CHAT_ANON_PER_DAY ?? 500),
+    userPerDay: Number(process.env.NALU_CHAT_USER_PER_DAY ?? 3000),
+  }).catch(() => ({ ok: true }) as { ok: boolean })
+  if (!quota.ok) {
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+    res.write(`event: error\ndata: ${JSON.stringify({ message: 'Daily message limit reached — sign in for a higher limit, or come back tomorrow.' })}\n\n`)
+    res.end()
+    return
+  }
+
   // Agent pipelines target a specialist DIRECTLY (no keyword routing): pass
   // body.specialist = 'finance' | 'studio' | 'general' | … to force the route.
   const forced =
@@ -794,15 +810,18 @@ export default async function handler(req: any, res: any) {
   // EVERY provider fails.
   const runNonStream = async (): Promise<boolean> => {
     const fb = fallbackProvider()
+    const em = emergencyProvider()
     // Retry the PRIMARY a few times before the fallback: the primary (Tinker) is
-    // healthy but rate-limits under the CLI's rapid multi-turn hammering, and the
-    // fallback (HF router) is frequently out of monthly credits — so a blind
-    // one-shot-then-failover lands on a dead provider. Retry primary on transient
-    // errors (429 / 5xx / timeout) with backoff, THEN try the fallback once.
-    const primaryTries = cliMode ? 3 : 1
+    // healthy but rate-limits under burst load, and the fallback (HF router) is
+    // frequently out of monthly credits — so a blind one-shot-then-failover lands
+    // on a dead provider. Retry primary on transient errors (429 / 5xx) with
+    // backoff, THEN the fallback, THEN the emergency provider (Gemini) so users
+    // get an answer instead of "over capacity".
+    const primaryTries = cliMode ? 3 : 2
     const attempts: Array<{ base: string; key: string; model: string; label: string }> = [
       ...Array.from({ length: primaryTries }, () => ({ base: backend.base, key: backend.key, model: backend.model, label: 'primary' })),
       ...(fb ? [{ base: fb.base, key: fb.key, model: fb.model, label: 'fallback' }] : []),
+      ...(em ? [{ base: em.base, key: em.key, model: em.model, label: 'emergency' }] : []),
     ]
     let lastErr = 'no provider'
     for (let ai = 0; ai < attempts.length; ai++) {
@@ -812,10 +831,15 @@ export default async function handler(req: any, res: any) {
       try {
         // A text-only fallback model can't take image parts — flatten per attempt.
         const msgs = VISION_CAPABLE.test(a.model) ? fullMessages : flattenForText(fullMessages)
+        // Gemini's OpenAI-compat endpoint rejects penalties/top_p/tools — send it
+        // a minimal clean payload (same rule as the vision route).
+        const payload = /generativelanguage\.googleapis/i.test(a.base)
+          ? { model: a.model, messages: msgs, stream: false, max_tokens: cliMode ? 4096 : thinkTokens, temperature: chatTemp }
+          : { ...buildPayload(false), model: a.model, messages: msgs }
         const r = await fetch(`${a.base}/chat/completions`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${a.key}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...buildPayload(false), model: a.model, messages: msgs }),
+          body: JSON.stringify(payload),
           signal: ac2.signal,
         })
         if (!r.ok) {

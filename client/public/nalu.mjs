@@ -23,7 +23,7 @@ import * as readline from 'node:readline'
 import { spawn, execSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 
-const VERSION = '1.3.0'
+const VERSION = '1.3.1'
 const DEFAULT_API = 'https://n4lu.com'
 const MAX_STEPS = 40 // max model↔tool round-trips per user message
 const MAX_TOOL_OUT = 30000 // chars of tool output sent back to the model
@@ -1337,11 +1337,69 @@ function announcesIntent(t) {
   return true
 }
 
+// ── drag-and-drop file paths ─────────────────────────────────────────────────
+// Dragging a file into the terminal pastes its absolute path — quoted, or with
+// backslash-escaped spaces (Terminal.app/iTerm style). Detect real paths in the
+// message and attach their contents so the model can work off them immediately.
+function extractDroppedPaths(input) {
+  const candidates = []
+  for (const m of input.matchAll(/'((?:\/|~\/)[^']+)'|"((?:\/|~\/)[^"]+)"/g)) candidates.push(m[1] || m[2])
+  for (const m of input.matchAll(/(?:^|\s)((?:\/|~\/)(?:\\[ ()&']|[^\s'"“”])+)/g)) candidates.push(m[1].replace(/\\([ ()&'])/g, '$1'))
+  const found = []
+  const seen = new Set()
+  for (let p of candidates) {
+    if (p.startsWith('~/')) p = path.join(os.homedir(), p.slice(2))
+    p = p.replace(/[.,;:!?]+$/, '') // trailing sentence punctuation isn't part of a path
+    if (seen.has(p)) continue
+    try {
+      const st = fs.statSync(p)
+      seen.add(p)
+      found.push({ p, dir: st.isDirectory(), size: st.size })
+    } catch {}
+    if (found.length >= 6) break
+  }
+  return found
+}
+
+function attachDroppedFiles(userText) {
+  const dropped = extractDroppedPaths(userText)
+  if (!dropped.length) return userText
+  let block = ''
+  let budget = 48000
+  for (const f of dropped) {
+    if (f.dir) {
+      ui(dim(`◆ attached folder: ${f.p}\n`))
+      block += `\n\n[attached folder: ${f.p}]\n${toolListDir({ path: f.p }).slice(0, 2000)}`
+      continue
+    }
+    let note = ''
+    let body = ''
+    if (f.size > 400000) note = `(${Math.round(f.size / 1024)} KB — too large to inline; read parts with read_file/grep)`
+    else {
+      try {
+        const src = fs.readFileSync(f.p, 'utf8')
+        if (src.includes('\u0000')) note = '(binary file — not inlined)'
+        else {
+          body = src.slice(0, Math.min(20000, Math.max(0, budget)))
+          budget -= body.length
+          if (body.length < src.length) note = `(first ${body.length} chars of ${src.length} — use read_file for the rest)`
+        }
+      } catch (e) {
+        note = `(could not read: ${e.message})`
+      }
+    }
+    ui(dim(`◆ attached: ${f.p} (${f.size > 1024 ? `${(f.size / 1024).toFixed(1)} KB` : `${f.size} B`})\n`))
+    block += `\n\n[attached file: ${f.p} ${note}]${body ? `\n\`\`\`\n${body}\n\`\`\`` : ''}`
+  }
+  return userText + block
+}
+
 // ── the agent loop for one user input ────────────────────────────────────────
 async function runTurn(state, userText) {
   // refresh project memory each turn so docs/plans written mid-session (or by
   // the user in another window) are visible on the very next message
   state.projectDoc = gatherProjectContext().doc
+  userText = attachDroppedFiles(userText) // dragged-in paths → inline the file
   state.messages.push({ role: 'user', content: userText })
   state.interrupted = false
   state.hadError = false
@@ -1651,7 +1709,7 @@ async function main() {
 }
 
 // Exported for tests; main() only runs when executed directly (not imported).
-export { recoverToolCalls, parseToolArgs, findJsonObjects, trimHistory, toolEditFile, toolGrep, globToRegex, execTool, runBash, announcesIntent }
+export { recoverToolCalls, parseToolArgs, findJsonObjects, trimHistory, toolEditFile, toolGrep, globToRegex, execTool, runBash, announcesIntent, extractDroppedPaths, attachDroppedFiles }
 
 const runDirectly = (() => {
   try {
