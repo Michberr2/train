@@ -1,0 +1,6 @@
+training/.venv
+training/flywheel.log
+test-results
+photos
+ltx-server
+node_modules
