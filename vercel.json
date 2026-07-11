@@ -39,7 +39,7 @@
   },
   "rewrites": [
     {
-      "source": "/((?!api/|openscad/|privacy|download).*)",
+      "source": "/((?!api/|openscad/|privacy|download|install\\.sh|nalu\\.mjs).*)",
       "destination": "/index.html"
     }
   ],

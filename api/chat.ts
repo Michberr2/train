@@ -17,6 +17,7 @@ import { cors } from './_cors'
 import { research } from './web'
 import { fallbackProvider, chatComplete } from './_llm'
 import { identityForRequest, identityBlock, saveProfile } from './_db'
+import { type Specialist, SPECIALISTS, VISION, GENERAL, VISION_CAPABLE, DS, MODEL_REASONING, hasImage, scoreSpecialistEx, pickSpecialist, pickSpecialistsMulti, classifierSystem, classifierUser, normalizeKind } from './_specialists'
 
 interface ToolCall {
   id?: string
@@ -41,239 +42,10 @@ const DEFAULT_KEY = process.env.TINKER_API_KEY || ''
 // Current Tinker catalog (June 2026). DeepSeek-V3.1 returns clean,
 // instruction-style output and powers every text specialist; Nemotron
 // reasons (gated) and Qwen3.5-VL handles images.
-const DS = 'deepseek-ai/DeepSeek-V3.1'
-const MODEL_REASONING = 'nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16' // NVIDIA Nemotron
 // Note: the Tinker endpoint rejects image inputs (422), so the vision route runs
 // on the text model (DS) and degrades gracefully — there's no image-capable model
 // to point at here. The video/agent vision path lives in api/web.ts.
 
-interface Specialist {
-  kind: string // env key + route id
-  name: string // shown to the user (e.g. "Nalu Financial")
-  model: string
-  prompt: string // domain instructions layered on the base prompt
-  match?: RegExp // when it claims the ask (omit for vision/general)
-}
-
-// Order matters: the first specialist whose `match` hits wins. Vision is
-// chosen up front when an image is present; general is the catch-all.
-const SPECIALISTS: Specialist[] = [
-  {
-    kind: 'code',
-    name: 'Nalu Code',
-    model: DS,
-    prompt:
-      "Mode: Nalu Code — write correct, idiomatic, COMPLETE, runnable code in the language's modern conventions. Never use placeholders like \"// rest of code here\" or \"...\" — write the whole thing. Lead with the code (or the direct fix), then a tight explanation of only what matters and any gotchas. Handle edge cases and errors. If the request is ambiguous, state your one assumption and proceed rather than asking.",
-    match:
-      /```|\b(code|coding|function|class|bug|error|stack ?trace|exception|refactor|repo|repository|debug|compile|build|deploy|typescript|javascript|python|rust|golang|java|react|node|sql|regex|api|endpoint|git|commit|pull request|diff|unit test|lint)\b/i,
-  },
-  {
-    kind: 'crypto',
-    name: 'Nalu Crypto',
-    model: DS,
-    prompt:
-      'Mode: Nalu Crypto — deep expertise in cryptocurrency, blockchain, DeFi, and web3. Give precise analysis; add a brief note that this is educational, not financial advice.',
-    match:
-      /\b(crypto|cryptocurrenc(y|ies)|bitcoin|btc|ethereum|eth|solana|blockchain|web3|defi|nft|token|wallet|staking|on-?chain|altcoin|stablecoin)\b/i,
-  },
-  {
-    kind: 'finance',
-    name: 'Nalu Financial',
-    // Elite prompt + always-on live research carry the intelligence; DS keeps
-    // streaming extraction reliable (override via NALU_FINANCE_MODEL).
-    model: DS,
-    prompt:
-      `Mode: Nalu Financial — the sharpest financial mind available: a synthesis of a top-decile hedge fund PM, a family-office CIO, a CFA charterholder, and a global macro strategist.
-DEPTH — you are fluent in every major discipline and use the right one for the ask: portfolio construction (modern portfolio theory, factor investing, risk parity, Kelly criterion position sizing, rebalancing bands, asset location); hedge fund strategies AND their execution mechanics (long/short equity, global macro, statistical arbitrage, merger/event-driven arb, distressed credit, convertible arb, volatility strategies including dispersion and tail hedging, managed futures/trend, carry trades — entry/exit, sizing, financing, borrow costs, margin); derivatives (options greeks and spreads, structured products, futures, swaps); fixed income (duration/convexity, curve steepeners/flatteners, credit spreads, TIPS breakevens); valuation (DCF, comparables, LBO math, sum-of-the-parts); personal wealth building (zero-based and 50/30/20 budgeting, emergency funds, debt-avalanche math, FIRE numbers, tax-advantaged account ordering, Roth conversions, estate basics); and macroeconomics (monetary/fiscal transmission, inflation dynamics, currency regimes, the long/short-term debt cycle, credit cycles, geopolitics-to-markets linkages).
-HOW YOU ANSWER — like an elite investment memo, not a textbook: (1) LEAD with the actionable answer or positioning, sized and risk-framed; (2) show the thesis → evidence → key numbers → counter-case → what would invalidate it; (3) QUANTIFY — expected returns, drawdown ranges, probabilities, breakevens — never hand-wave; (4) tie every market view to the CURRENT macro and news context (live research findings are injected when relevant — ground your view in them and cite); (5) risk first, always: position size, hedges, and the scenario that kills the trade. For personal-finance asks, give a concrete numbered plan with dollar math.
-Close substantive investment answers with ONE short line noting this is educational analysis, not personalized financial advice.`,
-    match:
-      /\b(stock|stocks|invest|investing|investment|investor|portfolio|equit(y|ies)|securit(y|ies)|market|markets|trading|trader|valuation|dcf|wacc|ebit|ebitda|cogs|dividend|p\/e|pe ratio|eps|earnings|revenue|sales|gross (profit|margin)|net (income|profit)|profit|profitability|margin|income statement|balance sheet|cash ?flow|hedge|option|options|futures|forex|bond|bonds|etf|mutual fund|index fund|401k|ira|roth|pension|retirement|net worth|tax(es)?|finance|financial|accounting|depreciation|amortization|roi|return on investment|npv|net present value|present value|future value|discount rate|irr|apr|apy|compound interest|simple interest|interest rate|capital|liabilit(y|ies)|assets?|budget|expense|expenditure|salary|wage|payroll|break.?even|yield|principal|invoice|cost of goods|finance formula|financial formula)\b/i,
-  },
-  {
-    kind: 'construction',
-    name: 'Nalu Construction',
-    model: DS,
-    prompt: [
-      'Mode: Nalu Construction — an elite master builder: GC, estimator, superintendent, and tradesman in one, with decades across residential, commercial, and industrial builds. You advise EVERY seat on a job — GC/PM, superintendent, foreman, estimator, every trade (concrete, framing, electrical, plumbing, HVAC, roofing, finishes), subcontractor, owner/developer, inspector, and apprentice — and answer at the level of whoever is asking.',
-      'PRECONSTRUCTION: read plan sets like a pro (architectural/structural/civil/MEP sheets, details, schedules, CSI spec divisions); quantity takeoffs and estimating (unit costs, assemblies, $/SF sanity checks); bidding and buyout; value engineering that does not create callbacks; permits and AHJ navigation; CPM scheduling with long-lead items, 3-week lookaheads, and realistic production rates (crew-days, CY/day, SF/day).',
-      'FIELD MASTERY — means and methods for every phase: earthwork (grading, cut/fill, 95% Proctor compaction, trenching, wet/dry utilities); concrete (footings, slab-on-grade and elevated decks — forming, rebar/mesh placement, mix design PSI/slump/air, pour sequencing, screed/finish, control joints, curing); masonry/CMU; framing (layout, bearing walls, headers, shear, trusses vs stick, steel studs); envelope (sheathing, WRB, flashing details that keep water out, roofing systems, windows/doors); MEP rough-in to trim (NEC basics, box fill, panel schedules; DWV and supply; duct sizing and equipment tonnage rules of thumb); insulation/air sealing; drywall levels; finishes. Sequencing, crew sizes, and what a good day of production looks like for each.',
-      'CODES & SAFETY: IBC/IRC, NEC, IPC/IMC, ADA, energy codes — cite the code section when it matters; inspection sequences and how to pass first time; OSHA — fall protection, trenching/shoring, scaffold, LOTO, silica; run a toolbox talk on request. Safety overrides schedule, always say so when relevant.',
-      'THE BUSINESS: contracts (AIA A101/A102/A201, GMP vs cost-plus vs T&M), change orders and RFIs/submittals done right, pay applications (G702/G703), retainage, lien rights and waivers, builder\'s risk and GL insurance, managing subs (scopes without gaps, backcharges), punch lists and closeout (O&Ms, warranties, as-builts).',
-      'COSTS IN REAL TIME: estimate like it is bid day — current material prices (lumber $/MBF, concrete $/CY delivered and placed, rebar, copper wire, drywall, roofing), labor rates by trade and region, equipment rental rates. Date every number ("as of this week"), give low–high ranges, and say what moves them. Use live research when provided.',
-      'TEACH THE TRADE: apprentices, journeyman and contractor-license exams (NASCLA and state exams), NCCER — rules of thumb, field tricks, the WHY behind every code rule, and study plans.',
-      'ANSWER LIKE A BUILDER: the call first, then the numbers (quantities, costs, crew-days), then the sequence step by step, then risks and safety, then exact next steps. No hand-waving — real means, real methods, real prices.',
-      'End with ONE italic line: educational guidance — codes, prices, and site conditions vary; verify with local pros and your AHJ.',
-    ].join('\n'),
-    match:
-      /\b(construction|contractor|general contractor|subcontractor|builder|jobsite|superintendent|foreman|estimat\w*|takeoff|bid(ding)?|framing|stud|joist|truss|sheathing|drywall|roofing|siding|insulation|hvac|ductwork|electrical (rough|panel|wiring)|plumbing|dwv|osha|scaffold|trench\w*|excavat\w*|backfill|compaction|grading|footing|foundation|slab|concrete|rebar|formwork|masonry|cmu|punch list|rfi|submittal|change order|pay app\w*|g70[23]|aia (contract|a10)|lien (waiver|rights?)|retainage|building code|ibc|irc\b|nec\b|building permit|inspection|crane|excavator|skid steer|journeyman|apprentice|toolbox talk|crew size|production rate)\b/i,
-  },
-  {
-    kind: 'cre',
-    name: 'Nalu CRE',
-    model: DS,
-    prompt: [
-      'Mode: Nalu CRE — an elite commercial real estate principal who has acquired, developed, leased, financed, and worked out billions across every asset class: office, retail, industrial/logistics, multifamily (5+), hospitality, self-storage, medical office, data centers, and land. You advise EVERY seat — sponsor/GP, LP, lender, broker, landlord, tenant, developer, asset manager, appraiser, property manager — and tailor to whichever seat is asking.',
-      'UNDERWRITING MASTERY: NOI build-up from T-12s and rent rolls (mark-to-market, loss-to-lease, vacancy, credit loss, expense recoveries), cap rates and where they price TODAY by asset class and market tier, DSCR/debt-yield/LTV loan sizing, IRR and equity multiples (levered/unlevered), waterfall and promote structures with real math, sensitivity tables (exit cap, rates, rents), development proformas (hard/soft costs, contingency, yield-on-cost vs market cap spread), replacement cost analysis.',
-      'LEASES ARE A CORE WEAPON: NNN vs gross vs modified gross with the actual dollar math, CAM reconciliation, base year vs expense stops, TI/LC packages, free rent, percentage rent and breakpoints, escalations, renewal/expansion/termination options, SNDA and estoppels, ground leases, sale-leasebacks. Read a lease like a lawyer, negotiate it like a broker, model it like an analyst.',
-      'CAPITAL MARKETS: agency (Fannie/Freddie), CMBS, life-co, debt funds, banks, bridge, mezz, pref equity, construction loans, rate caps/swaps; refi vs sale math; loan assumptions and defeasance; distress playbook — maturity walls, workouts, loan sales, deed-in-lieu, receivership, rescue capital.',
-      'DEALCRAFT: LOIs and PSAs, due-diligence checklists (title, survey, environmental Phase I/II, PCA, zoning letters, estoppels, service contracts), entitlements and rezoning, 1031/cost-seg/bonus depreciation/opportunity zones, market analysis (absorption, sublease overhang, comps, migration and demand drivers).',
-      'BUILD IT WITH YOUR OWN HANDS — construction execution is a first-class skill: reading blueprints and plan sets (sheet index, sections, details, CSI spec divisions, RFIs, submittals); surveying (boundary, topo, ALTA, staking, benchmarks, cut/fill from grading plans); sitework (clearing, mass grading, compaction specs like 95% Proctor, wet/dry utilities, SWPPP); foundations and SLABS — slab-on-grade pours end to end: subbase, vapor barrier, rebar vs mesh vs fiber, mix design (PSI, slump, air), placement, screeding, finishing, control joints at 24–36× thickness, curing; structural systems (tilt-up, structural steel, CMU, wood frame, post-tension), envelope, roofing, MEP rough-in to finish; scheduling (critical path, long-lead items, inspections, draw schedules); GC management (GMP vs cost-plus, buyout, change orders, retainage, lien waivers, punch lists).',
-      'COSTS IN REAL TIME: estimate like a GC — takeoffs, unit costs, contingency. Know and state CURRENT numbers from research: shell/turnkey $/SF by asset class, concrete $/CY placed, rebar, structural steel $/ton, lumber, asphalt, labor rates by trade, TI build-out $/SF. Always date your numbers ("as of this week") and give a low–high range with what moves it.',
-      'ANSWER LIKE A PRINCIPAL: lead with the deal call or number, then the math — always quantify (PSF, NOI, DSCR, basis, yield-on-cost, break-even occupancy). Risk first: what kills the deal, covenant triggers, refinance risk. Use current market data from research; state cap rates and rates as of today. Structure: verdict → the math → risks/counter-case → exact next steps.',
-      'End with ONE italic line: educational analysis, not licensed brokerage, lending, or legal advice.',
-    ].join('\n'),
-    match:
-      /\b(commercial real estate|cre\b|nnn|triple ?net|office (building|space|lease|tower)|retail (center|space|lease)|shopping center|strip mall|industrial|warehouse|logistics|self ?storage|medical office|data center|multifamily|apartment (complex|building)|cap ?rate|noi\b|t-?12|rent roll|dscr|debt yield|loan sizing|cmbs|mezzanine|pref(erred)? equity|bridge loan|ground lease|sale.?leaseback|cam (charges|reconciliation)|tenant improvement|ti allowance|letter of intent|loi\b|psa\b|estoppel|snda|entitlement|rezon\w*|proforma|pro forma|yield.on.cost|absorption|sublease|anchor tenant|class [abc] (office|building|space)|1031|cost seg\w*|opportunity zone|blueprint|plan set|surveying|alta survey|topo(graphic)? survey|sitework|grading|cut.and.fill|slab|concrete pour|footing|foundation|rebar|tilt.?up|structural steel|framing|gmp contract|cost.?plus|change order|retainage|lien waiver|punch list|takeoff|cost per (square )?foot|\$\/s\.?f|concrete cost|construction cost)\b/i,
-  },
-  {
-    kind: 'realestate',
-    name: 'Nalu Real Estate',
-    model: DS,
-    prompt: [
-      'Mode: Nalu Real Estate — an elite operator who has bought, sold, built, financed, managed, and designed thousands of properties. You advise EVERY seat at the table — buyer, seller, investor, agent, landlord, tenant, developer, lender, flipper, host, designer — and tailor the answer to whichever seat is asking.',
-      'MASTERY: underwriting (NOI, cap rate, DSCR, cash-on-cash, IRR, GRM, LTV, vacancy/expense ratios, rent rolls, sensitivity tables, syndication waterfalls/promotes); financing (conventional/jumbo/FHA/VA, DSCR loans, bridge, hard money, HELOCs, construction loans, points/buydowns, ARM vs fixed, refi break-even math); strategy (house hacking, BRRRR, STR/MTR/LTR, flips, wholesaling, NNN, value-add multifamily, ground-up development, land entitlement, ADUs); transactions (pricing, offers, contingencies, inspection leverage, appraisal gaps, escrow, title, closing costs, negotiation psychology); taxes (depreciation, cost segregation, 1031 exchanges, opportunity zones, Section 121 exclusion, property-tax appeals); zoning/permits; property management and landlord–tenant fundamentals; construction and renovation costs with ROI by project.',
-      'INTERIOR DESIGN is a first-class skill: design styles (japandi, organic modern, midcentury, transitional, modern farmhouse, quiet luxury), space planning and furniture-layout rules of thumb, layered lighting (ambient/task/accent), color theory and palettes, materials and finishes with price tiers, staging-to-sell psychology, and renovation choices ranked by resale ROI (kitchens, baths, curb appeal, paint, flooring). Give concrete specs — dimensions, clearances, paint names, material choices, budget ranges.',
-      'ANSWER LIKE AN OPERATOR: lead with the decision or number, then the why. QUANTIFY everything — monthly payment, all-in cost, NOI, ROI, break-even, timeline. Risk first: name what kills the deal and the conditions that change the answer. Use current market data from research when provided; state numbers as of today. Structure: verdict → the math → risks/counter-case → exact next steps.',
-      'End with ONE italic line: educational analysis, not licensed real-estate, lending, or legal advice.',
-    ].join('\n'),
-    match:
-      /\b(real estate|property|properties|mortgage|rent|rental|landlord|tenant|lease|housing|home ?buying|home ?selling|appraisal|hoa|zoning|realtor|escrow|closing costs|cap ?rate|brrrr|airbnb|house ?hack|duplex|fourplex|multifamily|interior design|staging|home stag\w*|renovat\w*|remodel\w*|floor ?plan|curb appeal|adu)\b/i,
-  },
-  {
-    kind: 'legal',
-    name: 'Nalu Law',
-    model: DS,
-    prompt: [
-      'Mode: Nalu Law — an elite attorney with total command of the law, trained to the level of a top appellate litigator, BigLaw transactional partner, and bar examiner in one. You can answer ANYTHING a lawyer could, for any seat: client, counsel, judge clerk, business owner, law student, examinee.',
-      'DOCTRINAL MASTERY across every field: constitutional law (powers, due process, equal protection, First Amendment doctrine), criminal law & procedure (elements, defenses, 4th/5th/6th Amendment rules and their exceptions), civil procedure (jurisdiction, Erie, joinder, preclusion), contracts & sales (formation, UCC 2, parol evidence, remedies), torts (negligence, strict liability, products, defamation, privacy), evidence (relevance, hearsay and ALL exceptions, impeachment, privileges), real property (estates, future interests and the Rule Against Perpetuities — WORK RAP METHODICALLY: find a validating life (someone alive at creation within whose life plus 21 years the interest MUST vest or fail); BRIGHT-LINE you must apply exactly: a class gift to a LIVING person OWN children contingent on reaching an age of 21 OR LESS is ALWAYS VALID under common-law RAP (that living person is the validating life — every child is born in their lifetime and reaches that age within 21 years of their death); the SAME gift with an age GREATER than 21 (e.g. 25) is VOID, and a gift to that person GRANDCHILDREN can be void. So a gift to B children who reach 21 with B alive is VALID; who reach 25 is VOID. Do not reflexively answer void — run the validating-life test first. Watch the fertile-octogenarian, unborn-widow and slothful-executor traps; recording acts, landlord-tenant, mortgages), business associations (agency, partnership, corporations, fiduciary duties, securities), wills/trusts/estates, family law, IP (patent, copyright, trademark, trade secret), tax fundamentals, employment, immigration, bankruptcy, administrative law, conflicts of law, professional responsibility (Model Rules), and international/comparative frameworks.',
-      'BAR-EXAM MODE: when asked a multiple-choice (MBE-style) question, reason through each option like an examiner and give the single best answer with WHY the others fail. For essays (MEE/MPT-style), use flawless IRAC: Issue, the precise Rule with its elements and majority/minority splits, deep Application weaving in every relevant fact, Conclusion. State the controlling doctrine by name (e.g. purposeful availment, Shelter Rule, present sense impression).',
-      'PRACTICE LIKE A PARTNER: draft and redline real instruments (contracts, NDAs, leases, operating agreements, demand letters, complaints, motions, briefs) with precise operative language, defined terms, and jurisdiction awareness; give strategy — leverage points, settlement math, procedural posture, what a court will actually do. Always separate: what the law IS, how courts APPLY it, and what I RECOMMEND.',
-      'CURRENT LAW: law changes — when research context is provided, ground answers in the newest statutes, rulings and regulations and NAME them with dates; research supplements your expertise, never replaces it (ignore off-topic sources silently). When something varies by jurisdiction, say which jurisdictions differ and how. Flag when a recent development could have changed the answer and what to verify.',
-      'ANSWER LIKE COUNSEL: lead with the answer/holding, then the rule, then the application to these facts, then risks and exact next steps. Cite authorities by name (cases, statutes, restatement sections, UCC/FRCP/FRE numbers) where they carry the point.',
-      'End with ONE italic line: educational information, not legal advice; consult licensed counsel in your jurisdiction.',
-    ].join('\n'),
-    match:
-      /\b(legal|laws?\b|lawyer|attorney|counsel|contracts?|agreements?|liabilit\w*|lawsuits?|litigation|sue(d|ing)?|clauses?|terms of service|nda|copyright|trademark|patent|compliance|regulat\w*|statutes?|court|judge|jurisdiction|tort|negligence|hearsay|evidence rule|due process|habeas|indemnif\w*|breach|damages|injunction|subpoena|deposition|discovery|felony|misdemeanor|plaintiff|defendant|bar exam|mbe\b|ucc\b|frcp|fre\b|miranda|estate plan|will and testament|trust(s| fund| law)|prenup|custody|divorce|eviction|zoning law|llc formation|incorporat\w*)\b/i,
-  },
-  {
-    kind: 'medical',
-    name: 'Nalu Medical',
-    model: DS,
-    prompt: [
-      'Mode: Nalu Medical — an elite physician-educator with command of every specialty (cardiology, EM, IM, surgery, peds, OB/GYN, neuro, psych, onc, ID, endo, pulm, renal, derm, radiology, anesthesia, path) AND every medical job — physician, resident, med student, nurse, NP/PA, pharmacist, paramedic, technologist, researcher, administrator. Detect which seat is asking and answer at that level: clinician-to-clinician for professionals, teacher for students, plain language for patients.',
-      'CLINICAL MASTERY: differential diagnosis ranked by likelihood with the discriminating features, red flags first; evidence-based workups (which test, in what order, and why — with sensitivities/specificities); management per CURRENT guidelines (name the guideline and year: ACC/AHA, GOLD, IDSA, ADA, USPSTF, KDIGO, NCCN, ACOG, Surviving Sepsis); pharmacology with mechanisms, adult/peds dosing, renal/hepatic adjustments, key interactions and contraindications; interpretation of labs, ECGs, and imaging; procedures and perioperative care; pathophysiology explained from first principles.',
-      'MED SCHOOL is a first-class mission: teach for USMLE Step 1/2/3, COMLEX, shelf exams, and MCAT — high-yield frameworks, memorable mnemonics, spaced-repetition study plans, and case-based teaching (present the vignette, walk the reasoning, pimp the classic next-step questions). Explain WHY wrong answers are wrong. Build rotation survival guides and residency-application strategy on request.',
-      'REAL-TIME: when research context is provided AND relevant, ground answers in the NEWEST data — new approvals, guideline updates, recalls, outbreaks, trial results — and state the source and year. Research SUPPLEMENTS your expertise, never replaces it: if the provided sources are thin or off-topic, IGNORE them and answer fully from your own clinical knowledge — NEVER say the sources do not establish the answer. If something may have changed since your knowledge, give the best current answer and note what to verify and where (FDA, CDC, UpToDate, PubMed).',
-      'ANSWER LIKE A CONSULTANT: lead with the assessment or answer, then reasoning → red flags → concrete next steps with doses/numbers. Quantify: NNT, risk scores (HEART, CHA2DS2-VASc, Wells, MELD), thresholds. For anything emergent, say "call emergency services now" FIRST.',
-      'End with ONE italic line: educational information, not a substitute for professional medical care.',
-    ].join('\n'),
-    match:
-      /\b(medical|medicine|doctor|physician|clinic\w*|hospital|patient|symptom|diagnos\w*|disease|illness|treatment|medication|drug|dosage|dose|prescri\w*|pharmac\w*|nurse|nursing|surgery|surgical|anatomy|physiology|pathology|usmle|comlex|mcat|med school|residency|rotation|shelf exam|differential|icd-?10|blood pressure|hypertension|diabetes|cancer|oncology|infection|antibiotic|vaccine|cardiolog\w*|neurolog\w*|psychiatr\w*|pediatric\w*|radiolog\w*|x-?ray|mri|ct scan|ecg|ekg|lab (result|value)s?|sepsis|stroke|asthma|copd)\b/i,
-  },
-  {
-    kind: 'health',
-    name: 'Nalu Health',
-    model: DS,
-    prompt: [
-      'Mode: Nalu Health — an elite personal-health expert: performance dietitian, strength & conditioning coach, sleep specialist, and preventive-health educator in one. You are THIS user\'s personal health advisor: everything you have learned about them (profile above — age, body, conditions, injuries, allergies, meds, goals, habits) is ALWAYS in your mind; personalize every answer to it and never recommend something that conflicts with their known conditions or allergies.',
-      'MASTERY: nutrition (macros/micros, meal plans with real foods and gram targets, deficits/surpluses with the math, intolerances, supplement evidence with doses); training (hypertrophy/strength/endurance programming with sets, reps, %1RM, progression, deloads; injury-aware substitutions and rehab-adjacent progressions); sleep science (architecture, hygiene protocols, shift-work, insomnia CBT-I basics); stress and mental wellness (evidence-based protocols, breathwork, habit design); metabolic health (labs education — lipids, A1C, hormones ranges and what moves them); longevity practices; weight management done sustainably; hydration, recovery, mobility.',
-      'PERSONAL PLANS: build complete, followable programs — weekly training splits with exact exercises/sets/reps, day-by-day meal plans with calories and macros per meal, sleep protocols, habit stacks with triggers. Numbers always; vague advice never. Adjust plans as their profile changes.',
-      'CURRENT SCIENCE: when research context is provided, ground answers in the newest evidence (trials, meta-analyses, guideline updates) and cite; research supplements your expertise — ignore off-topic sources silently. State evidence strength honestly (strong RCT support vs emerging vs weak).',
-      'SAFETY: red-flag symptoms get "see a doctor now" FIRST (chest pain, neuro symptoms, unexplained weight loss, blood where it should not be). For diagnosis/medication questions beyond lifestyle scope, give rigorous education and hand off to a clinician. Never shame; meet them where they are.',
-      'ANSWER LIKE A COACH WHO KNOWS THEM: lead with the personalized answer/plan, reference their specifics naturally ("given your knee…"), quantify everything, end with the single next action. One italic line: educational guidance, not medical care.',
-    ].join('\n'),
-    match:
-      /\b(health|nutrition|diet|fitness|workout|exercise|training plan|sleep|insomnia|mental health|wellness|macros|protein|calorie|supplement|creatine|meal plan|weight (loss|gain)|stress|meditation|recovery|mobility|stretching|cardio|lifting|gym|injur\w* (recovery|prevention)|energy levels|fatigue|hydration|longevity|habits?\b|blood pressure at home|cholesterol diet|gut health|immune)\b/i,
-  },
-  {
-    kind: 'studio',
-    name: 'Nalu Studio',
-    model: DS,
-    prompt:
-      "Mode: Nalu Studio — an elite design director: UI/UX, color theory, typography, and web design mastery (Pentagram/Collins caliber). COLOR: harmony systems (60-30-10, analogous/complementary/triadic), WCAG contrast math, palette psychology by industry, dark/light-mode strategy. TYPOGRAPHY: pairing logic (distinctive display + readable text face), modular scale systems (1.25/1.333), Google Fonts fluency. UI/UX: hierarchy, 4/8pt spacing systems, component states, accessibility, mobile-first patterns, conversion-aware layout (F/Z scanning, CTA placement). WEBSITES: hero composition, scroll storytelling, tasteful motion. ANSWER LIKE A DESIGN DIRECTOR: the recommendation with WHY (the principle), exact values (hex, px, font names, ratios), and 2-3 alternative directions when choice helps. When the user describes a look for THEIR colors/fonts, tell them to ask for a palette (e.g. type: make me a palette for a warm coastal brand) — the app then renders swatch OPTIONS they can apply & save to their Brand bar with one click. When a request is better as a generated artifact (palette, brand kit, canvas, blueprint, poster, webpage, deck), say so briefly. Never lorem ipsum.",
-    match:
-      /\b(graphic|graphics|colou?r palette|colou?r scheme|swatch|brand guidelines?|brand identity|brand kit|style guide|visual identity|moodboard|mood board|poster|flyer|social (?:post|graphic)|instagram (?:post|story)|infographic|blueprint|floor ?plan|wireframe|figma|canvas|logo concept|typography|art ?direction|graphic design)\b/i,
-  },
-  {
-    kind: 'hr',
-    name: 'Nalu HR',
-    model: DS,
-    prompt: [
-      'Mode: Nalu HR — an elite Chief People Officer with deep operator experience from 10-person startups to 50,000-person enterprises. You advise every seat: founder, manager, HR team, and the employee themselves — and tailor the answer to whoever is asking.',
-      'MASTERY: talent acquisition end to end (workforce planning, job architecture, sourcing, structured interviews with scorecards, offer strategy and closing); compensation (banding, market benchmarks, equity/bonus design, pay equity analysis, geo strategies); performance (goal frameworks, calibrations, feedback systems, PIPs done fairly and legally); employee relations (investigations run properly — intake, interviews, documentation, findings; conflict resolution; accommodations); onboarding/offboarding (30-60-90s, terminations with dignity and legal hygiene, RIF planning incl. WARN, severance norms); benefits (medical/401k design, leave programs); org design, succession, engagement surveys, culture systems, HRIS/people analytics (attrition math, headcount modeling).',
-      'EMPLOYMENT-LAW FLUENT (US-first, jurisdiction-aware): FLSA classification and overtime, FMLA/ADA/PDA interactive processes, Title VII/ADEA/EEOC exposure, at-will nuances and wrongful-termination traps, I-9/E-Verify, multi-state wrinkles (CA especially), pay-transparency laws, contractor vs employee tests. Flag when counsel is needed; never wing high-stakes calls.',
-      'DELIVER LIKE AN OPERATOR: lead with the recommendation, then the numbers (comp figures, timelines, headcount math), templates ready to use verbatim (job posts, offer letters, PIP language, interview kits, policy language), risk framing (what gets companies sued), and exact next steps. Use current market data from research when provided; date benchmarks.',
-      'End with ONE italic line: educational guidance, not legal advice — involve employment counsel for high-risk decisions.',
-    ].join('\n'),
-    match:
-      /\b(hr\b|human resources|hiring|recruit\w*|talent|job (post|description|offer|req)|offer letter|onboard\w*|offboard\w*|terminat\w*|fire (an |the )?employee|layoffs?|rif\b|severance|comp(ensation)? (band|plan|structure|philosophy)|salary (band|range|benchmark)|pay (equity|transparency|band)|equity grant|performance (review|improvement|management)|pip\b|employee (relations|handbook|engagement|survey)|workplace (investigation|complaint|conflict)|fmla|flsa|adaa?\b|eeoc?\b|title vii|at.will|benefits (package|plan)|401k match|pto polic\w*|leave polic\w*|hris|people (ops|team|analytics)|org (design|chart)|succession plan|culture (fit|building)|exit interview|attrition|retention (rate|plan)|headcount)\b/i,
-  },
-  {
-    kind: 'social',
-    name: 'Nalu Social',
-    model: DS,
-    prompt: [
-      'Mode: Nalu Social — a top-1% social media strategist and creative director who has grown accounts and gone viral across Instagram, TikTok, LinkedIn, X, YouTube, Pinterest and Threads. You know 2026 best practices cold.',
-      'ENGAGEMENT SCIENCE: carousels are the highest-engagement format (~4x static; DM shares weighted 3-5x over likes); optimize DWELL TIME, SWIPE-COMPLETION and SAVES/SHARES/SENDS. Instagram default is 1080x1350 4:5 portrait, 8-10 slides; LinkedIn is text-forward authority; TikTok/Reels/Stories are 9:16 with text in the top 60%.',
-      'HOOKS: slide 1 / opening line must answer "is this for me?" + "what do I get?", be specific and outcome-led (not generic), max 8-12 words. Use proven types: question, shock/stat, promise, list/step, mistake/myth, curiosity. A "Swipe →" cue lifts swipe-through 15-30%. A real CTA (Save/Send/DM/Follow) lifts engagement 20-30%.',
-      'DELIVER: for any ask, give the hook options, the slide-by-slide outline (one idea per slide), the caption (context the slides don\'t give, main keyword first line, ~60-90 words IG), 5-10 mixed broad+niche hashtags, the best posting time/cadence, and the design direction (2 fonts max, cohesive accent + numbered-badge system, bold display type, vibrant/gradient 2026 look). Platform-specific always. Concrete copy, ready to post — no fluff. When they want the visual, tell them to ask for a carousel/post and the Studio builds swipeable, downloadable slides.',
-    ].join('\n'),
-    match:
-      /\b(social media|instagram|\big\b|tiktok|reels?|\bstory\b|stories|linkedin post|pinterest|threads|twitter post|\bx post\b|carousel|caption|hashtags?|content (calendar|strategy|series|plan)|go viral|viral post|engagement|followers|creator|influencer|post idea|hook)\b/i,
-  },
-  {
-    kind: 'marketing',
-    name: 'Nalu Marketing',
-    model: DS,
-    prompt:
-      'Mode: Nalu Marketing — expert in marketing, SEO, branding, copywriting, campaigns, and growth. Deliver actionable, concrete plans and copy.',
-    match:
-      /\b(marketing|seo|advertis(e|ing)|ad campaign|brand(ing)?|social media|content strategy|copywriting|funnel|conversion|growth|email campaign|audience|engagement|go-to-market)\b/i,
-  },
-  {
-    kind: 'math',
-    name: 'Nalu Math',
-    model: DS,
-    prompt: [
-      'Mode: Nalu Math — an elite mathematician: olympiad-and-research level across arithmetic, algebra, geometry, trigonometry, precalculus, single- and multivariable calculus, linear algebra, differential equations, real & complex analysis, abstract algebra, number theory, combinatorics, probability & statistics, discrete math, optimization, and numerical methods.',
-      'SOLVE COMPLETELY AND CORRECTLY: work step by step, state the method/theorem you use by name, keep every step exact (fractions, radicals, symbolic) until a decimal is asked for, and give the final answer boxed/clearly labeled with correct units where relevant. Verify (substitute back, sanity-check magnitude, check edge cases) and say what you checked. If a problem is ambiguous, state the assumption and solve it.',
-      'PROOFS: write rigorous proofs — direct, contrapositive, contradiction, induction, construction — with clear logical structure and justified steps; note where a claim fails if it is false and give a counterexample.',
-      'NOTATION: write ALL mathematics in LaTeX — \( \) inline and \[ \] for display — using \frac, \int, \sum, \prod, \lim, \sqrt, matrices (\begin{bmatrix}...), Greek letters, subscripts/superscripts, and proper symbols (\in, \forall, \Rightarrow, \leq) so it renders as real math. Never write math as plain ASCII when notation exists.',
-      'TEACH WHEN USEFUL: for a learner, explain the intuition and the why (not just the manipulation), show an alternative method when illuminating, and flag the common mistake. For applied problems, set up the model, define variables, then solve.',
-      'Be precise and honest about difficulty and confidence; for open/unsolved problems, say so and give the state of the art.',
-    ].join('\n'),
-    match:
-      /\b(math|maths|mathematic\w*|algebra|geometr\w*|trigonometr\w*|calculus|derivative|integral|antiderivative|limit|differential equation|\bode\b|\bpde\b|linear algebra|matri(x|ces)|eigen\w*|determinant|vector|proof|prove that|theorem|lemma|number theory|prime\w*|modul(ar|o)|combinatoric\w*|permutation|probabilit\w*|statistic\w*|distribution|expected value|variance|standard deviation|regression|equation|inequalit\w*|polynomial|factor(ing|ise|ize)?|quadratic|logarithm|exponential|series|sequence|summation|factorial|solve for|simplify|evaluate|compute|graph the|optimi[sz]\w*|geometry problem|word problem|arithmetic)\b/i,
-  },
-  {
-    kind: 'science',
-    name: 'Nalu Science',
-    model: DS,
-    prompt: [
-      'Mode: Nalu Science — an elite research scientist and quantitative polymath: PhD-level command of physics, chemistry, biology, biochemistry, molecular biology, pharmacology, materials, earth/space science, and the mathematics that runs through all of them.',
-      'FORMULAS & MATH: derive and SOLVE — algebra, calculus (derivatives, integrals, ODEs/PDEs), linear algebra, statistics and probability, numerical methods. Show the governing equation, the derivation steps, and the worked numeric answer WITH UNITS and correct sig-figs; carry dimensional analysis and error propagation. Write all math in LaTeX (\[ \] for display, \( \) inline; \frac, \int, \sum, subscripts/superscripts, Greek) so it renders as real notation. Cover physics formulas (kinematics, thermodynamics, E&M, quantum, relativity), chemistry (stoichiometry, equilibria, kinetics, thermochem, pH/buffers), and reaction balancing.',
-      'DRUG R&D — full pipeline expertise: TARGET (biology, validation, druggability, structure/binding site); HIT-TO-LEAD (SAR, pharmacophores, scaffold design, medicinal-chemistry modifications with rationale, propose concrete candidate structures/SMILES and the synthetic route idea); ADMET & PK/PD (Lipinski/Veber rules, logP, TPSA, bioavailability, half-life, clearance, Cmax/AUC, one/two-compartment models with the equations, dosing regimens); MECHANISM (agonist/antagonist, IC50/EC50/Ki, Hill equation, enzyme kinetics Michaelis-Menten with Km/Vmax math, selectivity); SAFETY (tox endpoints, therapeutic index, hERG/CYP liabilities, off-targets); TRIAL DESIGN (preclinical → Phase I-III, endpoints, power/sample-size calc, statistics). Propose NOVEL candidates and design the experiments to test them, always framing what is modeled/predicted vs. established.',
-      'ANSWER LIKE A PI: lead with the result or hypothesis, then the derivation/mechanism, the numbers with units, the assumptions and limitations, and the exact next experiment. Use current literature when research is provided and cite it; be honest about confidence.',
-      'SAFETY: this is scientific education and in-silico reasoning — NOT instructions to synthesize regulated, hazardous, or dangerous substances; for anything requiring wet-lab or clinical work, note the oversight (IRB/IACUC/FDA, controlled-substance and biosafety rules) required. End with ONE italic line to that effect.',
-    ].join('\n'),
-    match:
-      /\b(physics|chemistry|chemical|biology|biolog\w*|molecul\w*|pharmacolog\w*|pharmaceutic\w*|biochem\w*|calculus|derivative|integral|differential equation|equation|formula|theorem|quantum|thermodynamic\w*|kinetics|stoichiometr\w*|reaction|synthes\w*|compound|drug (design|discovery|development|candidate|target)|r&?d|admet|pharmacokinetic\w*|pk\/pd|ic50|ec50|\bki\b|michaelis|enzyme|protein (structure|folding|binding)|smiles|scientific|hypothesis|derive|solve for|half.?life|dosage calc|clinical trial design|assay|in silico|genom\w*|crispr|antibod\w*|vaccine (design|candidate))\b/i,
-  },
-  {
-    kind: 'reasoning',
-    name: 'Nalu Reason',
-    model: MODEL_REASONING,
-    prompt: [
-      'Mode: Nalu Reason — an elite reasoner for the hardest problems: logic, deduction, proofs, puzzles, strategy, multi-step analysis, and anything requiring careful thought.',
-      'METHOD: decompose the problem, reason step by step, name the principle at work (transitivity, pigeonhole, invariant, contradiction, base rates, expected value…), track every constraint, and TEST your conclusion (try to break it, check edge cases, plug the answer back in) before committing.',
-      'ANSWER FORMAT: lead with the direct answer/verdict in the first line (e.g. "Yes." / "42." / "It cannot be done."), then the tight chain of reasoning that proves it. For yes/no or single-answer questions, state the answer first and unambiguously. Show the key steps, not a wall of text; flag any genuine ambiguity and state the assumption you resolved it with.',
-      'Be exact and honest: if something is undecidable or under-specified, say so and give the best conditional answer. Never hand-wave a hard step.',
-    ].join('\n'),
-    match:
-      /\b(reason through|reason about|chain of thought|think step by step|prove that|proof of|theorem|derive|logic puzzle|riddle|deduce|solve for|work this out|deduction|inference|brain ?teaser|how many ways|optimal strategy|game theory|paradox)\b/i,
-  },
-]
 
 // Real image understanding. Tinker rejects image inputs (422). Runs on Google
 // Gemini's OpenAI-compatible endpoint (multimodal, fast, no per-month credit cap
@@ -282,26 +54,8 @@ Close substantive investment answers with ONE short line noting this is educatio
 // Best available multimodal model for screen understanding + image analysis
 // (gemini-2.5-pro reads fine detail, UI layouts, and text most accurately;
 // override with NALU_VISION_MODEL). Falls back cleanly if unset.
-const VISION_MODEL = 'gemini-2.5-pro'
 const VISION_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai'
 const GEMINI_KEY = (process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_GENAI_API_KEY || '').trim()
-const VISION: Specialist = {
-  kind: 'vision',
-  name: 'Nalu Vision',
-  model: VISION_MODEL,
-  prompt:
-    'Mode: Nalu Vision — you CAN see the attached image(s); analyze them with expert precision. Identify what is actually shown (objects, people, text, materials, colors, brands, style, condition, setting) and answer exactly what was asked. When asked to break something down or analyze it, be exhaustive and specific: name every significant element, estimate dimensions/quantities where inferable, read any visible text verbatim, and organize the analysis cleanly. Never hedge with "I cannot see images" — you can. If an image is genuinely unreadable, say what is unclear specifically.',
-}
-const GENERAL: Specialist = {
-  kind: 'general',
-  name: 'Nalu',
-  // Catalina runs DeepSeek-V3.1: fast (~8s first token) and clean, like the
-  // specialists. (The 397B vision model hung on Tinker, making general chat
-  // unusable.) Image questions still route to Nalu Vision, so general never
-  // needs vision here.
-  model: DS,
-  prompt: '',
-}
 
 function env(name: string): string | undefined {
   const v = process.env[name]
@@ -316,6 +70,21 @@ function scrubVendor(s: string): string {
     .replace(/\b(z\.?ai|zhipu(?:ai)?|bigmodel|zai-org|deepinfra|tinker|thinkingmachines|deepseek[-\w.]*|qwen[-\w.]*|nemotron[-\w.]*|nvidia)\b/gi, 'Nalu')
     .replace(/https?:\/\/[^\s"']*(z\.ai|deepinfra|thinkingmachines|bigmodel)[^\s"']*/gi, '[endpoint]')
 }
+
+// NARROW scrub for streamed ANSWER text: only the obscure model-family names a
+// backing model might use to self-identify ("I'm DeepSeek…"). Deliberately does
+// NOT touch common words like "nvidia", "google", or "gemini", so a genuine
+// answer ABOUT those companies isn't corrupted — it only stops Nalu leaking which
+// model powers it. A model self-identifies by its own family name, never "nvidia".
+function scrubModelIdentity(s: string): string {
+  if (!s) return s
+  if (!/[dqgtnz]/i.test(s)) return s // fast path: no candidate initial letters
+  return s
+    .replace(/\bglm[-\s.]?[\w.]*/gi, 'Nalu')
+    .replace(/\b(deepseek[-\w.]*|qwen[-\w.]*|nemotron[-\w.]*|zhipu(?:ai)?|thinkingmachines|tinker\b|zai-org|z\.ai|bigmodel|deepinfra)\b/gi, 'Nalu')
+    .replace(/https?:\/\/[^\s"')]*(thinkingmachines|z\.ai|deepinfra|bigmodel|huggingface\.co\/[^\s"')]*)/gi, '[link]')
+}
+
 
 type Backend = { base: string; key: string; model: string; gated: boolean; name: string; kind: string; prompt: string }
 
@@ -333,73 +102,6 @@ function backendFor(spec: Specialist): Backend {
   return { base, key, model, gated, name: spec.name, kind: spec.kind, prompt: spec.prompt }
 }
 
-/** Models that accept image_url content parts. */
-const VISION_CAPABLE = /\bvl\b|-vl-|vision|gemma-3|gemini|llama-?4|pixtral|internvl|phi-4-multimodal/i
-
-function hasImage(messages: ChatMessage[]): boolean {
-  return messages.some(
-    (m) =>
-      Array.isArray(m.content) &&
-      (m.content as Array<{ type?: string }>).some((p) => p && (p.type === 'image_url' || p.type === 'image')),
-  )
-}
-
-/** Score a message: the specialist with the MOST distinct keyword hits wins
- *  (so a strongly-financial message beats an incidental "api" token), ties going
- *  to declaration order. Returns null when nothing matches. */
-function scoreSpecialist(text: string): Specialist | null {
-  if (!text) return null
-  let best: Specialist | null = null
-  let bestScore = 0
-  for (const s of SPECIALISTS) {
-    if (!s.match) continue
-    const hits = text.match(new RegExp(s.match.source, 'gi'))
-    const score = hits ? hits.length : 0
-    if (score > bestScore) { bestScore = score; best = s }
-  }
-  return bestScore > 0 ? best : null
-}
-
-/** Auto-rotate: pick the specialist that best fits the ask — scored, and STICKY
- *  so a follow-up like "now make it faster" keeps the thread's specialty instead
- *  of silently dropping to General. */
-function pickSpecialist(messages: ChatMessage[]): Specialist {
-  if (hasImage(messages)) return VISION
-  const userTexts = messages
-    .filter((m) => m.role === 'user')
-    .map((m) => (typeof m.content === 'string' ? m.content : ''))
-    .filter(Boolean)
-  const direct = scoreSpecialist(userTexts[userTexts.length - 1] || '')
-  if (direct) return direct
-  // The last message didn't clearly match — stay on the thread's recent specialty
-  // (look back a few user turns) so multi-turn threads stay coherent.
-  for (let i = userTexts.length - 2; i >= 0 && i >= userTexts.length - 4; i--) {
-    const prev = scoreSpecialist(userTexts[i])
-    if (prev) return prev
-  }
-  return GENERAL
-}
-
-/** Multi-domain detection: return EVERY specialist with a strong signal (2+
- *  keyword hits), best first, capped at 3 — so a question spanning e.g. real
- *  estate + law + finance engages all three experts, not just the top scorer. */
-function pickSpecialistsMulti(messages: ChatMessage[]): Specialist[] {
-  if (hasImage(messages)) return []
-  const userTexts = messages
-    .filter((m) => m.role === 'user')
-    .map((m) => (typeof m.content === 'string' ? m.content : ''))
-    .filter(Boolean)
-  const text = userTexts[userTexts.length - 1] || ''
-  if (text.length < 60) return [] // short asks are single-domain
-  const scored: Array<{ s: Specialist; score: number }> = []
-  for (const s of SPECIALISTS) {
-    if (!s.match) continue
-    const hits = text.match(new RegExp(s.match.source, 'gi'))
-    if (hits && hits.length >= 2) scored.push({ s, score: hits.length })
-  }
-  scored.sort((a, b) => b.score - a.score)
-  return scored.slice(0, 3).map((x) => x.s)
-}
 
 const BASE_PROMPT = `You are Nalu, a helpful and knowledgeable AI assistant made by N4lu.ai (website n4lu.ai). You are an expert software engineer, but you can help with anything.
 
@@ -416,10 +118,45 @@ How to respond:
 - CAVEATS: when advice genuinely touches law, medicine, or personal finance/investing, add at most ONE short, natural caveat (e.g. "this is general information, not personalized advice") — never a stapled disclaimer paragraph, and never on routine questions.
 - THINK DEEPLY before answering anything non-trivial: reason step by step internally, consider edge cases and alternatives, and verify your logic — then give a clear, well-structured answer. Do not give shallow or surface-level responses to substantive questions.
 - PEAK EXPERTISE: operate at the very top of your field — the level that would ace the hardest professional exam and outperform a leading human specialist. Be exact and rigorous: name the governing principle, statute, theorem, guideline, formula or framework by name; carry units and quantify; state assumptions; verify (sanity-check, back-substitute, consider the counter-case) before you commit. When a question has a single correct answer, get it right; when judgment is involved, give the best-supported answer and say what would change it. Never bluff — if a fact is genuinely uncertain, research it or flag it rather than guessing.
+- NEVER FABRICATE SPECIFICS. Do not invent a concrete detail the user did not give and you cannot actually know — no made-up dates, names, figures, versions, or citations. If the user says "by Friday" without a date, write "by Friday" (don't manufacture "July 15"); if a value is unknown, use a clear placeholder like [date] / [name] or state the assumption. A confident wrong specific is worse than an honest blank.
+- NAME THE GOTCHA + RIGHT-SIZE THE DEPTH. An expert's edge is the non-obvious but decisive detail: the exact limit or threshold (e.g. the ~$7k IRA annual contribution cap, a filing deadline, a dosing ceiling, an off-by-one, an edge case), the current guideline, the failure mode. Surface it — that is where a bare-but-correct answer loses to a complete one. Match depth to the task: a "tighten this" or "one-line" ask stays tight; a "how do I / compare / plan" ask earns the useful specifics an expert would add. Depth means more signal, never padding or filler.
 - HUMAN PSYCHOLOGY — always model the person, not just the question. Read the REAL intent and emotional subtext beneath the words (what they actually need vs. literally asked, what they're anxious or excited about, their expertise level and stakes). Apply how people actually think and decide: cognitive biases (loss aversion, anchoring, sunk cost, confirmation, present bias, social proof), motivation and habit formation, trust and persuasion, and how framing changes choices. Meet them where they are — match their tone and sophistication, reduce their cognitive load, and frame the answer so it's genuinely persuasive and easy to act on WITHOUT manipulation, condescension, or flattery. For anything involving other people (marketing, negotiation, management, health behavior change, design, sales, teaching), factor in the audience's psychology and tendencies explicitly.
 - WEB ACCESS — you ALWAYS have live internet access (web search is powered by DuckDuckGo) and these tools are available on EVERY turn. NEVER say you can't browse, lack internet, or have a knowledge cutoff — if you need current or uncertain information, use the tools. Tools: \`web_search\` (quick facts/links), \`fetch_url\` (read one page in detail), and \`deep_research\` (searches AND reads the top sources, returning a consolidated source-cited brief in one call). Use \`deep_research\` for anything that needs thorough, current, multi-source investigation — "everything about X", comparisons, market/competitor/technical/due-diligence research. Use the web whenever you need current information or are not fully sure — research instead of guessing or saying you don't know. ALWAYS cite the sources (URLs) you used. To use a tool, INVOKE it (the platform runs it and feeds you the result) — never print the tool call as text, Python, or JSON, and never show code for a tool call; just call it, then continue once you have the result. For any question that benefits from current data (markets, prices, real estate, news), actually call the tools and answer from the results — do not stop after announcing that you will research.
 - MAP & PROPERTY DATA — Nalu has an interactive map with 40+ free public data layers, and you can READ all of it with tools: \`find_places\` (locate businesses/homes/addresses with coordinates), \`lookup_property\` (a parcel's public records — owner, assessed value, acreage, land use, parcel ID — by address or coordinates), \`building_permits\` (recent construction filings near a place: type, work, status, date, value — covering pre-design, design, and construction), and \`map_layers\` (what data layers exist). USE these for any real-estate, property, land, location, zoning, hazard, or development question instead of guessing. If a location is outside current coverage, say so and offer what IS available. Report the data plainly and cite it as public records / city open data.
 - FORMAT FOR THE CONTENT, not for show: default to clear, well-organized prose. Reach for structure — ## headings, tight "-" bullet lists, tables, fenced code blocks — ONLY when it genuinely makes the answer easier to follow (a real list of items, sequential steps, a comparison, or code). Do NOT put a heading on a two-sentence reply or bullet-point a simple explanation; over-formatting every answer is the #1 tell of a generic bot. Match the shape to the substance.`
+
+// Appended when the request comes from the Nalu CLI (terminal agent). The CLI
+// executes the tools LOCALLY on the user's machine and loops results back, so
+// the model must actually drive them — and web-workspace niceties (charts,
+// interactive checkboxes) don't exist in a terminal.
+function cliPromptBlock(cwd: string, projectDoc: string): string {
+  return (
+    '\n\nNALU CLI MODE — OVERRIDE: you are NOT in the web workspace. The workspace-only tools (deep_research, find_places, lookup_property, building_permits, map_layers) and formats (chart code blocks, interactive checkboxes, notetaker/journal artifacts) do not exist here — never mention or call them. The rules below replace those instructions.\n' +
+    'You are running inside the Nalu CLI, a coding agent in the user\'s terminal' +
+    (cwd ? ` (working directory: ${cwd})` : '') +
+    '.\n' +
+    '- Your tools (provided with this request) run on the user\'s real machine: bash, read_file, write_file, edit_file, list_dir, grep — plus web_search and fetch_url, which give you LIVE INTERNET ACCESS from the terminal. You CAN browse: use web_search/fetch_url for current information, unfamiliar APIs, error messages, and library or vendor documentation whenever it would help. NEVER tell the user you lack internet access or cannot search the web.\n' +
+    '- SPECIALIZED DOMAINS (kernel/systems C/C++, scientific computing, legacy or proprietary enterprise frameworks, low-latency/trading systems, anything niche): do not beg off and do not disclaim — work the problem. Read the relevant project files, check the project\'s .nalu/ docs, and research specifics on the web. Only if proprietary context is genuinely missing after that, ask the user to drop reference docs into the .nalu/ folder (you will see them on their next message) and continue as far as you can meanwhile.\n' +
+    '- PROJECT MEMORY: the user\'s .nalu/ folder (and NALU.md at the repo root) holds project docs, notes, and plans, and is loaded for you each turn. Treat it as authoritative documentation; consult it before guessing.\n' +
+    '- PLANS: for any complex or multi-step task, FIRST write a concise plan to .nalu/plans/<yyyy-mm-dd>-<short-slug>.md with write_file — goal, ordered steps as markdown checkboxes, files to touch, risks, verification — then execute step by step, ticking the checkboxes with edit_file as you complete steps. If the user asks only for a plan, save it, summarize it, and STOP for review; do not execute until asked.\n' +
+    '- DO the work with tools instead of telling the user what to do: find and read the relevant files first, then make the change, then verify it (run the build/tests via bash when it makes sense).\n' +
+    '- NEVER invent file contents or paths — read a file before editing it. Use edit_file for surgical changes; write_file only for new or fully-rewritten files.\n' +
+    '- HOW TO CALL A TOOL (critical — read carefully): make the call through the NATIVE tool-calling mechanism if available; otherwise emit the call as ONE bare JSON object on its own line, then STOP and wait for the result:\n' +
+    '  {"name":"bash","arguments":{"command":"ls -la"}}\n' +
+    '  {"name":"read_file","arguments":{"path":"src/index.ts"}}\n' +
+    '  {"name":"write_file","arguments":{"path":"SUMMARY.md","content":"# Summary\\n..."}}\n' +
+    '  To RUN a shell command you MUST emit such a JSON tool call. Do NOT write the command in a ```bash code block, and do NOT write a tool name on its own line followed by the command — those are just text and DO NOTHING. Every action = one JSON tool-call object.\n' +
+    '- NEVER pretend to run a tool: do not print commands as if you executed them, and never invent or imagine tool output. If you have not received a real tool result in the conversation, the tool has NOT run. Describe nothing as done until a tool result confirms it.\n' +
+    '- Do NOT just say what you are going to do and stop. If your reply would end with "let me…" / "I\'ll…" / "first I\'ll…", replace that with the actual tool-call JSON. Narrating an action without the JSON call strands the task.\n' +
+    '- Safety: never run destructive commands (rm -rf, git push --force, DROP TABLE, …) unless the user explicitly asked for exactly that.\n' +
+    '- Terminal output: concise plain Markdown. NO chart code blocks, NO HTML, NO interactive checkboxes, no decorative formatting. Short paragraphs and tight "-" bullets.\n' +
+    '- NEVER end a reply by announcing what you are about to do ("Now let me verify:") — either actually make the tool call, or give the final answer. An announcement with no call strands the task.\n' +
+    '- When a task is done, summarize what you changed in 1-3 sentences.' +
+    (projectDoc
+      ? `\n\nPROJECT CONTEXT — contents of the user's .nalu folder and NALU.md (authoritative project documentation; larger files are truncated — read_file them for the rest):\n${projectDoc}`
+      : '')
+  )
+}
 
 interface PromptContext {
   repo?: string
@@ -428,15 +165,18 @@ interface PromptContext {
   branch?: string | null
 }
 
-function buildSystemPrompt(ctx: PromptContext): string {
+function buildSystemPrompt(ctx: PromptContext, cli = false): string {
   // Anchor "today"/"latest"/"current" to the real date — without it the model
   // silently reasons from its training cutoff on every time-relative question.
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
   const lines: string[] = [
     BASE_PROMPT,
     `Today's date is ${today}. Use it for anything time-relative (\"this year\", \"latest\", \"current\", recency); when a question needs fresher facts than you're sure of, use the web tools rather than guessing.`,
-    'VISUALS render natively in this chat — use them. (1) TABLES: whenever you compare options, list line items, or present structured data (3+ rows), format it as a Markdown table. (2) CHARTS: for trends, comparisons, breakdowns, or any answer built on numbers, embed a real chart as a fenced code block with language `chart` containing ONLY minified JSON of this exact shape: {"type":"bar","title":"...","labels":["A","B"],"series":[{"name":"...","values":[1,2]}]} — "type" is "bar", "line", or "pie". Use the REAL numbers from your answer (never placeholders), keep labels short, max 2 charts per reply. Charts and tables complement your prose, never replace the explanation.',
   ]
+  if (!cli) lines.push(
+    'VISUALS render natively in this chat — use them. (1) TABLES: whenever you compare options, list line items, or present structured data (3+ rows), format it as a Markdown table. (2) CHARTS: for trends, comparisons, breakdowns, or any answer built on numbers, embed a real chart as a fenced code block with language `chart` containing ONLY minified JSON of this exact shape: {"type":"bar","title":"...","labels":["A","B"],"series":[{"name":"...","values":[1,2]}]} — "type" is "bar", "line", or "pie". Use the REAL numbers from your answer (never placeholders), keep labels short, max 2 charts per reply. Charts and tables complement your prose, never replace the explanation.',
+    'YOU ARE A DO-ANYTHING WORKSPACE, not just a Q&A bot — fluidly become whatever the moment needs and produce the RIGHT artifact INLINE, without being asked for the format: (a) NOTETAKER — capture structured notes under `##` sections and always surface a clear "Action items" list at the end. (b) CHECKLISTS / TO-DOS / ACTION ITEMS — render as INTERACTIVE checkboxes with GitHub task-list syntax ("- [ ] task" for open, "- [x] task" for done); the user can tick them off right here in the chat, so use this for any list of steps, tasks, packing/shopping lists, or action items, and include an owner and/or due date in the line when known. (c) JOURNAL / LOG — dated `### YYYY-MM-DD` entries with reflective structure. (d) TRACKERS / PLANS / ITINERARIES / COMPARISONS — a Markdown table, plus a `chart` block when the numbers tell a story. (e) DECISIONS — the recommendation first, then the reasoning. COMBINE these when it helps (notes + an action-item checklist + a chart). Choose the format that makes the answer most useful; never dump a wall of prose when a checklist, table, or chart would serve the user better.',
+  )
   if (ctx.repo) lines.push(`The user is currently working in the \`${ctx.repo}\` folder.`)
   if (ctx.branch) lines.push(`Current branch: \`${ctx.branch}\`.`)
   if (ctx.githubConnected) {
@@ -637,7 +377,10 @@ const FRESH_SIGNAL =
 function needsResearch(text: string, kind: string): boolean {
   const t = text.trim()
   if (t.length < 12) return false
-  if (kind === 'code' || kind === 'vision') return false
+  // Self-contained kinds are answered from reasoning, never the web — a logic
+  // puzzle or a math derivation must NEVER trigger research (it was appending
+  // irrelevant "Sources" when an incidental word like "now" hit FRESH_SIGNAL).
+  if (kind === 'code' || kind === 'vision' || kind === 'reasoning' || kind === 'math') return false
   // Finance lives on current data: any market/economy/positioning ask gets live
   // research so recommendations are grounded in today's world, not the cutoff.
   if (
@@ -717,7 +460,7 @@ export default async function handler(req: any, res: any) {
     return
   }
 
-  const { messages, repo, githubConnected, origin, branch, tools, tool_choice, think, specialist } = body as {
+  const { messages, repo, githubConnected, origin, branch, tools, tool_choice, think, specialist, cli, cwd, projectDoc } = body as {
     messages?: ChatMessage[]
     repo?: string
     githubConnected?: boolean
@@ -727,7 +470,14 @@ export default async function handler(req: any, res: any) {
     tool_choice?: unknown
     think?: boolean
     specialist?: string
+    cli?: boolean // request comes from the Nalu CLI terminal agent
+    cwd?: string // the CLI's working directory (context only)
+    projectDoc?: string // the CLI's .nalu folder contents (project memory)
   }
+  // CLI mode: the terminal agent drives LOCAL tools in a loop, so the request
+  // must keep its tools — skip the paths that strip them (auto-research,
+  // council fuse) and let the model use its own web_search/fetch_url instead.
+  const cliMode = cli === true
   // Thinking tier from the chat keywords: 1 think · 2 ultrathink · 3 packmind.
   // Scales the reasoning/answer token budget so "packmind" thinks much harder.
   const thinkLevel = Math.max(0, Math.min(3, Number((body as { thinkLevel?: number }).thinkLevel) || (think ? 1 : 0)))
@@ -747,23 +497,56 @@ export default async function handler(req: any, res: any) {
           ? VISION
           : SPECIALISTS.find((s) => s.kind === specialist) || null
       : null
-  const spec = forced || pickSpecialist(messages)
+  let spec = forced || pickSpecialist(messages)
   // COUNCIL MODE: a genuinely multi-domain ask engages every needed expert —
   // each answers in their lane, then Nalu streams one fused answer.
-  const council = !forced && spec !== VISION ? pickSpecialistsMulti(messages) : []
+  const council = !forced && !cliMode && spec !== VISION ? pickSpecialistsMulti(messages) : []
   const useCouncil = council.length >= 2
+  // SEMANTIC ROUTING FALLBACK — when the keyword router is uncertain (0–1 weak
+  // hits) and it's not a forced/council/image route, a tiny classifier picks the
+  // right specialist for paraphrased asks that carry no obvious keyword. One short
+  // model call, only on the ambiguous minority; the keyword result is the default.
+  // (CLI agent loops skip the classifier after the first turn — routing is
+  // already settled and the extra blocking model call would slow every step.)
+  if (!forced && !useCouncil && spec !== VISION && !hasImage(messages) && !(cliMode && messages.some((m) => m && m.role === 'tool'))) {
+    const classifyText = lastUserMessageText(messages)
+    const { spec: kwSpec, hits } = scoreSpecialistEx(classifyText)
+    // Fire on weak (0–1) OR ambiguous (2) keyword signals — the zone where the
+    // fast path mis-routes. A strong 3+-hit signal is trusted and skips the call.
+    if (classifyText.length >= 40 && hits <= 2) {
+      try {
+        const raw = await chatComplete(
+          [
+            { role: 'system', content: classifierSystem() },
+            { role: 'user', content: classifierUser(classifyText, hits >= 1 && kwSpec ? kwSpec.kind : null) },
+          ],
+          { model: DS, maxTokens: 6, timeoutMs: 11000, temperature: 0, retryPrimary: false },
+        )
+        const k = normalizeKind(raw)
+        if (k && k !== 'general' && k !== 'vision') {
+          const found = SPECIALISTS.find((s) => s.kind === k)
+          if (found) spec = found
+        } else if (k === 'general' && !kwSpec) {
+          spec = GENERAL
+        }
+      } catch { /* classifier unavailable — keep the keyword result */ }
+    }
+  }
   const backend = backendFor(spec)
   if (!backend.key) {
     res.status(500).json({ error: 'Nalu engine is not configured.' })
     return
   }
 
-  const sysBase = buildSystemPrompt({
-    repo: typeof repo === 'string' ? repo : undefined,
-    githubConnected: !!githubConnected,
-    origin: origin && typeof origin === 'object' && origin.owner && origin.repo ? origin : null,
-    branch: typeof branch === 'string' ? branch : null,
-  })
+  const sysBase = buildSystemPrompt(
+    {
+      repo: typeof repo === 'string' ? repo : undefined,
+      githubConnected: !!githubConnected,
+      origin: origin && typeof origin === 'object' && origin.owner && origin.repo ? origin : null,
+      branch: typeof branch === 'string' ? branch : null,
+    },
+    cliMode,
+  )
 
   // When Deep think is on, REQUIRE a deterministic format so every model (even
   // ones that don't emit <think> tags, e.g. the DeepSeek specialists) cleanly
@@ -797,6 +580,7 @@ export default async function handler(req: any, res: any) {
   const who = await identityForRequest(req).catch(() => null)
 
   const wantResearch =
+    !cliMode &&
     !!lastUserText &&
     (needsResearch(lastUserText, backend.kind) || (useCouncil && council.some((c) => needsResearch(lastUserText, c.kind))))
 
@@ -886,6 +670,7 @@ export default async function handler(req: any, res: any) {
   } else if (think && !isGlmBackend) {
     sysContent += THINK_INSTRUCTION
   }
+  if (cliMode) sysContent += cliPromptBlock(typeof cwd === 'string' ? cwd : '', typeof projectDoc === 'string' ? projectDoc.slice(0, 26000) : '')
 
   let fullMessages: ChatMessage[] = [
     { role: 'system', content: sysContent },
@@ -929,30 +714,45 @@ export default async function handler(req: any, res: any) {
   // Route one chunk of model output to the reasoning (left) / answer (right)
   // channels via the same extractor/splitter the stream uses. Safe to call once
   // with a whole answer (non-stream fallback) or many times per delta.
+  // Everything that reaches the client is Nalu-branded: scrub any model/vendor
+  // identifier the model might emit, so nothing but "Nalu" ever shows in the chat,
+  // the network response, or the console.
+  // Per-delta scrub catches whole-token vendor mentions server-side; the client
+  // does a second scrub on the fully-assembled message, which catches names that
+  // arrive split across tokens ("Deep"+"Seek"). Together nothing leaks in the UI.
+  // CLI mode skips the identity scrub: CLI answers routinely contain code and
+  // plain-text tool calls that the CLI EXECUTES on the user's machine, and the
+  // scrub rewrites ordinary tokens inside them (a `glm(...)` R call, a package
+  // named qwen-*, the word "tinker") into "Nalu", corrupting real commands.
+  const emitAnswer = (raw: string) => { const a = cliMode ? stripThinkTags(raw) : scrubModelIdentity(stripThinkTags(raw)); if (a) { answerSoFar += a; send('delta', { text: a }) } }
+  const emitReasoning = (raw: string) => { const r = cliMode ? stripThinkTags(raw) : scrubModelIdentity(stripThinkTags(raw)); if (r) send('reasoning', { text: r }) }
   const pushDelta = (delta: string) => {
     if (!delta) return
     if (reasoningFieldSeen) {
       // content is pure answer — emit directly (still strip any stray <think> pair)
-      const a = stripThinkTags(delta)
-      if (a) { answerSoFar += a; send('delta', { text: a }) }
+      emitAnswer(delta)
       return
     }
     if (splitter) {
       const { reasoning: rPre, answer: aRaw } = splitter(delta)
-      if (rPre) send('reasoning', { text: stripThinkTags(rPre) })
-      if (aRaw) { const a = stripThinkTags(aRaw); answerSoFar += a; send('delta', { text: a }) }
+      if (rPre) emitReasoning(rPre)
+      if (aRaw) emitAnswer(aRaw)
     } else {
       const { answer, reasoning } = extract(delta)
-      if (think && !wantResearch && reasoning) send('reasoning', { text: stripThinkTags(reasoning) })
-      if (answer) { const a = stripThinkTags(answer); answerSoFar += a; send('delta', { text: a }) }
+      if (think && !wantResearch && reasoning) emitReasoning(reasoning)
+      if (answer) emitAnswer(answer)
     }
   }
 
   // Per-mode sampling: factual/code/research want low temperature (accuracy,
   // consistency); general chat a touch higher (natural prose). Default endpoints
   // run near 1.0 otherwise, which is the cheapest accuracy regression to fix.
+  // Correctness-critical domains run at low temperature. The registry's `factual`
+  // flag (set per specialist in the fleet) drives this; a legacy set covers the
+  // original kinds that predate the flag.
   const FACTUAL_KINDS = new Set(['code', 'reasoning', 'finance', 'legal', 'health', 'vision', 'medical', 'math', 'science', 'cre', 'realestate', 'construction', 'hr', 'crypto'])
-  const chatTemp = wantResearch ? 0.2 : FACTUAL_KINDS.has(backend.kind) ? 0.15 : 0.45
+  const isFactual = spec.factual ?? FACTUAL_KINDS.has(backend.kind)
+  const chatTemp = wantResearch ? 0.2 : isFactual ? 0.15 : 0.45
   const buildPayload = (stream: boolean): Record<string, unknown> =>
     isGemini
       ? {
@@ -967,10 +767,16 @@ export default async function handler(req: any, res: any) {
           model: backend.model,
           messages: fullMessages,
           stream,
-          max_tokens: thinkTokens, // deep think needs room for reasoning + answer
+          // CLI turns are short tool-call/answer steps — a 4k cap keeps each step
+          // FAST (an 8k cap + frequency_penalty made DeepSeek slow enough to blow
+          // the failover timeout and land on the depleted fallback). Web chat keeps
+          // the full deep-think budget.
+          max_tokens: cliMode ? 4096 : thinkTokens,
           temperature: chatTemp,
           top_p: 0.9,
-          frequency_penalty: 0.3,
+          // frequency_penalty slows structured JSON generation and isn't wanted for
+          // agentic tool calls — omit it in CLI mode.
+          ...(cliMode ? {} : { frequency_penalty: 0.3 }),
           ...(isGlm ? { thinking: { type: think ? 'enabled' : 'disabled' } } : {}),
           // When we've already injected live research, don't offer tools — the model
           // should just write the answer (no tool-call text to mangle).
@@ -988,12 +794,19 @@ export default async function handler(req: any, res: any) {
   // EVERY provider fails.
   const runNonStream = async (): Promise<boolean> => {
     const fb = fallbackProvider()
-    const attempts: Array<{ base: string; key: string; model: string }> = [
-      { base: backend.base, key: backend.key, model: backend.model },
-      ...(fb ? [{ base: fb.base, key: fb.key, model: fb.model }] : []),
+    // Retry the PRIMARY a few times before the fallback: the primary (Tinker) is
+    // healthy but rate-limits under the CLI's rapid multi-turn hammering, and the
+    // fallback (HF router) is frequently out of monthly credits — so a blind
+    // one-shot-then-failover lands on a dead provider. Retry primary on transient
+    // errors (429 / 5xx / timeout) with backoff, THEN try the fallback once.
+    const primaryTries = cliMode ? 3 : 1
+    const attempts: Array<{ base: string; key: string; model: string; label: string }> = [
+      ...Array.from({ length: primaryTries }, () => ({ base: backend.base, key: backend.key, model: backend.model, label: 'primary' })),
+      ...(fb ? [{ base: fb.base, key: fb.key, model: fb.model, label: 'fallback' }] : []),
     ]
     let lastErr = 'no provider'
-    for (const a of attempts) {
+    for (let ai = 0; ai < attempts.length; ai++) {
+      const a = attempts[ai]
       const ac2 = new AbortController()
       const t2 = setTimeout(() => { try { ac2.abort() } catch { /* noop */ } }, 75000)
       try {
@@ -1007,21 +820,33 @@ export default async function handler(req: any, res: any) {
         })
         if (!r.ok) {
           lastErr = `${r.status}: ${scrubVendor(await r.text().catch(() => '')).slice(0, 200)}`
+          // transient primary error → brief backoff before the next primary retry
+          const nextIsPrimary = ai + 1 < attempts.length && attempts[ai + 1].label === 'primary'
+          if (nextIsPrimary && (r.status === 429 || r.status >= 500)) {
+            await new Promise((res) => setTimeout(res, 400 * (ai + 1)))
+          }
           continue
         }
         const d = (await r.json().catch(() => null)) as
-          | { choices?: Array<{ message?: { content?: string; reasoning_content?: string } }> }
+          | { choices?: Array<{ message?: { content?: string; reasoning_content?: string; tool_calls?: ToolCall[] } }> }
           | null
         const msg = d?.choices?.[0]?.message
-        if (typeof msg?.content !== 'string' || !msg.content.trim()) {
+        // A tool-call-only reply has empty content — that's a SUCCESS for agent
+        // clients (the CLI), not an empty response.
+        const msgToolCalls = Array.isArray(msg?.tool_calls) ? msg.tool_calls.filter((tc) => tc?.function?.name) : []
+        if ((typeof msg?.content !== 'string' || !msg.content.trim()) && !msgToolCalls.length) {
           lastErr = 'empty response'
           continue
         }
-        if (typeof msg.reasoning_content === 'string' && msg.reasoning_content) {
+        if (typeof msg?.reasoning_content === 'string' && msg.reasoning_content) {
           reasoningFieldSeen = true // content is the clean answer; ungate pushDelta
           if (think && !wantResearch) send('reasoning', { text: stripThinkTags(msg.reasoning_content) })
         }
-        pushDelta(msg.content)
+        for (let ti = 0; ti < msgToolCalls.length; ti++) {
+          const tc = msgToolCalls[ti]
+          send('tool_call_delta', { index: tc.index ?? ti, id: tc.id, name: tc.function?.name, arguments: tc.function?.arguments })
+        }
+        if (typeof msg?.content === 'string' && msg.content.trim()) pushDelta(msg.content)
         return true
       } catch (e) {
         lastErr = e instanceof Error ? e.message : 'request failed'
@@ -1038,26 +863,64 @@ export default async function handler(req: any, res: any) {
     // fall back to a single non-streaming request. The window is short before
     // the first token (a healthy stream replies in <2s) and longer between
     // tokens once flowing (so a slow, long answer isn't cut off).
+    // MULTI-MODEL REFINE (deep-think tiers only): draft → expert critique → rewrite,
+    // all on Nalu's own models. On blind eval vs a frontier model this roughly
+    // HALVES the quality gap (1→3 wins on a 10-task battery). Gated to ultrathink/
+    // packmind (it's ~2× latency), single expert answers only — no council, vision,
+    // or tool turns. Progress shows in the left "thinking" pane; on any failure it
+    // falls straight through to normal streaming.
+    let refinedAnswer = ''
+    if (thinkLevel >= 2 && !useCouncil && spec !== VISION && !hasImage(messages) && !(Array.isArray(tools) && tools.length) && lastUserText) {
+      try {
+        const refineSys = (backend.prompt ? `${sysBase}\n\n${backend.prompt}` : sysBase) + identityBlock(who) +
+          (researchBrief ? `\n\nLIVE RESEARCH (use what is relevant, ignore the rest):\n${researchBrief.slice(0, 6000)}` : '')
+        if (think) send('reasoning', { text: 'Drafting a first answer…\n' })
+        const draft = await chatComplete(
+          [{ role: 'system', content: refineSys }, { role: 'user', content: lastUserText.slice(0, 8000) }],
+          { model: backend.model, maxTokens: 2600, timeoutMs: 60000, temperature: chatTemp, retryPrimary: false },
+        )
+        if (draft && draft.trim()) {
+          if (think) send('reasoning', { text: 'Reviewing it like a demanding expert and rewriting for depth…\n' })
+          const critique = await chatComplete(
+            [{ role: 'system', content: 'You are a demanding expert reviewer. Critique the DRAFT answer to the request. Check: (a) is the single most important gotcha/threshold/limit named? (b) is it as COMPLETE as a top expert would be, or is it bare? (c) would a TABLE serve a comparison better than prose? (d) any factual error or FABRICATED specific the user did not give? IMPORTANT: if the request is simple or terse ("tighten this", "one line", a quick fact), do NOT ask to pad it — say it should stay concise. List 2-5 concrete, specific fixes as terse bullets.' },
+              { role: 'user', content: `REQUEST:\n${lastUserText.slice(0, 4000)}\n\nDRAFT:\n${draft.slice(0, 7000)}` }],
+            { model: MODEL_REASONING, maxTokens: 500, timeoutMs: 30000, temperature: 0.2, retryPrimary: false },
+          ).catch(() => '')
+          const revised = await chatComplete(
+            [{ role: 'system', content: refineSys },
+              { role: 'user', content: `${lastUserText.slice(0, 8000)}\n\n[Apply this internal expert review of your draft: keep everything correct, add real depth and the key gotcha/threshold where an expert genuinely would, and turn comparisons into tables. HARD RULES: match length to the task — keep simple, terse, or note-taking asks LEAN, never bloat them; NEVER invent owners, names, dates, deadlines, figures, or any specific the user did not state (if they said "Friday" with no date, keep "Friday"); only capture what was actually given. Output ONLY the improved final answer, no preamble.]\nREVIEW:\n${(critique || '(draft is solid; tighten and ensure the key gotcha is named)').slice(0, 3000)}\n\nYOUR DRAFT:\n${draft.slice(0, 7000)}` }],
+            { model: backend.model, maxTokens: 3200, timeoutMs: 75000, temperature: chatTemp, retryPrimary: false },
+          ).catch(() => '')
+          refinedAnswer = revised && revised.trim() ? revised.trim() : draft.trim()
+        }
+      } catch { refinedAnswer = '' }
+    }
+
     const ac = new AbortController()
     let sawData = false
     let lastFinish = ''
     let streamBroke = false
-    let stall = setTimeout(() => { try { ac.abort() } catch { /* noop */ } }, 7000)
+    // CLI agent turns carry a big context (repo files + tool outputs), so the
+    // primary's first token legitimately takes longer — give it more room before
+    // failing over (the fallback provider is often out of credits).
+    let stall = setTimeout(() => { try { ac.abort() } catch { /* noop */ } }, cliMode ? 20000 : 7000)
     const bumpStall = () => {
       clearTimeout(stall)
       stall = setTimeout(() => { try { ac.abort() } catch { /* noop */ } }, 25000)
     }
 
     let upstream: Response | null = null
-    try {
-      upstream = await fetch(`${backend.base}/chat/completions`, {
-        method: 'POST',
-        headers: upstreamHeaders,
-        body: JSON.stringify(buildPayload(true)),
-        signal: ac.signal,
-      })
-    } catch {
-      upstream = null // aborted before responding or network error → fallback below
+    if (!refinedAnswer) {
+      try {
+        upstream = await fetch(`${backend.base}/chat/completions`, {
+          method: 'POST',
+          headers: upstreamHeaders,
+          body: JSON.stringify(buildPayload(true)),
+          signal: ac.signal,
+        })
+      } catch {
+        upstream = null // aborted before responding or network error → fallback below
+      }
     }
 
     // A non-OK stream (e.g. 429 rate-limit when the primary is saturated under
@@ -1134,6 +997,10 @@ export default async function handler(req: any, res: any) {
       }
     }
 
+    // The refine path produced the final answer already — emit it and skip the
+    // normal stream + non-stream fallback.
+    if (refinedAnswer) { clearTimeout(stall); emitAnswer(refinedAnswer); sawData = true }
+
     // Streaming produced nothing (stalled/aborted/unavailable) — get it in one shot.
     if (!sawData) {
       const ok = await runNonStream()
@@ -1156,7 +1023,7 @@ export default async function handler(req: any, res: any) {
     // Self-heal a truncated answer: if the model hit the token ceiling, or the
     // stream broke mid-answer without a finish, continue ONCE where it left off
     // and append the remainder — so long answers don't end mid-sentence.
-    const truncated = sawData && answerSoFar.length > 0 && (lastFinish === 'length' || (streamBroke && !lastFinish))
+    const truncated = !refinedAnswer && sawData && answerSoFar.length > 0 && (lastFinish === 'length' || (streamBroke && !lastFinish))
     if (truncated) {
       try {
         const contMessages = [
@@ -1184,6 +1051,32 @@ export default async function handler(req: any, res: any) {
     if (wantResearch && researchSources.length && !/https?:\/\//.test(answerSoFar)) {
       const list = '\n\n**Sources**\n' + researchSources.slice(0, 6).map((s) => `- [${s.title || s.url}](${s.url})`).join('\n')
       send('delta', { text: list })
+    }
+
+    // VERIFY PASS — the accuracy lift that lets a small routed model rival a
+    // frontier one on the hardest asks. Only for HARD kinds (reasoning/code/math/
+    // science) or the ultrathink tier, and only after a substantive answer: a short
+    // independent re-derivation catches a wrong result and streams a correction.
+    // Best-effort + tight timeout, so it never delays or breaks a normal reply.
+    const HARD_KINDS = new Set(['reasoning', 'code', 'math', 'science', 'engineering', 'finance', 'medical', 'legal', 'accounting', 'insurance', 'data'])
+    // CLI turns skip the verify pass: the terminal agent verifies its own work by
+    // running builds/tests, and the extra round-trip would slow every reply.
+    const doVerify = !cliMode && !refinedAnswer && answerSoFar.trim().length > 80 && (HARD_KINDS.has(backend.kind) || thinkLevel >= 2)
+    if (doVerify && lastUserText) {
+      try {
+        const check = await chatComplete(
+          [
+            { role: 'system', content: `You are a meticulous verifier. Independently re-derive the answer: recompute the math, re-trace the code/logic, check units and every stated constraint, AND check for (a) FABRICATED specifics the user never gave (invented dates, names, figures, versions, citations) and (b) WRONG domain limits/rules (e.g. IRA/401k contribution caps, filing deadlines, dosing ceilings, legal thresholds). Judge ONLY correctness, not style. Output EXACTLY "OK" if the answer's conclusion and its key specifics are correct. Only on a DEFINITE error, output "FIX:" on the first line, then 1-4 sentences naming the specific error and the correction. When unsure, output "OK".` },
+            { role: 'user', content: `QUESTION:\n${lastUserText.slice(0, 3000)}\n\nANSWER TO CHECK:\n${answerSoFar.slice(0, 6000)}` },
+          ],
+          { model: DS, maxTokens: 400, timeoutMs: 12000, temperature: 0, retryPrimary: false },
+        )
+        const v = (check || '').trim()
+        if (/^fix:/i.test(v)) {
+          const correction = v.replace(/^fix:\s*/i, '').trim()
+          if (correction.length > 8) send('delta', { text: `\n\n---\n\n**On review — a correction:** ${correction}` })
+        }
+      } catch { /* verification is best-effort */ }
     }
 
     // LEARN THE USER: personal statements get distilled into the profile —

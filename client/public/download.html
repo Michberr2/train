@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Download Nalu Desktop</title>
+<style>
+  :root { --ink:#F4F1EA; --dim:rgba(244,241,234,.62); --gold:#C79A5B; --line:rgba(255,255,255,.12); }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; }
+  body {
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased; color:var(--ink);
+    min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
+    background:#0a0c10;
+  }
+  .bg, .wash { position:fixed; inset:0; z-index:-2; }
+  .bg { background:url("/images/wolf-landscape.png") center/cover no-repeat; }
+  .wash { z-index:-1; background:
+    radial-gradient(1200px 700px at 12% -10%, rgba(58,120,255,.16), transparent 55%),
+    radial-gradient(900px 640px at 100% 0%, rgba(40,90,200,.12), transparent 55%),
+    linear-gradient(180deg, rgba(8,10,14,.62), rgba(8,10,14,.82)); }
+
+  .card {
+    width:100%; max-width:520px;
+    background:rgba(17,20,28,.55); backdrop-filter:blur(28px) saturate(140%); -webkit-backdrop-filter:blur(28px) saturate(140%);
+    border:1px solid var(--line); border-radius:28px; padding:44px 40px;
+    box-shadow:0 30px 80px -20px rgba(0,0,0,.6);
+  }
+  .logo { width:58px; height:58px; object-fit:contain; margin-bottom:18px;
+    /* the wolf mark is dark — make it crisp white on the glass card */
+    filter:brightness(0) invert(1) drop-shadow(0 2px 12px rgba(0,0,0,.5)); }
+  h1 { font-size:27px; font-weight:600; letter-spacing:-.02em; line-height:1.1; }
+  .sub { color:var(--dim); font-size:14.5px; line-height:1.55; margin-top:10px; margin-bottom:30px; max-width:400px; }
+
+  .btn { display:inline-flex; align-items:center; gap:11px; width:100%; justify-content:center;
+    background:linear-gradient(180deg,#D6AC6E,#B9884C); color:#1a1509; font-weight:650; font-size:16px;
+    padding:16px 24px; border-radius:15px; text-decoration:none; border:1px solid rgba(255,255,255,.18);
+    box-shadow:0 10px 30px -8px rgba(199,154,91,.5); transition:transform .12s, box-shadow .12s; }
+  .btn:hover { transform:translateY(-1px); box-shadow:0 16px 38px -8px rgba(199,154,91,.6); }
+  .meta { display:flex; align-items:center; justify-content:center; gap:8px; flex-wrap:wrap;
+    color:var(--dim); font-size:12.5px; margin-top:14px; }
+  .badge { display:inline-flex; align-items:center; gap:5px; color:#8fd6a0;
+    background:rgba(90,200,120,.12); border:1px solid rgba(90,200,120,.25); border-radius:999px; padding:3px 10px; font-weight:600; font-size:11.5px; }
+
+  .steps { margin-top:32px; padding-top:26px; border-top:1px solid var(--line); }
+  .steps h2 { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.14em; color:var(--gold); margin-bottom:16px; }
+  ol { list-style:none; counter-reset:s; display:flex; flex-direction:column; gap:14px; }
+  li { counter-increment:s; position:relative; padding-left:38px; font-size:14.5px; line-height:1.45; }
+  li::before { content:counter(s); position:absolute; left:0; top:-2px; width:26px; height:26px; border-radius:50%;
+    background:rgba(199,154,91,.16); border:1px solid rgba(199,154,91,.4); color:var(--gold);
+    font-size:12.5px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+  li b { font-weight:650; }
+</style>
+</head>
+<body>
+  <div class="bg"></div><div class="wash"></div>
+
+  <div class="card">
+    <img class="logo" src="/wolf-icon.png" alt="Nalu" onerror="this.src='/nalu-logo.png';this.style.width='120px'" />
+    <h1>Nalu Desktop</h1>
+    <p class="sub">Your chats, Studio, IDE, and the computer-control agent — native on your Mac. One clean app.</p>
+
+    <a class="btn" href="https://github.com/Michberr2/nalu-desktop/releases/latest/download/Nalu-mac.dmg" download>
+      Download Nalu for Mac
+    </a>
+    <div class="meta">
+      <span class="badge">✓ Signed &amp; Notarized by Apple</span>
+      <span>Universal · Apple Silicon &amp; Intel · macOS 11+</span>
+    </div>
+
+    <div class="steps">
+      <h2>Install — takes 10 seconds</h2>
+      <ol>
+        <li>Open the downloaded <b>Nalu-mac.dmg</b>.</li>
+        <li>Drag <b>Nalu</b> onto the <b>Applications</b> folder.</li>
+        <li>Open Applications and <b>double-click Nalu</b>. That's it — it just opens.</li>
+      </ol>
+    </div>
+
+    <div class="steps">
+      <h2>Nalu in your terminal</h2>
+      <p class="sub" style="margin-bottom:14px;">A coding agent in any terminal — one model, <b>auto</b>, that routes
+      every request to the right Nalu model by itself. Needs Node.js 18+.</p>
+      <pre class="cmd"><code>curl -fsSL https://n4lu.com/install.sh | sh</code></pre>
+      <p class="sub" style="margin-top:12px; margin-bottom:0;">Then just run <b>nalu</b>. Update any time with <b>nalu update</b>.</p>
+    </div>
+  </div>
+  <style>
+    .cmd { background:rgba(0,0,0,.45); border:1px solid var(--line); border-radius:12px;
+      padding:14px 16px; overflow-x:auto; }
+    .cmd code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13.5px; color:#9fd6ff; white-space:pre; }
+  </style>
+</body>
+</html>
