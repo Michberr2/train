@@ -50,6 +50,45 @@ const asArray = (v: unknown): AnyObj[] | null => {
   return null
 }
 
+// Turn the user's stored chats into AutoPilot "activity" items (same shape as a
+// task row) so the phone shows everything they've ever made — conversations plus
+// every Studio artifact (docs, sheets, decks, sites, videos, CAD, images).
+const STUDIO_KIND: Record<string, string> = {
+  doc: 'Document', deck: 'Presentation', sheet: 'Spreadsheet',
+  design: 'Website', video: 'Video', cad: 'CAD model', image: 'Image',
+}
+function deriveChatActivity(chatsVal: unknown): AnyObj[] {
+  const chats = asArray(chatsVal)
+  if (!chats) return []
+  const items: AnyObj[] = []
+  for (const c of chats.slice(0, 500)) {
+    if (!c || !Array.isArray(c.messages)) continue
+    const kinds: string[] = []
+    let lastUser = ''
+    for (const m of c.messages as AnyObj[]) {
+      if (!m) continue
+      if (m.role === 'user' && typeof m.content === 'string' && m.content) lastUser = m.content
+      for (const f of ARTIFACT_FIELDS) if (m[f] != null && !kinds.includes(f)) kinds.push(f)
+    }
+    const labels = kinds.map((k) => STUDIO_KIND[k] || k)
+    const ts = Number(c.createdAt) || 0
+    const iso = ts ? new Date(ts).toISOString() : new Date(0).toISOString()
+    items.push({
+      id: `chat_${c.id}`,
+      source: labels.length ? 'studio' : 'chat',
+      title: String(c.title || 'New chat').slice(0, 300),
+      detail: labels.length ? labels.join(' · ') : (lastUser ? lastUser.slice(0, 160) : 'Conversation'),
+      status: 'done',
+      progress: 1,
+      events: [],
+      meta: { kind: 'chat', artifacts: labels, count: (c.messages as AnyObj[]).length },
+      created_at: iso,
+      updated_at: iso,
+    })
+  }
+  return items
+}
+
 // Read a stored id-array (e.g. a tombstone list) as a Set of strings.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function readIdSet(client: any, userId: string, key: string): Promise<Set<string>> {
@@ -196,6 +235,85 @@ export default async function handler(req: any, res: any) {
     if (action === 'remove') {
       const key = String(body.key || '')
       if (key) await client.query('DELETE FROM nalu_user_data WHERE user_id = $1 AND key = $2', [userId, key])
+      return res.status(200).json({ ok: true })
+    }
+
+    // ---- AutoPilot task ledger (per-user) -----------------------------------
+    // task-log: create OR update a task. Any surface (CLI/desktop, flywheel,
+    // pipeline, voice, browser) calls this with the SAME id to append progress.
+    // Everything is scoped to this token's user — a task id from another user is
+    // never touched (ON CONFLICT ... WHERE user_id = caller).
+    if (action === 'task-log') {
+      const id = String(body.id || '') || `t_${newToken().slice(0, 18)}`
+      const source = String(body.source || 'cli').slice(0, 24)
+      const title = String(body.title || '').slice(0, 300)
+      const detail = body.detail != null ? String(body.detail).slice(0, 4000) : null
+      const status = body.status != null ? String(body.status).slice(0, 24) : null
+      const progress = body.progress != null ? Math.max(0, Math.min(1, Number(body.progress) || 0)) : null
+      const event = body.event != null ? String(body.event).slice(0, 500) : null
+      const meta = body.meta && typeof body.meta === 'object' ? JSON.stringify(body.meta) : null
+      const r = await client.query(
+        `INSERT INTO nalu_tasks (id, user_id, source, title, detail, status, progress, events, meta, updated_at)
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6,'running'), COALESCE($7,0),
+                 CASE WHEN $8::text IS NULL THEN '[]'::jsonb
+                      ELSE jsonb_build_array(jsonb_build_object('t', NOW(), 'm', $8::text)) END,
+                 COALESCE($9::jsonb,'{}'::jsonb), NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           source     = COALESCE(EXCLUDED.source, nalu_tasks.source),
+           title      = CASE WHEN $4 <> '' THEN EXCLUDED.title ELSE nalu_tasks.title END,
+           detail     = COALESCE($5, nalu_tasks.detail),
+           status     = COALESCE($6, nalu_tasks.status),
+           progress   = COALESCE($7, nalu_tasks.progress),
+           events     = CASE WHEN $8::text IS NULL THEN nalu_tasks.events
+                             ELSE nalu_tasks.events || jsonb_build_array(jsonb_build_object('t', NOW(), 'm', $8::text)) END,
+           meta       = nalu_tasks.meta || COALESCE($9::jsonb,'{}'::jsonb),
+           updated_at = NOW()
+         WHERE nalu_tasks.user_id = $2
+         RETURNING id, source, title, detail, status, progress, events, meta, created_at, updated_at`,
+        [id, userId, source, title, detail, status, progress, event, meta],
+      )
+      return res.status(200).json({ ok: true, task: r.rows[0] ?? { id } })
+    }
+
+    // activity: the FULL AutoPilot picture — the live task ledger PLUS everything
+    // this user has ever made in chat (conversations + Studio docs/sheets/decks/
+    // sites/videos/CAD/images), unified and newest-first. Used for the initial
+    // load and pull-to-refresh; live polling uses task-feed for ledger deltas.
+    if (action === 'activity') {
+      const tRes = await client.query(
+        `SELECT id, source, title, detail, status, progress, events, meta, created_at, updated_at
+           FROM nalu_tasks WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 300`,
+        [userId],
+      )
+      const chatRes = await client.query(
+        'SELECT value FROM nalu_user_data WHERE user_id = $1 AND key = $2',
+        [userId, 'nalu-chats'],
+      )
+      const chatItems = deriveChatActivity(chatRes.rows[0]?.value)
+      return res.status(200).json({ tasks: tRes.rows, chats: chatItems, now: new Date().toISOString() })
+    }
+
+    // task-feed: the AutoPilot history — every task for this user, newest first.
+    // Pass `since` (ISO) to poll only what changed (real-time updates).
+    if (action === 'task-feed') {
+      const since = body.since ? String(body.since) : null
+      const limit = Math.max(1, Math.min(500, Number(body.limit) || 200))
+      const r = await client.query(
+        `SELECT id, source, title, detail, status, progress, events, meta, created_at, updated_at
+           FROM nalu_tasks
+          WHERE user_id = $1 AND ($2::timestamptz IS NULL OR updated_at > $2::timestamptz)
+          ORDER BY updated_at DESC
+          LIMIT $3`,
+        [userId, since, limit],
+      )
+      return res.status(200).json({ tasks: r.rows, now: new Date().toISOString() })
+    }
+
+    // task-clear: remove one task (id) or all of this user's finished tasks.
+    if (action === 'task-clear') {
+      const id = String(body.id || '')
+      if (id) await client.query('DELETE FROM nalu_tasks WHERE user_id = $1 AND id = $2', [userId, id])
+      else await client.query(`DELETE FROM nalu_tasks WHERE user_id = $1 AND status IN ('done','failed','cancelled')`, [userId])
       return res.status(200).json({ ok: true })
     }
 

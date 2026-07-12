@@ -36,6 +36,26 @@ export async function ensureSchema(client: Client): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (user_id, key)
     );
+    -- AutoPilot task ledger: every unit of work Nalu does for a user, from any
+    -- surface (CLI / desktop app, training flywheel, agent pipelines, voice,
+    -- browser). The mobile AutoPilot screen reads this to show "everything you
+    -- have ever done" plus live status. source ∈ cli|desktop|flywheel|pipeline|
+    -- voice|browser|web; status ∈ queued|running|done|failed|cancelled.
+    CREATE TABLE IF NOT EXISTS nalu_tasks (
+      id         TEXT PRIMARY KEY,
+      user_id    TEXT NOT NULL REFERENCES nalu_users(id) ON DELETE CASCADE,
+      source     TEXT NOT NULL DEFAULT 'cli',
+      title      TEXT NOT NULL,
+      detail     TEXT,
+      status     TEXT NOT NULL DEFAULT 'running',
+      progress   REAL NOT NULL DEFAULT 0,
+      events     JSONB NOT NULL DEFAULT '[]'::jsonb,
+      meta       JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS nalu_tasks_user_updated
+      ON nalu_tasks (user_id, updated_at DESC);
   `)
   schemaReady = true
 }
