@@ -254,7 +254,7 @@ export default async function handler(req: any, res: any) {
       const meta = body.meta && typeof body.meta === 'object' ? JSON.stringify(body.meta) : null
       const r = await client.query(
         `INSERT INTO nalu_tasks (id, user_id, source, title, detail, status, progress, events, meta, updated_at)
-         VALUES ($1, $2, $3, $4, $5, COALESCE($6,'running'), COALESCE($7,0),
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6,'running'), COALESCE($7::real,0),
                  CASE WHEN $8::text IS NULL THEN '[]'::jsonb
                       ELSE jsonb_build_array(jsonb_build_object('t', NOW(), 'm', $8::text)) END,
                  COALESCE($9::jsonb,'{}'::jsonb), NOW())
@@ -263,7 +263,7 @@ export default async function handler(req: any, res: any) {
            title      = CASE WHEN $4 <> '' THEN EXCLUDED.title ELSE nalu_tasks.title END,
            detail     = COALESCE($5, nalu_tasks.detail),
            status     = COALESCE($6, nalu_tasks.status),
-           progress   = COALESCE($7, nalu_tasks.progress),
+           progress   = COALESCE($7::real, nalu_tasks.progress),
            events     = CASE WHEN $8::text IS NULL THEN nalu_tasks.events
                              ELSE nalu_tasks.events || jsonb_build_array(jsonb_build_object('t', NOW(), 'm', $8::text)) END,
            meta       = nalu_tasks.meta || COALESCE($9::jsonb,'{}'::jsonb),
