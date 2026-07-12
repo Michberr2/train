@@ -7,10 +7,19 @@ import { chatComplete } from './_llm'
 type Edge = { from: string; to: string }
 type PNode = { id: string; type?: string; agent?: string; role?: string; prompt?: string; label?: string; lastRunDay?: string; roleTitle?: string; roleNotes?: string }
 type Company = { what?: string; mission?: string; notes?: string }
+type FlowRun = { status: 'running' | 'done' | 'error' | 'stuck' | 'stopped'; step?: number; total?: number; startedAt?: number; updatedAt?: number; heartbeat?: number; node?: string; nodeLabel?: string; error?: string }
 type Flow = {
   id: string; name?: string; nodes?: PNode[]; edges?: Edge[]
   schedule?: 'manual' | 'hourly' | 'daily' | 'weekly' | 'continuous' | 'members'
-  time?: string; enabled?: boolean; lastRun?: number; results?: Record<string, string>; company?: Company
+  time?: string; enabled?: boolean; lastRun?: number; results?: Record<string, string>; company?: Company; run?: FlowRun
+}
+// A run whose heartbeat is older than this has lost its tab (hard refresh / close)
+// — the server takes it over and finishes it. Generous so a briefly-backgrounded
+// tab is never stolen mid-run.
+const ORPHAN_MS = 180_000
+const NODE_TIMEOUT_MS = 90_000
+function isOrphanedRun(f: Flow, now: number): boolean {
+  return !!f.run && f.run.status === 'running' && !!f.nodes?.length && now - (f.run.heartbeat || 0) > ORPHAN_MS
 }
 const ROLE_TITLES: Record<string, string> = {
   ceo: 'CEO', coo: 'COO', cfo: 'CFO', cto: 'CTO', cio: 'CIO', cmo: 'CMO', design: 'Head of Design', accountant: 'Accountant', legal: 'Legal Counsel', analyst: 'Analyst', ea: 'Executive Assistant', pm: 'Product Manager', sales: 'Sales Lead', hr: 'Head of People', support: 'Support Lead',
@@ -56,13 +65,22 @@ function topoOrder(nodes: PNode[], edges: Edge[]): string[] {
   return order
 }
 
-async function runFlow(f: Flow): Promise<Record<string, string>> {
+async function runFlow(f: Flow): Promise<{ results: Record<string, string>; status: FlowRun['status']; error?: string }> {
   const nodes = f.nodes || [], edges = f.edges || []
   const deps = new Map(nodes.map((n) => [n.id, edges.filter((e) => e.to === n.id).map((e) => e.from)]))
+  // RESUME: keep every step already finished (e.g. by the tab before it closed).
   const results: Record<string, string> = { ...(f.results || {}) }
+  const failed = new Set<string>()
+  const stuck = new Set<string>()
+  let firstError = ''
   for (const nid of topoOrder(nodes, edges)) {
     const node = nodes.find((n) => n.id === nid)
     if (!node || node.type !== 'agent') continue // outputs (docs/sheets/video) are built client-side; agents produce the deliverable text here
+    // Fail-fast: if any upstream step failed/got stuck, this step can't run.
+    if ((deps.get(nid) || []).some((d) => failed.has(d))) { failed.add(nid); continue }
+    // Orphan RESUME only: skip steps the closed tab already finished. A scheduled
+    // (due) run always re-runs every step so it refreshes daily.
+    if (f.run?.status === 'running' && results[nid] != null) continue
     const input = (deps.get(nid) || []).map((d) => results[d]).filter(Boolean).join('\n\n---\n\n')
     let prompt = (node.prompt || '').trim() || `You are the "${node.label || node.agent || 'agent'}" step in a pipeline. Do your specialty on the input.`
     if (prompt.includes('{{input}}')) prompt = prompt.split('{{input}}').join(input || '(no upstream input)')
@@ -81,12 +99,21 @@ async function runFlow(f: Flow): Promise<Record<string, string>> {
       node.roleNotes ? `HOW YOU MUST WORK — exact instructions for you that OVERRIDE defaults: ${node.roleNotes}` : '',
     ].filter(Boolean).join(' ')
     if (charter) prompt = `${charter}\n\nYOUR TASK:\n${prompt}`
+    const startedAt = Date.now()
     try {
-      const out = await chatComplete([{ role: 'user', content: prompt }], { maxTokens: 2200, timeoutMs: 90000, temperature: 0.6 })
+      const out = await chatComplete([{ role: 'user', content: prompt }], { maxTokens: 2200, timeoutMs: NODE_TIMEOUT_MS, temperature: 0.6 })
       if (out && out.trim()) results[nid] = out.slice(0, 24000)
-    } catch { /* skip this node; the rest still run */ }
+      else { failed.add(nid); firstError ||= `"${node.label || nid}" returned nothing` }
+    } catch (e) {
+      // A step that hangs past the timeout is BROKEN (stuck), not retried forever.
+      const elapsed = Date.now() - startedAt
+      failed.add(nid)
+      if (elapsed >= NODE_TIMEOUT_MS * 0.9) { stuck.add(nid); firstError ||= `"${node.label || nid}" got stuck` }
+      else firstError ||= `"${node.label || nid}" failed: ${e instanceof Error ? e.message : 'error'}`
+    }
   }
-  return results
+  const status: FlowRun['status'] = stuck.size ? 'stuck' : failed.size ? 'error' : 'done'
+  return { results, status, error: firstError || undefined }
 }
 
 export async function runDueCrons(client: { query: (q: string, p?: unknown[]) => Promise<{ rows: Array<{ user_id: string; value: string }> }> }): Promise<{ usersChecked: number; flowsRan: number }> {
@@ -100,9 +127,34 @@ export async function runDueCrons(client: { query: (q: string, p?: unknown[]) =>
     if (!Array.isArray(flows)) continue
     let changed = false
     for (const f of flows) {
-      if (!isDue(f, now)) continue
-      f.results = await runFlow(f)
+      const due = isDue(f, now)
+      const orphan = isOrphanedRun(f, now) // a run whose tab closed mid-flight — take it over
+      if (!due && !orphan) continue
+      const total = topoOrder(f.nodes || [], f.edges || []).length
+      // AutoPilot ledger (per-user): show the run as it happens on the phone —
+      // a 'running' row now, flipped to done/failed below. Best-effort.
+      const runId = `flow_${f.id}_${now}`
+      try {
+        await client.query(
+          `INSERT INTO nalu_tasks (id, user_id, source, title, detail, status, progress, updated_at)
+           VALUES ($1, $2, 'flywheel', $3, $4, 'running', 0, NOW()) ON CONFLICT (id) DO NOTHING`,
+          [runId, row.user_id, (f.name || 'Automation').slice(0, 300), `${total} agent step${total === 1 ? '' : 's'}`],
+        )
+      } catch { /* ledger is best-effort */ }
+      const { results, status, error } = await runFlow(f)
+      try {
+        await client.query(
+          `UPDATE nalu_tasks SET status = $2, progress = 1,
+             events = events || jsonb_build_array(jsonb_build_object('t', NOW(), 'm', $3::text)),
+             updated_at = NOW() WHERE id = $1`,
+          [runId, error ? 'failed' : 'done', error ? `Failed: ${String(error).slice(0, 200)}` : 'Completed'],
+        )
+      } catch { /* ledger is best-effort */ }
+      f.results = results
       f.lastRun = now
+      // Record a terminal run state so the client shows it finished (or broke)
+      // and doesn't try to resume something the server already completed.
+      f.run = { status, step: total, total, startedAt: f.run?.startedAt || now, updatedAt: now, heartbeat: now, error }
       const day = new Date(now).toDateString()
       f.nodes = (f.nodes || []).map((n) => (n.type === 'agent' ? { ...n, lastRunDay: day } : n))
       changed = true; flowsRan++

@@ -89,6 +89,46 @@ function deriveChatActivity(chatsVal: unknown): AnyObj[] {
   return items
 }
 
+// Turn the user's saved AutoPilot pipelines (agent flows) into activity items, so
+// the phone shows every automation they've built — its schedule and last run —
+// even when it's idle between runs.
+const SCHED_LABEL: Record<string, string> = {
+  manual: 'Manual', hourly: 'Hourly', daily: 'Daily', weekly: 'Weekly',
+  continuous: 'Continuous', members: 'Daily',
+}
+function deriveFlowActivity(flowsVal: unknown): AnyObj[] {
+  const flows = asArray(flowsVal)
+  if (!flows) return []
+  const items: AnyObj[] = []
+  for (const f of flows.slice(0, 200)) {
+    if (!f || !f.id) continue
+    const nodes = Array.isArray(f.nodes) ? f.nodes.filter((n: AnyObj) => n && (n.type === 'agent' || n.agent || n.role)).length : 0
+    const run = (f.run && typeof f.run === 'object' ? f.run : {}) as AnyObj
+    const st = String(run.status || '')
+    const status = st === 'running' ? 'running'
+      : st === 'error' || st === 'stuck' ? 'failed'
+      : st === 'stopped' ? 'cancelled'
+      : f.lastRun ? 'done' : 'queued'
+    const progress = run.total ? Math.max(0, Math.min(1, (Number(run.step) || 0) / Number(run.total))) : (f.lastRun ? 1 : 0)
+    const sched = SCHED_LABEL[String(f.schedule || 'manual')] || 'Manual'
+    const ts = Number(run.updatedAt) || Number(f.lastRun) || 0
+    const iso = ts ? new Date(ts).toISOString() : new Date(0).toISOString()
+    items.push({
+      id: `flow_def_${f.id}`,
+      source: 'pipeline',
+      title: String(f.name || 'AutoPilot').slice(0, 300),
+      detail: `${sched}${f.enabled === false ? ' · paused' : ''} · ${nodes} agent${nodes === 1 ? '' : 's'}`,
+      status,
+      progress,
+      events: run.error ? [{ t: iso, m: String(run.error).slice(0, 200) }] : [],
+      meta: { kind: 'flow', schedule: f.schedule || 'manual' },
+      created_at: iso,
+      updated_at: iso,
+    })
+  }
+  return items
+}
+
 // Read a stored id-array (e.g. a tombstone list) as a Set of strings.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function readIdSet(client: any, userId: string, key: string): Promise<Set<string>> {
@@ -285,12 +325,19 @@ export default async function handler(req: any, res: any) {
            FROM nalu_tasks WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 300`,
         [userId],
       )
-      const chatRes = await client.query(
-        'SELECT value FROM nalu_user_data WHERE user_id = $1 AND key = $2',
-        [userId, 'nalu-chats'],
+      const kvRes = await client.query(
+        `SELECT key, value FROM nalu_user_data WHERE user_id = $1 AND key IN ('nalu-chats','nalu-agent-flows')`,
+        [userId],
       )
-      const chatItems = deriveChatActivity(chatRes.rows[0]?.value)
-      return res.status(200).json({ tasks: tRes.rows, chats: chatItems, now: new Date().toISOString() })
+      let chatsVal: unknown = null
+      let flowsVal: unknown = null
+      for (const row of kvRes.rows) {
+        if (row.key === 'nalu-chats') chatsVal = row.value
+        else if (row.key === 'nalu-agent-flows') flowsVal = row.value
+      }
+      const chatItems = deriveChatActivity(chatsVal)
+      const flowItems = deriveFlowActivity(flowsVal)
+      return res.status(200).json({ tasks: tRes.rows, chats: chatItems, pipelines: flowItems, now: new Date().toISOString() })
     }
 
     // task-feed: the AutoPilot history — every task for this user, newest first.
