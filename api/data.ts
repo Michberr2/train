@@ -2,7 +2,7 @@
 // localStorage keys so conversations, projects, plugins, automations, GitHub
 // PAT, settings, etc. persist server-side and sync across n4lu.ai/.com + devices.
 // POST { action: 'load'|'set'|'setMany'|'remove', token, ... }
-import { runDueCrons } from './_cron'
+import { runDueCrons, runOneFlow } from './_cron'
 import { getClient, ensureSchema, userIdForToken, readToken, safeJson, newToken } from './_db'
 
 const SHARE_DDL =
@@ -50,6 +50,20 @@ const asArray = (v: unknown): AnyObj[] | null => {
   return null
 }
 
+// Robustly unwrap a value that may be JSON-string-encoded MORE THAN ONCE. The
+// sync layer + setMany can double-encode arrays (a JSON string of a JSON string),
+// so a single parse leaves us with a string, not an array — keep parsing until we
+// reach the array (or give up). This is why chats/flows can fail to appear.
+function deepParseArray(v: unknown): AnyObj[] | null {
+  let cur: unknown = v
+  for (let i = 0; i < 6; i++) {
+    if (Array.isArray(cur)) return cur as AnyObj[]
+    if (typeof cur !== 'string') return null
+    try { cur = JSON.parse(cur) } catch { return null }
+  }
+  return Array.isArray(cur) ? (cur as AnyObj[]) : null
+}
+
 // Turn the user's stored chats into AutoPilot "activity" items (same shape as a
 // task row) so the phone shows everything they've ever made — conversations plus
 // every Studio artifact (docs, sheets, decks, sites, videos, CAD, images).
@@ -58,7 +72,7 @@ const STUDIO_KIND: Record<string, string> = {
   design: 'Website', video: 'Video', cad: 'CAD model', image: 'Image',
 }
 function deriveChatActivity(chatsVal: unknown): AnyObj[] {
-  const chats = asArray(chatsVal)
+  const chats = deepParseArray(chatsVal)
   if (!chats) return []
   const items: AnyObj[] = []
   for (const c of chats.slice(0, 500)) {
@@ -97,31 +111,48 @@ const SCHED_LABEL: Record<string, string> = {
   continuous: 'Continuous', members: 'Daily',
 }
 function deriveFlowActivity(flowsVal: unknown): AnyObj[] {
-  const flows = asArray(flowsVal)
+  const flows = deepParseArray(flowsVal)
   if (!flows) return []
   const items: AnyObj[] = []
   for (const f of flows.slice(0, 200)) {
     if (!f || !f.id) continue
-    const nodes = Array.isArray(f.nodes) ? f.nodes.filter((n: AnyObj) => n && (n.type === 'agent' || n.agent || n.role)).length : 0
+    const nodeCount = Array.isArray(f.nodes) ? f.nodes.filter((n: AnyObj) => n && (n.type === 'agent' || n.agent || n.role)).length : 0
     const run = (f.run && typeof f.run === 'object' ? f.run : {}) as AnyObj
     const st = String(run.status || '')
     const status = st === 'running' ? 'running'
       : st === 'error' || st === 'stuck' ? 'failed'
       : st === 'stopped' ? 'cancelled'
       : f.lastRun ? 'done' : 'queued'
-    const progress = run.total ? Math.max(0, Math.min(1, (Number(run.step) || 0) / Number(run.total))) : (f.lastRun ? 1 : 0)
+    const total = Number(run.total) || nodeCount
+    const step = Number(run.step) || 0
+    const progress = total ? Math.max(0, Math.min(1, step / total)) : (f.lastRun ? 1 : 0)
     const sched = SCHED_LABEL[String(f.schedule || 'manual')] || 'Manual'
+    // "Where things are at": while running, show the current agent + step; else
+    // the schedule + size.
+    const where = status === 'running'
+      ? `${run.nodeLabel ? String(run.nodeLabel).slice(0, 40) + ' · ' : ''}step ${step}/${total || '?'}`
+      : `${sched}${f.enabled === false ? ' · paused' : ''} · ${nodeCount} agent${nodeCount === 1 ? '' : 's'}`
     const ts = Number(run.updatedAt) || Number(f.lastRun) || 0
     const iso = ts ? new Date(ts).toISOString() : new Date(0).toISOString()
     items.push({
       id: `flow_def_${f.id}`,
       source: 'pipeline',
       title: String(f.name || 'AutoPilot').slice(0, 300),
-      detail: `${sched}${f.enabled === false ? ' · paused' : ''} · ${nodes} agent${nodes === 1 ? '' : 's'}`,
+      detail: where,
       status,
       progress,
       events: run.error ? [{ t: iso, m: String(run.error).slice(0, 200) }] : [],
-      meta: { kind: 'flow', schedule: f.schedule || 'manual' },
+      // flowId + schedule + whether a resume is possible drive the mobile Run/
+      // Continue/Stop buttons. resumable = a run that stalled/stopped/errored
+      // partway (some steps done) can be continued.
+      meta: {
+        kind: 'flow',
+        flowId: String(f.id),
+        schedule: f.schedule || 'manual',
+        enabled: f.enabled !== false,
+        nodeCount,
+        resumable: (st === 'stopped' || st === 'error' || st === 'stuck' || st === 'running') && step > 0 && step < total,
+      },
       created_at: iso,
       updated_at: iso,
     })
@@ -354,6 +385,17 @@ export default async function handler(req: any, res: any) {
         [userId, since, limit],
       )
       return res.status(200).json({ tasks: r.rows, now: new Date().toISOString() })
+    }
+
+    // flow-run: START ('run'), CONTINUE ('resume'), or STOP ('stop') one of this
+    // user's AutoPilot pipelines on demand from the phone. Runs server-side and
+    // streams progress into the task ledger so the phone shows where it's at.
+    if (action === 'flow-run') {
+      const flowId = String(body.flowId || '')
+      const mode = (['run', 'resume', 'stop'].includes(String(body.mode)) ? String(body.mode) : 'run') as 'run' | 'resume' | 'stop'
+      if (!flowId) return res.status(400).json({ error: 'flowId required' })
+      const out = await runOneFlow(client, userId, flowId, mode, !!body.force)
+      return res.status(out.code || (out.ok ? 200 : 400)).json(out)
     }
 
     // task-clear: remove one task (id) or all of this user's finished tasks.

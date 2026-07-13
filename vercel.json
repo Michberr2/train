@@ -6,6 +6,9 @@
     "api/chat.ts": {
       "maxDuration": 300
     },
+    "api/data.ts": {
+      "maxDuration": 300
+    },
     "api/doc.ts": {
       "maxDuration": 300
     },

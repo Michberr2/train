@@ -65,7 +65,8 @@ function topoOrder(nodes: PNode[], edges: Edge[]): string[] {
   return order
 }
 
-async function runFlow(f: Flow): Promise<{ results: Record<string, string>; status: FlowRun['status']; error?: string }> {
+type ProgressFn = (step: number, total: number, label: string) => void | Promise<void>
+async function runFlow(f: Flow, onProgress?: ProgressFn): Promise<{ results: Record<string, string>; status: FlowRun['status']; error?: string }> {
   const nodes = f.nodes || [], edges = f.edges || []
   const deps = new Map(nodes.map((n) => [n.id, edges.filter((e) => e.to === n.id).map((e) => e.from)]))
   // RESUME: keep every step already finished (e.g. by the tab before it closed).
@@ -73,9 +74,14 @@ async function runFlow(f: Flow): Promise<{ results: Record<string, string>; stat
   const failed = new Set<string>()
   const stuck = new Set<string>()
   let firstError = ''
-  for (const nid of topoOrder(nodes, edges)) {
+  const order = topoOrder(nodes, edges)
+  const agentTotal = order.filter((id) => nodes.find((n) => n.id === id)?.type === 'agent').length
+  let doneCount = 0
+  for (const nid of order) {
     const node = nodes.find((n) => n.id === nid)
     if (!node || node.type !== 'agent') continue // outputs (docs/sheets/video) are built client-side; agents produce the deliverable text here
+    doneCount++
+    await onProgress?.(doneCount, agentTotal, node.label || node.roleTitle || ROLE_TITLES[node.role || ''] || node.agent || 'step')
     // Fail-fast: if any upstream step failed/got stuck, this step can't run.
     if ((deps.get(nid) || []).some((d) => failed.has(d))) { failed.add(nid); continue }
     // Orphan RESUME only: skip steps the closed tab already finished. A scheduled
@@ -114,6 +120,104 @@ async function runFlow(f: Flow): Promise<{ results: Record<string, string>; stat
   }
   const status: FlowRun['status'] = stuck.size ? 'stuck' : failed.size ? 'error' : 'done'
   return { results, status, error: firstError || undefined }
+}
+
+// ── On-demand single-flow runner (mobile "Run now" / "Continue" / "Stop") ─────
+// Runs ONE of a user's flows immediately, updating a per-user task-ledger row per
+// node so the phone shows "where things are at" live, and writing the flow's
+// results + run-state back (same encoding runDueCrons uses). Everything is scoped
+// to userId — a flow id that isn't in this user's row is never touched.
+type MinimalClient = { query: (q: string, p?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> }
+
+function deepParseFlows(v: unknown): Flow[] | null {
+  let cur: unknown = v
+  for (let i = 0; i < 6; i++) {
+    if (Array.isArray(cur)) return cur as Flow[]
+    if (typeof cur !== 'string') return null
+    try { cur = JSON.parse(cur) } catch { return null }
+  }
+  return Array.isArray(cur) ? (cur as Flow[]) : null
+}
+
+async function saveFlows(client: MinimalClient, userId: string, flows: Flow[]): Promise<void> {
+  await client.query(
+    "INSERT INTO nalu_user_data (user_id, key, value, updated_at) VALUES ($1, 'nalu-agent-flows', $2, NOW()) ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+    [userId, JSON.stringify(flows)],
+  )
+}
+
+// Upsert one row in the AutoPilot task ledger (mirrors data.ts task-log; used
+// here so we don't import across route files). Scoped to userId.
+async function ledger(
+  client: MinimalClient, userId: string, id: string,
+  f: { source?: string; title?: string; detail?: string | null; status?: string | null; progress?: number | null; event?: string | null },
+): Promise<void> {
+  await client.query(
+    `INSERT INTO nalu_tasks (id, user_id, source, title, detail, status, progress, events, meta, updated_at)
+     VALUES ($1, $2, COALESCE($3,'pipeline'), COALESCE($4,''), $5, COALESCE($6,'running'), COALESCE($7::real,0),
+             CASE WHEN $8::text IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('t', NOW(), 'm', $8::text)) END,
+             '{}'::jsonb, NOW())
+     ON CONFLICT (id) DO UPDATE SET
+       title      = CASE WHEN $4 IS NOT NULL AND $4 <> '' THEN EXCLUDED.title ELSE nalu_tasks.title END,
+       detail     = COALESCE($5, nalu_tasks.detail),
+       status     = COALESCE($6, nalu_tasks.status),
+       progress   = COALESCE($7::real, nalu_tasks.progress),
+       events     = CASE WHEN $8::text IS NULL THEN nalu_tasks.events
+                         ELSE nalu_tasks.events || jsonb_build_array(jsonb_build_object('t', NOW(), 'm', $8::text)) END,
+       updated_at = NOW()
+     WHERE nalu_tasks.user_id = $2`,
+    [id, userId, f.source ?? null, f.title ?? null, f.detail ?? null, f.status ?? null, f.progress ?? null, f.event ?? null],
+  )
+}
+
+const agentCount = (f: Flow): number =>
+  (f.nodes || []).filter((n) => n.type === 'agent' || n.agent || n.role).length
+
+/** Run / resume / stop one flow for a user. mode: 'run' (fresh), 'resume', 'stop'. */
+export async function runOneFlow(
+  client: MinimalClient, userId: string, flowId: string, mode: 'run' | 'resume' | 'stop', force = false,
+): Promise<{ ok: boolean; status?: string; step?: number; total?: number; error?: string; code?: number }> {
+  const r = await client.query("SELECT value FROM nalu_user_data WHERE user_id = $1 AND key = 'nalu-agent-flows'", [userId])
+  const flows = deepParseFlows(r.rows[0]?.value)
+  if (!flows) return { ok: false, error: 'no pipelines for this account', code: 404 }
+  const idx = flows.findIndex((f) => String(f.id) === String(flowId))
+  if (idx < 0) return { ok: false, error: 'pipeline not found', code: 404 }
+  const f = flows[idx]
+  const now = Date.now()
+
+  // A live browser tab owns the run if its heartbeat is fresh — don't stomp it.
+  const ownedByLiveTab = f.run?.status === 'running' && now - (f.run.heartbeat || 0) < ORPHAN_MS
+  if (mode === 'stop') {
+    f.run = { ...(f.run || { step: 0, total: agentCount(f), startedAt: now }), status: 'stopped', heartbeat: now, updatedAt: now } as FlowRun
+    await saveFlows(client, userId, flows)
+    await ledger(client, userId, `flow_${f.id}_stop_${now}`, { title: f.name || 'AutoPilot', status: 'cancelled', progress: 0, detail: 'Stopped from mobile', event: 'Stopped from mobile' })
+    return { ok: true, status: 'stopped' }
+  }
+  if (ownedByLiveTab && !force) return { ok: false, error: 'a live session already owns this run', code: 409 }
+
+  const total = agentCount(f)
+  const taskId = `flow_${f.id}_${now}`
+  if (mode === 'run') { f.results = {}; f.run = undefined } // fresh: re-run every node
+  // resume: keep f.results; mark running so runFlow's skip keeps finished steps
+  f.run = { status: 'running', step: mode === 'resume' ? Object.keys(f.results || {}).length : 0, total, startedAt: now, updatedAt: now, heartbeat: now } as FlowRun
+  await saveFlows(client, userId, flows)
+  await ledger(client, userId, taskId, { title: f.name || 'AutoPilot', status: 'running', progress: 0, detail: mode === 'resume' ? 'Resuming…' : 'Starting…', event: mode === 'resume' ? 'Resumed from mobile' : 'Started from mobile' })
+
+  const onProgress: ProgressFn = async (step, tot, label) => {
+    f.run = { status: 'running', step, total: tot, startedAt: now, updatedAt: Date.now(), heartbeat: Date.now(), nodeLabel: label } as FlowRun
+    await ledger(client, userId, taskId, { detail: `${label} · step ${step}/${tot}`, progress: tot ? step / tot : 0, event: label })
+    await saveFlows(client, userId, flows).catch(() => {})
+  }
+  const { results, status, error } = await runFlow(f, onProgress)
+  f.results = results
+  f.lastRun = Date.now()
+  f.run = { status, step: total, total, startedAt: now, updatedAt: Date.now(), heartbeat: Date.now(), error } as FlowRun
+  const day = new Date(now).toDateString()
+  f.nodes = (f.nodes || []).map((n) => (n.type === 'agent' ? { ...n, lastRunDay: day } : n))
+  await saveFlows(client, userId, flows)
+  const finalStatus = error || status === 'error' || status === 'stuck' ? 'failed' : 'done'
+  await ledger(client, userId, taskId, { status: finalStatus, progress: 1, detail: error ? `Failed: ${String(error).slice(0, 160)}` : `Done · ${total} agent${total === 1 ? '' : 's'}`, event: error ? String(error).slice(0, 200) : 'Completed' })
+  return { ok: true, status: finalStatus, step: total, total }
 }
 
 export async function runDueCrons(client: { query: (q: string, p?: unknown[]) => Promise<{ rows: Array<{ user_id: string; value: string }> }> }): Promise<{ usersChecked: number; flowsRan: number }> {
