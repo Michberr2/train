@@ -1,7 +1,7 @@
 // Nalu auth — server-side accounts in Neon Postgres, shared across n4lu.ai/.com.
 // POST { action: 'signup'|'signin'|'me'|'signout', ... }
 import { cors } from './_cors'
-import { getClient, ensureSchema, hashPassword, newSalt, newToken, readToken, safeJson, sha256 } from './_db'
+import { getClient, ensureSchema, hashPassword, newSalt, newToken, readToken, safeJson, sha256, newRecoveryCode, normalizeRecoveryCode } from './_db'
 import { sendEmail, resetEmail } from './_email'
 
 const MIN_PASSWORD = 8
@@ -47,26 +47,35 @@ export default async function handler(req: any, res: any) {
 
       const salt = newSalt()
       const hash = hashPassword(password, salt)
+      const recoveryCode = newRecoveryCode()
       await client.query(
-        'INSERT INTO nalu_users (id, display_name, salt, hash) VALUES ($1, $2, $3, $4)',
-        [id, displayName, salt, hash],
+        'INSERT INTO nalu_users (id, display_name, salt, hash, recovery_hash) VALUES ($1, $2, $3, $4, $5)',
+        [id, displayName, salt, hash, sha256(normalizeRecoveryCode(recoveryCode))],
       )
       const token = newToken()
       await client.query('INSERT INTO nalu_sessions (token, user_id) VALUES ($1, $2)', [token, id])
-      return res.status(200).json({ ok: true, user: { id, displayName }, token })
+      // recoveryCode is shown ONCE so they can reset their password without email.
+      return res.status(200).json({ ok: true, user: { id, displayName }, token, recoveryCode })
     }
 
     if (action === 'signin') {
       const id = String(body.email || '').trim().toLowerCase()
       const password = String(body.password || '')
       const invalid = { ok: false, error: 'Incorrect email/username or password.' }
-      const r = await client.query('SELECT display_name, salt, hash FROM nalu_users WHERE id = $1', [id])
+      const r = await client.query('SELECT display_name, salt, hash, recovery_hash FROM nalu_users WHERE id = $1', [id])
       const u = r.rows[0]
       if (!u) return res.status(401).json(invalid)
       if (hashPassword(password, u.salt) !== u.hash) return res.status(401).json(invalid)
       const token = newToken()
       await client.query('INSERT INTO nalu_sessions (token, user_id) VALUES ($1, $2)', [token, id])
-      return res.status(200).json({ ok: true, user: { id, displayName: u.display_name }, token })
+      // Backfill: users created before recovery codes existed get one on sign-in,
+      // returned ONCE so they can save it. New users already have theirs.
+      let recoveryCode: string | undefined
+      if (!u.recovery_hash) {
+        recoveryCode = newRecoveryCode()
+        await client.query('UPDATE nalu_users SET recovery_hash = $1 WHERE id = $2', [sha256(normalizeRecoveryCode(recoveryCode)), id])
+      }
+      return res.status(200).json({ ok: true, user: { id, displayName: u.display_name }, token, ...(recoveryCode ? { recoveryCode } : {}) })
     }
 
     if (action === 'me') {
@@ -140,6 +149,33 @@ export default async function handler(req: any, res: any) {
       await client.query('INSERT INTO nalu_sessions (token, user_id) VALUES ($1, $2)', [newTok, userId])
       const uq = await client.query('SELECT display_name FROM nalu_users WHERE id = $1', [userId])
       return res.status(200).json({ ok: true, user: { id: userId, displayName: uq.rows[0]?.display_name || userId }, token: newTok })
+    }
+
+    // Email-FREE reset: prove ownership with the recovery code shown at signup.
+    // Works for anyone, no email provider needed. Issues a fresh code on success.
+    if (action === 'reset-with-code') {
+      const id = String(body.email || '').trim().toLowerCase()
+      const code = normalizeRecoveryCode(String(body.code || ''))
+      const password = String(body.password || '')
+      const bad = { ok: false, error: 'Incorrect email/username or recovery code.' }
+      if (!id || !code) return res.status(400).json(bad)
+      if (password.length < MIN_PASSWORD)
+        return res.status(400).json({ ok: false, error: `Password must be at least ${MIN_PASSWORD} characters.` })
+      const r = await client.query('SELECT recovery_hash FROM nalu_users WHERE id = $1', [id])
+      const stored = r.rows[0]?.recovery_hash as string | undefined
+      if (!stored || sha256(code) !== stored) return res.status(401).json(bad)
+      const salt = newSalt()
+      const nextCode = newRecoveryCode() // one-time code is consumed — issue a new one
+      await client.query(
+        'UPDATE nalu_users SET salt = $1, hash = $2, recovery_hash = $3 WHERE id = $4',
+        [salt, hashPassword(password, salt), sha256(normalizeRecoveryCode(nextCode)), id],
+      )
+      await client.query('UPDATE nalu_password_resets SET used = TRUE WHERE user_id = $1', [id])
+      await client.query('DELETE FROM nalu_sessions WHERE user_id = $1', [id]) // sign out everywhere
+      const newTok = newToken()
+      await client.query('INSERT INTO nalu_sessions (token, user_id) VALUES ($1, $2)', [newTok, id])
+      const uq = await client.query('SELECT display_name FROM nalu_users WHERE id = $1', [id])
+      return res.status(200).json({ ok: true, user: { id, displayName: uq.rows[0]?.display_name || id }, token: newTok, recoveryCode: nextCode })
     }
 
     return res.status(400).json({ error: 'unknown action' })

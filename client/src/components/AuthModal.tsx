@@ -36,27 +36,55 @@ export default function AuthModal({
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [code, setCode] = useState('') // recovery code (email-free reset)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [forgot, setForgot] = useState(false) // showing the "reset password" view
+  const [forgotMode, setForgotMode] = useState<'link' | 'code'>('link')
   const [resetSent, setResetSent] = useState(false)
+  // When a new recovery code is issued (signup / backfill sign-in / code reset) we
+  // show it ONCE and hold the user until they've saved it.
+  const [recoveryCode, setRecoveryCode] = useState<string | null>(null)
+  const [pendingUser, setPendingUser] = useState<PublicUser | null>(null)
 
   // Clear transient state whenever the modal opens or the user switches tabs.
   useEffect(() => {
     setError('')
     setPassword('')
     setConfirm('')
+    setCode('')
     setForgot(false)
+    setForgotMode('link')
     setResetSent(false)
+    setRecoveryCode(null)
+    setPendingUser(null)
   }, [open, mode])
+
+  // Route a successful auth: if a recovery code came back, show it first; else go.
+  const finishAuth = (user: PublicUser, recovery?: string) => {
+    if (recovery) {
+      setRecoveryCode(recovery)
+      setPendingUser(user)
+    } else {
+      onAuthed(user)
+    }
+  }
 
   const submitForgot = async (e: FormEvent) => {
     e.preventDefault()
     setError('')
     setLoading(true)
     try {
-      await localAuth.requestReset(id)
-      setResetSent(true) // always: the server won't say whether the account exists
+      if (forgotMode === 'code') {
+        if (password.length < 8) { setError('Password must be at least 8 characters.'); return }
+        if (password !== confirm) { setError('Passwords do not match.'); return }
+        const res = await localAuth.resetWithCode(id, code, password)
+        if (!res.ok) { setError(res.error); return }
+        finishAuth(res.user, res.recoveryCode)
+      } else {
+        await localAuth.requestReset(id)
+        setResetSent(true) // always: the server won't say whether the account exists
+      }
     } catch {
       setError('Something went wrong. Please try again.')
     } finally {
@@ -93,7 +121,7 @@ export default function AuthModal({
         setError(res.error)
         return
       }
-      onAuthed(res.user)
+      finishAuth(res.user, res.recoveryCode)
     } catch {
       setError('Something went wrong. Please try again.')
     } finally {
@@ -134,17 +162,51 @@ export default function AuthModal({
             </button>
 
             <h2 className="text-lg font-medium text-primary mb-1">
-              {forgot ? 'Reset your password' : mode === 'signup' ? 'Create your account' : 'Welcome back'}
+              {recoveryCode
+                ? 'Save your recovery code'
+                : forgot
+                  ? 'Reset your password'
+                  : mode === 'signup'
+                    ? 'Create your account'
+                    : 'Welcome back'}
             </h2>
             <p className="text-sm font-light text-secondary mb-5">
-              {forgot
-                ? "Enter your account email and we'll send you a link to set a new password."
-                : mode === 'signup'
-                  ? 'Set up an account to get started.'
-                  : 'Sign in to continue.'}
+              {recoveryCode
+                ? "This is the only way to reset your password without email. Keep it somewhere safe — you won't see it again."
+                : forgot
+                  ? forgotMode === 'code'
+                    ? 'Enter the recovery code you saved, then choose a new password.'
+                    : "Enter your account email and we'll send you a link to set a new password."
+                  : mode === 'signup'
+                    ? 'Set up an account to get started.'
+                    : 'Sign in to continue.'}
             </p>
 
-            {forgot ? (
+            {recoveryCode ? (
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between gap-2 rounded-xl border border-border-gray bg-background px-4 py-3">
+                  <span className="font-mono text-base tracking-widest text-primary select-all">{recoveryCode}</span>
+                  <button
+                    type="button"
+                    onClick={() => { void navigator.clipboard?.writeText(recoveryCode) }}
+                    className="shrink-0 text-xs text-accent-blue hover:underline"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <p className="text-tertiary text-xs">
+                  If you ever forget your password, choose “Recovery code” on the reset screen and enter this — no email
+                  needed. Lose it? Sign in and you'll get a fresh one.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => { const u = pendingUser; setRecoveryCode(null); setPendingUser(null); if (u) onAuthed(u) }}
+                  className="px-6 py-3 rounded-xl bg-primary text-surface font-medium hover:shadow-md transition-all duration-200 text-sm"
+                >
+                  I've saved it — continue
+                </button>
+              </div>
+            ) : forgot ? (
               resetSent ? (
                 <div className="flex flex-col gap-4">
                   <p className="text-sm text-secondary">
@@ -160,33 +222,72 @@ export default function AuthModal({
                   </button>
                 </div>
               ) : (
-                <form onSubmit={submitForgot} className="flex flex-col gap-3">
-                  <input
-                    type="text"
-                    placeholder="Email or username"
-                    value={id}
-                    onChange={(e) => setId(e.target.value)}
-                    autoComplete="username"
-                    required
-                    autoFocus
-                    className={inputCls}
-                  />
-                  {error && <p className="text-red-500 text-sm">{error}</p>}
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="mt-1 px-6 py-3 rounded-xl bg-primary text-surface font-medium hover:shadow-md transition-all duration-200 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {loading ? 'Sending…' : 'Send reset link'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setForgot(false)}
-                    className="text-tertiary text-xs text-center hover:text-primary transition-colors"
-                  >
-                    Back to sign in
-                  </button>
-                </form>
+                <>
+                  <div className="flex gap-1 mb-4 p-1 rounded-xl bg-border-gray/50 border border-border-gray">
+                    <button type="button" onClick={() => { setForgotMode('link'); setError('') }} className={tabCls(forgotMode === 'link')}>Email a link</button>
+                    <button type="button" onClick={() => { setForgotMode('code'); setError('') }} className={tabCls(forgotMode === 'code')}>Recovery code</button>
+                  </div>
+                  <form onSubmit={submitForgot} className="flex flex-col gap-3">
+                    <input
+                      type="text"
+                      placeholder="Email or username"
+                      value={id}
+                      onChange={(e) => setId(e.target.value)}
+                      autoComplete="username"
+                      required
+                      autoFocus
+                      className={inputCls}
+                    />
+                    {forgotMode === 'code' && (
+                      <>
+                        <input
+                          type="text"
+                          placeholder="Recovery code (e.g. K7QP-2M9X-4WTZ)"
+                          value={code}
+                          onChange={(e) => setCode(e.target.value)}
+                          autoComplete="off"
+                          required
+                          className={inputCls}
+                        />
+                        <input
+                          type="password"
+                          placeholder="New password"
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          autoComplete="new-password"
+                          required
+                          className={inputCls}
+                        />
+                        <input
+                          type="password"
+                          placeholder="Confirm new password"
+                          value={confirm}
+                          onChange={(e) => setConfirm(e.target.value)}
+                          autoComplete="new-password"
+                          required
+                          className={inputCls}
+                        />
+                      </>
+                    )}
+                    {error && <p className="text-red-500 text-sm">{error}</p>}
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="mt-1 px-6 py-3 rounded-xl bg-primary text-surface font-medium hover:shadow-md transition-all duration-200 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {loading
+                        ? (forgotMode === 'code' ? 'Resetting…' : 'Sending…')
+                        : (forgotMode === 'code' ? 'Reset password' : 'Send reset link')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setForgot(false)}
+                      className="text-tertiary text-xs text-center hover:text-primary transition-colors"
+                    >
+                      Back to sign in
+                    </button>
+                  </form>
+                </>
               )
             ) : (
             <>

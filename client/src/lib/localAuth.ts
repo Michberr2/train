@@ -11,7 +11,7 @@ export interface PublicUser {
 }
 
 type Result =
-  | { ok: true; user: PublicUser }
+  | { ok: true; user: PublicUser; recoveryCode?: string }
   | { ok: false; error: string }
 
 export function getToken(): string | null {
@@ -43,7 +43,7 @@ export async function signUp(
     const r = await callAuth('signup', { email: rawId, password, displayName })
     if (r.ok && typeof r.token === 'string') {
       localStorage.setItem(TOKEN_KEY, r.token)
-      return { ok: true, user: r.user as PublicUser }
+      return { ok: true, user: r.user as PublicUser, recoveryCode: r.recoveryCode as string | undefined }
     }
     return { ok: false, error: (r.error as string) || 'Sign up failed.' }
   } catch {
@@ -56,7 +56,7 @@ export async function signIn(rawId: string, password: string): Promise<Result> {
     const r = await callAuth('signin', { email: rawId, password })
     if (r.ok && typeof r.token === 'string') {
       localStorage.setItem(TOKEN_KEY, r.token)
-      return { ok: true, user: r.user as PublicUser }
+      return { ok: true, user: r.user as PublicUser, recoveryCode: r.recoveryCode as string | undefined }
     }
     return { ok: false, error: (r.error as string) || 'Incorrect email/username or password.' }
   } catch {
@@ -72,6 +72,21 @@ export async function requestReset(email: string): Promise<{ ok: boolean; emailC
     return { ok: r.ok !== false, emailConfigured: r.emailConfigured as boolean | undefined }
   } catch {
     return { ok: false }
+  }
+}
+
+// Email-free reset: prove ownership with the recovery code shown at signup.
+// On success the user is signed in and a NEW recovery code is returned.
+export async function resetWithCode(email: string, code: string, password: string): Promise<Result> {
+  try {
+    const r = await callAuth('reset-with-code', { email, code, password })
+    if (r.ok && typeof r.token === 'string') {
+      localStorage.setItem(TOKEN_KEY, r.token)
+      return { ok: true, user: r.user as PublicUser, recoveryCode: r.recoveryCode as string | undefined }
+    }
+    return { ok: false, error: (r.error as string) || 'Could not reset your password.' }
+  } catch {
+    return { ok: false, error: 'Network error. Please try again.' }
   }
 }
 

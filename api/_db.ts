@@ -29,6 +29,9 @@ export async function ensureSchema(client: Client): Promise<void> {
       user_id    TEXT NOT NULL REFERENCES nalu_users(id) ON DELETE CASCADE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    -- Recovery code (SHA-256) — the email-free password-reset path. Every user
+    -- gets one; existing users are backfilled on their next sign-in.
+    ALTER TABLE nalu_users ADD COLUMN IF NOT EXISTS recovery_hash TEXT;
     CREATE TABLE IF NOT EXISTS nalu_user_data (
       user_id    TEXT NOT NULL REFERENCES nalu_users(id) ON DELETE CASCADE,
       key        TEXT NOT NULL,
@@ -82,6 +85,19 @@ export function newToken(): string {
 }
 export function sha256(s: string): string {
   return crypto.createHash('sha256').update(s).digest('hex')
+}
+// A readable recovery code, e.g. "K7QP-2M9X-4WTZ" (no easily-confused chars).
+export function newRecoveryCode(): string {
+  const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789' // no I,L,O,0,1
+  const bytes = crypto.randomBytes(12)
+  let out = ''
+  for (let i = 0; i < 12; i++) out += alphabet[bytes[i] % alphabet.length]
+  return `${out.slice(0, 4)}-${out.slice(4, 8)}-${out.slice(8, 12)}`
+}
+// Compare-safe form: uppercase, letters+digits only (so dashes/spacing/casing
+// entered by the user don't matter).
+export function normalizeRecoveryCode(s: string): string {
+  return s.toUpperCase().replace(/[^A-Z0-9]/g, '')
 }
 
 // Reads the bearer token from Authorization header or a `token` field.
