@@ -1248,7 +1248,9 @@ export default function AgentsPanel() {
                   <div className="p-2">
                     <div className="mb-1.5 flex items-center gap-1.5">
                       <input value={n.label} onChange={(e) => patchNode(n.id, { label: e.target.value })} onPointerDown={(e) => e.stopPropagation()}
-                        className="w-full flex-1 rounded bg-transparent text-[12px] font-medium text-ink outline-none placeholder:text-dim" placeholder="Step name" />
+                        title="Click to rename this agent"
+                        className="w-full flex-1 rounded border border-transparent bg-glass/[0.05] px-1.5 py-0.5 text-[12px] font-medium text-ink outline-none transition-colors placeholder:text-dim hover:border-glass/25 hover:bg-glass/[0.09] focus:border-gold/50 focus:bg-glass/[0.12]"
+                        placeholder={n.type === 'agent' ? 'Name this agent…' : 'Step name'} />
                       {flow.schedule === 'members' && n.type === 'agent' && (
                         <input type="time" value={n.time || ''} onChange={(e) => patchNode(n.id, { time: e.target.value })} onPointerDown={(e) => e.stopPropagation()} title="This member works at…"
                           className="shrink-0 rounded bg-glass/[0.06] px-1 py-0.5 text-[10px] text-ink outline-none" />
