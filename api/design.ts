@@ -12,7 +12,7 @@
 // project under the hard 12-function Vercel Hobby cap. Decks stay on api/slides.ts.
 
 import { cors } from './_cors'
-import { chatComplete } from './_llm'
+import { chatComplete, primaryProvider, fallbackProvider, emergencyProvider } from './_llm'
 import { research } from './web'
 import { identityForRequest, identityBlock } from './_db'
 import { reserveStudioQuota, studioLimitMessage } from './_limits'
@@ -24,6 +24,10 @@ function env(name: string): string | undefined {
 
 const LLM_KEY = env('TINKER_API_KEY') || ''
 const LLM_MODEL = env('NALU_DESIGN_MODEL') || 'deepseek-ai/DeepSeek-V3.1'
+// Prefer the FAST provider (HF router / DeepInfra serve DeepSeek-V3.1 far faster
+// than Tinker) for big HTML pages, so a full site finishes well inside the 300s
+// function cap instead of timing out → 504. Fails over to primary, then emergency.
+const FAST_PROVIDERS = () => [fallbackProvider(), primaryProvider(LLM_MODEL), emergencyProvider()].filter(Boolean) as NonNullable<ReturnType<typeof primaryProvider>>[]
 
 // ── Web grounding ────────────────────────────────────────────────────────────
 // Before building a brand book / site / logo for a REAL company, research the
@@ -2113,15 +2117,15 @@ export default async function handler(req: any, res: any) {
         let html = ''
         try {
           const budget = attempt === 0
-            ? { maxTokens, timeoutMs: 215000 }
-            : { maxTokens: Math.min(maxTokens, 10000), timeoutMs: 90000 }
+            ? { maxTokens, timeoutMs: 170000 }
+            : { maxTokens: Math.min(maxTokens, 10000), timeoutMs: 80000 }
           html = cleanHtml(
             await chatComplete(
               [
                 { role: 'system', content: system },
                 { role: 'user', content: user },
               ],
-              { model: LLM_MODEL, retryPrimary: false, temperature: 0.8, ...budget },
+              { model: LLM_MODEL, retryPrimary: false, temperature: 0.8, providers: FAST_PROVIDERS(), ...budget },
             ),
           )
         } catch (e) {
@@ -2141,7 +2145,7 @@ export default async function handler(req: any, res: any) {
       // pass (when enough of the 300s budget remains) — unfinished builds
       // finish server-side whenever possible; the client "Finish build" button
       // covers the rest.
-      if (best && isTruncatedHtml(best) && elapsed() < 200000) {
+      if (best && isTruncatedHtml(best) && elapsed() < 170000) {
         try {
           const cont = await chatComplete(
             [
@@ -2150,7 +2154,7 @@ export default async function handler(req: any, res: any) {
               { role: 'assistant', content: best },
               { role: 'user', content: 'Your HTML was cut off mid-output. Continue EXACTLY where it stopped — output ONLY the remaining HTML (no repetition, no fences, no commentary), all the way through the final </html>.' },
             ],
-            { model: LLM_MODEL, maxTokens: 6000, timeoutMs: 60000, retryPrimary: false, temperature: 0.6 },
+            { model: LLM_MODEL, maxTokens: 6000, timeoutMs: 55000, retryPrimary: false, temperature: 0.6, providers: FAST_PROVIDERS() },
           )
           const tail = cont.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/^```(?:html)?\s*/i, '').replace(/\s*```$/i, '')
           if (tail && !/<!doctype/i.test(tail.slice(0, 200))) best = best + tail
@@ -2162,7 +2166,7 @@ export default async function handler(req: any, res: any) {
       // complete. If the page is still truncated (continuation failed) OR reads
       // thin (little real copy), ONE rescue pass completes + expands it —
       // checked, not just prompted.
-      if (kind === 'webpage' && best && elapsed() < 205000) {
+      if (kind === 'webpage' && best && elapsed() < 160000) {
         const words = best
           .replace(/<script[\s\S]*?<\/script>/gi, ' ')
           .replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -2180,7 +2184,7 @@ export default async function handler(req: any, res: any) {
                     content: `This site is UNFINISHED (${words} words of real copy${isTruncatedHtml(best) ? ', build cut off mid-generation' : ''} — a skeleton). Deliver the FULLY BAKED version: complete every cut-off or unfinished part, expand every thin section with complete, genuinely written content (real items, prices, descriptions, bios, FAQ answers), keep the design/structure/interactivity that already exists, and output the COMPLETE page through </html>.\n\n----\nCURRENT PAGE:\n${completeHtml(best).slice(0, 150000)}`,
                   },
                 ],
-                { model: LLM_MODEL, maxTokens: Math.min(maxTokens, 15000), timeoutMs: 90000, retryPrimary: false, temperature: 0.7 },
+                { model: LLM_MODEL, maxTokens: Math.min(maxTokens, 15000), timeoutMs: 70000, retryPrimary: false, temperature: 0.7, providers: FAST_PROVIDERS() },
               ),
             )
             if (richer && /<html|<!doctype/i.test(richer) && richer.length > best.length * 0.8) best = richer
