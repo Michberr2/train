@@ -58,6 +58,18 @@ function isNumericString(v: unknown): boolean {
   return typeof v === 'string' && /^\s*-?[$€£]?\s*[\d,]+(\.\d+)?\s*%?\s*$/.test(v) && /\d/.test(v)
 }
 
+/** Guard EVERY formula so a #DIV/0!, #N/A, #VALUE!, #REF! or #NAME? error can
+ *  never surface to the user — wrap it in IFERROR(...,0). 0 is the right neutral
+ *  for the numeric models these formulas drive; genuine text/labels aren't
+ *  formulas and never reach here. Also strips a stray leading '+' or doubled '='
+ *  that models sometimes emit (which Excel would flag as a broken formula). */
+export function guardFormula(cell: string): string {
+  let inner = cell.trim().replace(/^=+/, '').replace(/^\s*\+/, '').trim()
+  if (!inner) return '0'
+  if (/^IFERROR\s*\(/i.test(inner)) return `=${inner}` // already guarded
+  return `=IFERROR(${inner},0)`
+}
+
 /**
  * Normalize a spreadsheet model: coerce numeric-looking string cells to raw
  * numbers (so formulas referencing them compute), make every row rectangular,
@@ -79,8 +91,11 @@ export function normalizeSheets(sheets: unknown[]): Array<{ name: string; column
       .filter((r) => Array.isArray(r))
       .map((r) => {
         const row = (r as unknown[]).map((cell) => {
-          // Keep formulas as-is; coerce numeric strings to real numbers.
-          if (typeof cell === 'string' && cell.trim().startsWith('=')) return cell
+          // Formulas: guard against errors (IFERROR); coerce numeric strings to real numbers.
+          if (typeof cell === 'string' && cell.trim().startsWith('=')) {
+            if (/[{}@]/.test(cell)) return 0 // leftover template token / unresolved @driver → not valid
+            return guardFormula(cell)
+          }
           if (isNumericString(cell)) {
             const n = toNumber(cell)
             return n == null ? cell : n
@@ -105,6 +120,21 @@ export function normalizeSheets(sheets: unknown[]): Array<{ name: string; column
     }
     used.add(name.toLowerCase())
     out.push({ name, columns, rows })
+  }
+
+  // Quote cross-sheet references to any tab whose name isn't a bare identifier
+  // (spaces, &, (), %, …). Excel REQUIRES 'Sheet Name'!A1 for those; models write
+  // them UNQUOTED, which breaks the formula in Excel and the preview alike.
+  const special = out.map((s) => s.name).filter((n) => /[^A-Za-z0-9_.]/.test(n)).sort((a, b) => b.length - a.length)
+  if (special.length) {
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const quote = (f: string): string => {
+      let r = f
+      for (const nm of special) r = r.replace(new RegExp(`(^|[^'A-Za-z0-9_])(${esc(nm)})!`, 'g'), "$1'$2'!")
+      return r
+    }
+    for (const s of out) for (let i = 0; i < s.rows.length; i++)
+      s.rows[i] = s.rows[i].map((c) => (typeof c === 'string' && c.startsWith('=')) ? quote(c) : c)
   }
   return out
 }
