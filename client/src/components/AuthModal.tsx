@@ -38,13 +38,31 @@ export default function AuthModal({
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [forgot, setForgot] = useState(false) // showing the "reset password" view
+  const [resetSent, setResetSent] = useState(false)
 
   // Clear transient state whenever the modal opens or the user switches tabs.
   useEffect(() => {
     setError('')
     setPassword('')
     setConfirm('')
+    setForgot(false)
+    setResetSent(false)
   }, [open, mode])
+
+  const submitForgot = async (e: FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      await localAuth.requestReset(id)
+      setResetSent(true) // always: the server won't say whether the account exists
+    } catch {
+      setError('Something went wrong. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   // Close on Escape while open.
   useEffect(() => {
@@ -116,14 +134,62 @@ export default function AuthModal({
             </button>
 
             <h2 className="text-lg font-medium text-primary mb-1">
-              {mode === 'signup' ? 'Create your account' : 'Welcome back'}
+              {forgot ? 'Reset your password' : mode === 'signup' ? 'Create your account' : 'Welcome back'}
             </h2>
             <p className="text-sm font-light text-secondary mb-5">
-              {mode === 'signup'
-                ? 'Set up an account to get started.'
-                : 'Sign in to continue.'}
+              {forgot
+                ? "Enter your account email and we'll send you a link to set a new password."
+                : mode === 'signup'
+                  ? 'Set up an account to get started.'
+                  : 'Sign in to continue.'}
             </p>
 
+            {forgot ? (
+              resetSent ? (
+                <div className="flex flex-col gap-4">
+                  <p className="text-sm text-secondary">
+                    If an account exists for <span className="text-primary">{id || 'that email'}</span>, we've sent a
+                    password-reset link. Check your inbox (and spam) — the link expires in an hour.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { setForgot(false); setResetSent(false) }}
+                    className="px-6 py-3 rounded-xl bg-primary text-surface font-medium hover:shadow-md transition-all duration-200 text-sm"
+                  >
+                    Back to sign in
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={submitForgot} className="flex flex-col gap-3">
+                  <input
+                    type="text"
+                    placeholder="Email or username"
+                    value={id}
+                    onChange={(e) => setId(e.target.value)}
+                    autoComplete="username"
+                    required
+                    autoFocus
+                    className={inputCls}
+                  />
+                  {error && <p className="text-red-500 text-sm">{error}</p>}
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="mt-1 px-6 py-3 rounded-xl bg-primary text-surface font-medium hover:shadow-md transition-all duration-200 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {loading ? 'Sending…' : 'Send reset link'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForgot(false)}
+                    className="text-tertiary text-xs text-center hover:text-primary transition-colors"
+                  >
+                    Back to sign in
+                  </button>
+                </form>
+              )
+            ) : (
+            <>
             <div className="flex gap-1 mb-5 p-1 rounded-xl bg-border-gray/50 border border-border-gray">
               <button
                 type="button"
@@ -195,6 +261,15 @@ export default function AuthModal({
                     ? 'Create account'
                     : 'Sign in'}
               </button>
+              {mode === 'signin' && (
+                <button
+                  type="button"
+                  onClick={() => { setForgot(true); setError('') }}
+                  className="text-tertiary text-xs text-center hover:text-primary transition-colors"
+                >
+                  Forgot password?
+                </button>
+              )}
             </form>
 
             <p className="text-tertiary text-xs text-center mt-4">
@@ -222,6 +297,8 @@ export default function AuthModal({
                 </>
               )}
             </p>
+            </>
+            )}
           </motion.div>
         </motion.div>
       )}

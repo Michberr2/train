@@ -56,6 +56,15 @@ export async function ensureSchema(client: Client): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS nalu_tasks_user_updated
       ON nalu_tasks (user_id, updated_at DESC);
+    -- Password-reset tokens. We store only the SHA-256 of the token (the raw
+    -- token lives only in the emailed link), with a short expiry and single use.
+    CREATE TABLE IF NOT EXISTS nalu_password_resets (
+      token_hash TEXT PRIMARY KEY,
+      user_id    TEXT NOT NULL REFERENCES nalu_users(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used       BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `)
   schemaReady = true
 }
@@ -70,6 +79,9 @@ export function newSalt(): string {
 }
 export function newToken(): string {
   return crypto.randomBytes(32).toString('hex')
+}
+export function sha256(s: string): string {
+  return crypto.createHash('sha256').update(s).digest('hex')
 }
 
 // Reads the bearer token from Authorization header or a `token` field.

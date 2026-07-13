@@ -64,6 +64,32 @@ export async function signIn(rawId: string, password: string): Promise<Result> {
   }
 }
 
+// Step 1: ask for a reset link. Always resolves ok (the server never reveals
+// whether the account exists), so the UI shows the same "check your email" message.
+export async function requestReset(email: string): Promise<{ ok: boolean; emailConfigured?: boolean }> {
+  try {
+    const r = await callAuth('request-reset', { email, origin: window.location.origin })
+    return { ok: r.ok !== false, emailConfigured: r.emailConfigured as boolean | undefined }
+  } catch {
+    return { ok: false }
+  }
+}
+
+// Step 2: set a new password using the emailed token. On success the user is
+// signed in (a fresh session token is stored).
+export async function resetPassword(token: string, password: string): Promise<Result> {
+  try {
+    const r = await callAuth('reset-password', { token, password })
+    if (r.ok && typeof r.token === 'string') {
+      localStorage.setItem(TOKEN_KEY, r.token)
+      return { ok: true, user: r.user as PublicUser }
+    }
+    return { ok: false, error: (r.error as string) || 'Could not reset your password.' }
+  } catch {
+    return { ok: false, error: 'Network error. Please try again.' }
+  }
+}
+
 export async function signOut(): Promise<void> {
   try {
     await callAuth('signout', {})
