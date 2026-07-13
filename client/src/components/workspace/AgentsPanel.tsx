@@ -1098,6 +1098,12 @@ export default function AgentsPanel() {
                     <span className="block text-[12px] text-ink">{r.title}</span><span className="block truncate text-[10px] text-dim">{r.desc}</span>
                   </button>
                 ))}
+                <div className="mt-1 border-t border-glass/[0.08] px-3 py-1 text-[9.5px] font-semibold uppercase tracking-[0.18em] text-dim">Nalu Hedge Fund</div>
+                {HEDGE_FUND_ROLES.map((r) => (
+                  <button key={r.key} onClick={() => addNode('agent', r.engine, r.key)} className="w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]">
+                    <span className="block text-[12px] text-ink">{r.title}</span><span className="block truncate text-[10px] text-dim">{r.desc}</span>
+                  </button>
+                ))}
               </div>
             )}
           </div>
