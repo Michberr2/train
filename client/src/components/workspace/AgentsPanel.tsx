@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Bot, Play, Plus, Trash2, X, Loader2, Clock, Power, ChevronRight,
+  Bot, Play, Plus, Trash2, X, Loader2, Clock, Power, ChevronRight, ChevronUp, ChevronDown,
   CircleDollarSign, Palette, MessageSquare, Code2, Bitcoin, Home, Scale,
   HeartPulse, Stethoscope, Building2, HardHat, Megaphone, BrainCircuit, FlaskConical, Sigma, Maximize2, FileText, BarChart3, Table2,
   Mail, Download, CheckCircle2, XCircle, PanelLeft, Users, type LucideIcon,
@@ -105,25 +105,91 @@ type PNode = { id: string; x: number; y: number; type: NodeType; agent?: string;
 type Edge = { from: string; to: string }
 type Schedule = 'manual' | 'hourly' | 'daily' | 'weekly' | 'continuous' | 'members'
 type Company = { what: string; mission: string; notes?: string }
-type Flow = { id: string; name: string; nodes: PNode[]; edges: Edge[]; schedule: Schedule; time: string; enabled: boolean; lastRun?: number; results?: Record<string, string>; company?: Company; artifacts?: Record<string, OutputMeta> }
+// A durable run record that travels WITH the flow (so it survives a hard refresh
+// and syncs to the server). `heartbeat` is bumped by whoever is actively running;
+// if it goes stale the run is orphaned and can be safely resumed/taken over.
+type FlowRun = { status: 'running' | 'done' | 'error' | 'stuck' | 'stopped'; step: number; total: number; startedAt: number; updatedAt: number; heartbeat: number; node?: string; nodeLabel?: string; error?: string }
+type Flow = { id: string; name: string; nodes: PNode[]; edges: Edge[]; schedule: Schedule; time: string; enabled: boolean; lastRun?: number; results?: Record<string, string>; company?: Company; artifacts?: Record<string, OutputMeta>; defaultKey?: string; run?: FlowRun }
 type Run = { id: string; flowId: string; flowName: string; startedAt: number; finishedAt?: number; status: 'running' | 'done' | 'error' | 'stopped'; note?: string }
 const FLOWS_KEY = 'nalu-agent-flows'
 const RUNS_KEY = 'nalu-agent-runs'
+// A single step gets this long to produce output before it's declared STUCK and
+// broken (so a hung model call can never spin forever). A run's heartbeat older
+// than RUN_STALE_MS means the tab that owned it is gone — safe to resume.
+const NODE_TIMEOUT_MS = 150_000
+const RUN_STALE_MS = 25_000
+const HEARTBEAT_MS = 6_000
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-3)
 
 function starterFlow(): Flow {
   const n1: PNode = { id: uid(), x: 40, y: 40, type: 'agent', agent: 'general', label: 'Scan the news', prompt: "Research today's most important financial and world-economy news: central bank moves, market swings, major earnings, geopolitics. Return a tight bulleted digest with numbers." }
   const n2: PNode = { id: uid(), x: 400, y: 170, type: 'agent', agent: 'finance', label: 'Analyze like a PM', prompt: 'You are given a news digest below. Analyze it like a hedge fund PM: the 3 themes that matter, what they mean for equities/bonds/commodities, and 2-3 positioning ideas with risk framing.\n\n{{input}}' }
   const n3: PNode = { id: uid(), x: 760, y: 40, type: 'doc', label: 'Morning brief doc', prompt: 'A crisp, scannable morning market brief.' }
-  return { id: uid(), name: 'Daily market brief', nodes: [n1, n2, n3], edges: [{ from: n1.id, to: n2.id }, { from: n2.id, to: n3.id }], schedule: 'daily', time: '08:00', enabled: false }
+  return { id: uid(), name: 'New pipeline', nodes: [n1, n2, n3], edges: [{ from: n1.id, to: n2.id }, { from: n2.id, to: n3.id }], schedule: 'daily', time: '08:00', enabled: false }
+}
+
+// ---- Pure builders (no React state) — shared by the "+" menu AND the default
+// templates below, so both stay identical. ----------------------------------
+function buildAutoPosterFlow(): Flow {
+  const idea: PNode = { id: uid(), x: 40, y: 60, type: 'agent', agent: 'social', label: 'Post idea', prompt: "You are our social media strategist. Come up with ONE fresh, on-brand, high-engagement post idea for today about our niche — a specific hook + the 5-7 points it should cover. Vary it daily so we never repeat. Return the idea and the points." }
+  const post: PNode = { id: uid(), x: 420, y: 60, type: 'social', label: 'Daily post', platform: 'Instagram', webhook: '', prompt: 'Turn the idea below into a scroll-stopping post.\n\n{{input}}' }
+  return { id: uid(), name: 'Auto-poster', nodes: [idea, post], edges: [{ from: idea.id, to: post.id }], schedule: 'daily', time: '09:00', enabled: false }
+}
+function buildHedgeFundFlow(name: string, tickers: string): Flow {
+  const team = hedgeFundTeam(tickers)
+  const mk = (n: { key: string; title: string; engine: string; task: string }, x: number, y: number): PNode =>
+    ({ id: uid(), x, y, type: 'agent', agent: n.engine, role: n.key, label: n.title, prompt: n.task })
+  const analysts = team.analysts.map((n, i) => mk(n, 40 + (i % 3) * 340, 40 + Math.floor(i / 3) * 210))
+  const macro = mk(team.macro, 40 + (analysts.length % 3) * 340, 40 + Math.floor(analysts.length / 3) * 210)
+  const risk = mk(team.risk, 1220, 120)
+  const portfolio = mk(team.portfolio, 1580, 120)
+  const memo: PNode = { id: uid(), x: 1940, y: 120, type: 'doc', label: 'Investment decision memo', prompt: "A clean investment-committee memo: each analyst's signal, the real-time macro/event risk landscape, the Risk Manager's position limits, and the Portfolio Manager's final decision table (ticker · action · quantity · confidence · why) with the overall stance and cash level." }
+  const feeders = [...analysts, macro]
+  return {
+    id: uid(), name: name.trim() || 'Nalu Hedge Fund', schedule: 'daily', time: '07:00', enabled: false,
+    company: { what: `An AI-run hedge fund analyzing ${tickers.trim() || 'a watchlist'} with a full investment committee — famous investor personas plus analytical, macro, risk and portfolio agents.`, mission: 'Make disciplined, risk-managed investment decisions daily using real-time data and multiple investing philosophies.' },
+    nodes: [...analysts, macro, risk, portfolio, memo],
+    edges: [
+      ...feeders.map((a) => ({ from: a.id, to: risk.id })),
+      ...feeders.map((a) => ({ from: a.id, to: portfolio.id })),
+      { from: risk.id, to: portfolio.id },
+      { from: portfolio.id, to: memo.id },
+    ],
+  }
+}
+
+// ---- Default starter pipelines EVERY user gets on login. Each carries a stable
+// `defaultKey` + stable id. Deleting one tombstones its key (nalu-deleted-flows)
+// so it's gone FOREVER — never re-seeded on this device or any other. --------
+const DELETED_FLOWS_KEY = 'nalu-deleted-flows'
+function deletedFlowKeys(): Set<string> {
+  try { const a = JSON.parse(localStorage.getItem(DELETED_FLOWS_KEY) || '[]'); return new Set(Array.isArray(a) ? a.map(String) : []) } catch { return new Set() }
+}
+function tombstoneFlowKey(key: string) {
+  try { const s = deletedFlowKeys(); s.add(key); localStorage.setItem(DELETED_FLOWS_KEY, JSON.stringify([...s])) } catch { /* */ }
+}
+const DEFAULT_TEMPLATES: Array<{ key: string; id: string; build: () => Flow }> = [
+  { key: 'nalu-labs', id: 'default-nalu-labs', build: () => ({ ...starterFlow(), name: 'Nalu Labs — Daily Brief' }) },
+  { key: 'autoposter', id: 'default-autoposter', build: buildAutoPosterFlow },
+  { key: 'nalu-fund', id: 'default-nalu-fund', build: () => buildHedgeFundFlow('Nalu Hedge Fund', 'AAPL, MSFT, NVDA, GOOGL, AMZN') },
+]
+// Seed any default the user hasn't already got and hasn't permanently deleted.
+function withDefaults(saved: Flow[]): Flow[] {
+  const dead = deletedFlowKeys()
+  const haveKeys = new Set(saved.map((f) => f.defaultKey).filter(Boolean) as string[])
+  const haveIds = new Set(saved.map((f) => f.id))
+  const missing = DEFAULT_TEMPLATES
+    .filter((t) => !dead.has(t.key) && !haveKeys.has(t.key) && !haveIds.has(t.id))
+    .map((t) => ({ ...t.build(), id: t.id, defaultKey: t.key }))
+  return [...saved, ...missing]
 }
 function loadFlows(): Flow[] {
   try {
     const arr = JSON.parse(localStorage.getItem(FLOWS_KEY) || 'null') as Flow[] | null
     // v1 flows carried agent-only nodes without a `type` — default it in.
-    if (Array.isArray(arr) && arr.length) return arr.map((f) => ({ ...f, nodes: f.nodes.map((n) => ({ ...n, type: n.type || 'agent' })) }))
+    if (Array.isArray(arr)) return withDefaults(arr.map((f) => ({ ...f, nodes: f.nodes.map((n) => ({ ...n, type: n.type || 'agent' })) })))
   } catch { /* fresh */ }
-  return [starterFlow()]
+  return withDefaults([])
 }
 const saveFlows = (flows: Flow[]) => { try { localStorage.setItem(FLOWS_KEY, JSON.stringify(flows)) } catch { /* */ } }
 const loadRuns = (): Run[] => {
@@ -137,7 +203,8 @@ const loadRuns = (): Run[] => {
       : r))
   } catch { return [] }
 }
-const saveRuns = (runs: Run[]) => { try { localStorage.setItem(RUNS_KEY, JSON.stringify(runs.slice(0, 20))) } catch { /* */ } }
+const saveRuns = (runs: Run[]) => { try { localStorage.setItem(RUNS_KEY, JSON.stringify(runs.slice(0, 100))) } catch { /* */ } }
+const RUNS_PREVIEW = 6 // show the latest few; the rest live behind "Show all"
 
 function topoOrder(nodes: PNode[], edges: Edge[]): string[] {
   const indeg = new Map(nodes.map((n) => [n.id, 0]))
@@ -190,7 +257,7 @@ function cleanSnippet(s: string): string {
     .replace(/^\s*(---+|\*\*\*+|___+)\s*$/gm, '')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/^\s*>\s?/gm, '')
-    .replace(/\|/g, '  ')
+    .replace(/\|/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
@@ -214,11 +281,13 @@ export default function AgentsPanel() {
   const [connecting, setConnecting] = useState<string | null>(null)
   const [mouse, setMouse] = useState({ x: 0, y: 0 })
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [nodeModal, setNodeModal] = useState<{ nodeId: string; tab: 'prompt' | 'notes' } | null>(null)
   const [addMenu, setAddMenu] = useState<false | 'model' | 'company' | 'output'>(false)
   const [coSetup, setCoSetup] = useState<null | { name: string; what: string; mission: string; notes: string }>(null)
   const [coNotesOpen, setCoNotesOpen] = useState(false)
   const [hfSetup, setHfSetup] = useState<null | { name: string; tickers: string }>(null)
   const [newMenu, setNewMenu] = useState(false)
+  const [runsExpanded, setRunsExpanded] = useState(false)
   const [runWarn, setRunWarn] = useState<string | null>(null)
   const [durs, setDurs] = useState<Record<string, number>>({})
   const [railOpen, setRailOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 900)
@@ -344,8 +413,7 @@ export default function AgentsPanel() {
   }
 
   // ---- execution ----
-  const setStatesNoop = () => undefined
-  const runFlow = useCallback(async (target?: Flow, manual = true) => {
+  const runFlow = useCallback(async (target?: Flow, manual = true, resume = false) => {
     const f = target || flowsRef.current.find((x) => x.id === flowId) || flowsRef.current[0]
     if (!f || !f.nodes.length || abortRef.current) return
     const runId = uid()
@@ -361,22 +429,39 @@ export default function AgentsPanel() {
     setRunning(f.id)
     setLive({})
     const order = topoOrder(f.nodes, f.edges)
-    setStates(Object.fromEntries(f.nodes.map((n) => [n.id, order.includes(n.id) ? 'queued' : 'idle'])))
+    const total = order.length
+    // RESUME: a run interrupted by a hard refresh keeps every step it already
+    // finished — seed those from the persisted results so we only run the rest.
+    const results: Record<string, string> = resume ? { ...(f.results || {}) } : {}
+    const finished = new Set<string>(resume ? order.filter((id) => results[id] != null) : [])
+    setStates(Object.fromEntries(f.nodes.map((n) => [n.id, finished.has(n.id) ? 'done' : order.includes(n.id) ? 'queued' : 'idle'])))
     setDurs({})
     const ctrl = new AbortController()
     abortRef.current = ctrl
-    const results: Record<string, string> = {}
     const failedIds = new Set<string>()
-    const finished = new Set<string>()
+    const stuckIds = new Set<string>()
+    let firstError = ''
     const deps = new Map(f.nodes.map((n) => [n.id, f.edges.filter((e) => e.to === n.id).map((e) => e.from)]))
     const CONC = 3 // independent branches run in parallel (LLM-provider friendly)
-    const t0 = Date.now()
+    const t0 = resume && f.run?.startedAt ? f.run.startedAt : Date.now()
+    // Durable run record + incremental result save: the run survives a refresh
+    // (completed steps persist) and its heartbeat lets another tab/the server
+    // take over an orphaned run. Persisting is debounced by the sync layer.
+    const persist = (status: FlowRun['status'], extra: Partial<FlowRun> = {}) =>
+      patchFlow(f.id, () => ({
+        results: Object.fromEntries(Object.entries(results).map(([k, v]) => [k, v.slice(0, 24000)])),
+        ...(status !== 'running' ? { lastRun: Date.now() } : {}),
+        run: { status, step: finished.size, total, startedAt: t0, updatedAt: Date.now(), heartbeat: Date.now(), error: firstError || undefined, ...extra },
+      }))
+    persist('running')
+    const hb = setInterval(() => { if (!ctrl.signal.aborted) persist('running') }, HEARTBEAT_MS)
     try {
       // ROBUST EXECUTION: independent branches run concurrently; a failed step
-      // retries once, and on final failure only ITS dependents are skipped —
-      // the rest of the company keeps working.
+      // retries once. A step that hangs past NODE_TIMEOUT_MS is BROKEN (declared
+      // stuck) so nothing spins forever. On final failure only ITS dependents are
+      // skipped — the rest of the pipeline keeps working.
       await new Promise<void>((resolve) => {
-        const pending = new Set(order)
+        const pending = new Set([...order].filter((id) => !finished.has(id)))
         let active = 0
         const execOne = async (nid: string) => {
           const node = f.nodes.find((n) => n.id === nid)
@@ -386,30 +471,45 @@ export default function AgentsPanel() {
           const started = Date.now()
           for (let attempt = 1; attempt <= 2; attempt++) {
             if (ctrl.signal.aborted) break
+            // Per-step watchdog: its own controller aborts on run-stop OR timeout.
+            const nodeCtrl = new AbortController()
+            const onAbort = () => nodeCtrl.abort()
+            ctrl.signal.addEventListener('abort', onAbort)
+            let timedOut = false
+            const timer = setTimeout(() => { timedOut = true; nodeCtrl.abort() }, NODE_TIMEOUT_MS)
             try {
-              const out = await runNode(node, input, f, ctrl, manual, (t) => setLive((lv) => ({ ...lv, [nid]: t })), (m) =>
+              const out = await runNode(node, input, f, nodeCtrl, manual, (t) => setLive((lv) => ({ ...lv, [nid]: t })), (m) =>
                 patchFlow(f.id, (cur) => ({ artifacts: { ...(cur.artifacts || {}), [nid]: m } })))
               if (out) {
                 results[nid] = out.slice(0, 24000) // protect storage quota
                 setStates((st) => ({ ...st, [nid]: 'done' }))
                 setDurs((d) => ({ ...d, [nid]: Date.now() - started }))
                 finished.add(nid)
+                persist('running') // durable checkpoint — survives a refresh
                 return
               }
               throw new Error('empty result')
             } catch (e) {
               if (ctrl.signal.aborted) break
-              if (attempt === 1) {
-                setLive((lv) => ({ ...lv, [nid]: 'First attempt failed — retrying…' }))
-              } else {
-                console.warn('node failed after retry', node.label, e)
+              if (timedOut) {
+                // Stuck/blocked → break this step now (no more retries).
+                stuckIds.add(nid)
+                firstError ||= `"${node.label}" got stuck (no result in ${Math.round(NODE_TIMEOUT_MS / 1000)}s)`
+                setLive((lv) => ({ ...lv, [nid]: `Stuck — broke after ${Math.round(NODE_TIMEOUT_MS / 1000)}s. Downstream steps skipped.` }))
+                break
               }
+              if (attempt === 1) setLive((lv) => ({ ...lv, [nid]: 'First attempt failed — retrying…' }))
+              else { firstError ||= `"${node.label}" failed: ${e instanceof Error ? e.message : 'error'}`; console.warn('node failed after retry', node.label, e) }
+            } finally {
+              clearTimeout(timer)
+              ctrl.signal.removeEventListener('abort', onAbort)
             }
           }
           failedIds.add(nid)
           finished.add(nid)
           setStates((st) => ({ ...st, [nid]: ctrl.signal.aborted ? 'idle' : 'error' }))
           setDurs((d) => ({ ...d, [nid]: Date.now() - started }))
+          persist('running')
         }
         const pump = () => {
           if (ctrl.signal.aborted) { if (!active) resolve(); return }
@@ -443,18 +543,42 @@ export default function AgentsPanel() {
         }
         pump()
       })
-      patchFlow(f.id, { results: Object.fromEntries(Object.entries(results).map(([k, v]) => [k, v.slice(0, 24000)])), lastRun: Date.now() })
       setOutputs(listOutputs())
-      const fails = [...failedIds].filter((id) => (setStatesNoop(), true)).length
       const files = f.nodes.filter((n) => n.type !== 'agent' && results[n.id]).length
       const secs = Math.round((Date.now() - t0) / 1000)
-      const status = ctrl.signal.aborted ? 'stopped' : fails ? 'error' : 'done'
-      setRuns((rs) => rs.map((r) => (r.id === runId ? { ...r, finishedAt: Date.now(), status, note: `${Object.keys(results).length}/${order.length} steps · ${files} files · ${secs}s${fails ? ` · ${fails} failed/skipped` : ''}` } : r)))
+      const stuck = stuckIds.size > 0
+      const runStatus: FlowRun['status'] = ctrl.signal.aborted ? 'stopped' : stuck ? 'stuck' : failedIds.size ? 'error' : 'done'
+      persist(runStatus)
+      const listStatus: Run['status'] = ctrl.signal.aborted ? 'stopped' : failedIds.size || stuck ? 'error' : 'done'
+      const failNote = stuck ? ` · ${stuckIds.size} stuck` : failedIds.size ? ` · ${failedIds.size} failed/skipped` : ''
+      setRuns((rs) => rs.map((r) => (r.id === runId ? { ...r, finishedAt: Date.now(), status: listStatus, note: `${finished.size}/${total} steps · ${files} files · ${secs}s${failNote}` } : r)))
     } finally {
+      clearInterval(hb)
       setRunning(null)
       abortRef.current = null
     }
   }, [flowId, patchFlow])
+
+  // RESUME AFTER A HARD REFRESH: a run whose heartbeat went stale (its tab is
+  // gone) is orphaned — pick it up where it left off and finish the rest. The
+  // server cron does the same for tabs that never reopen, so a running pipeline
+  // always continues unless it genuinely fails.
+  const resumedRef = useRef(false)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (resumedRef.current || abortRef.current) return
+      const now = Date.now()
+      const orphan = flowsRef.current.find(
+        (f) => f.run?.status === 'running' && f.nodes.length > 0 && now - (f.run.heartbeat || 0) > RUN_STALE_MS,
+      )
+      if (orphan) {
+        resumedRef.current = true
+        setFlowId(orphan.id)
+        void runFlow(orphan, false, true)
+      }
+    }, 1800) // let server-hydrate settle first
+    return () => clearTimeout(t)
+  }, [runFlow])
 
   // One node's work: agents talk to their specialist; output steps build REAL
   // files, auto-download them, and store them in the Outputs library.
@@ -650,20 +774,23 @@ export default function AgentsPanel() {
         onLive(`${platform} video post created${pub}.`)
         return `${platform.toUpperCase()} VIDEO POST — ${node.label}`
       }
-      // build a platform-native carousel/post from the pipeline's material
+      // build a platform-native carousel/post from the pipeline's material.
+      // /api/design(carousel) returns STRUCTURED data (slides + theme + caption
+      // + hashtags) — we render it to a self-contained .html artifact and pull
+      // caption/hashtags straight from the fields (no fragile HTML scraping).
       const r = await fetch('/api/design', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: `Create a ${platform} post/carousel. ${brief || `Topic: ${node.label}.`}${material}`, kind: 'carousel', brand: getBrand() || undefined }),
         signal: ctrl.signal,
       })
       const d = await r.json()
-      if (!r.ok || !d.html) throw new Error(d.error || 'post failed')
-      // pull caption + hashtags text out of the built HTML for publishing
-      const capMatch = String(d.html).match(/caption-text[^>]*>([\s\S]*?)<\/[a-z]/i)
-      const caption = (capMatch ? capMatch[1] : '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 2200)
-      const tags = ([...String(d.html).matchAll(/#[A-Za-z][A-Za-z0-9_]{2,}/g)].map((m) => m[0]).filter((t, i, a) => a.indexOf(t) === i)).slice(0, 12).join(' ')
-      const firstImg = (String(d.html).match(/data:image\/[a-z]+;base64,[^"')\s]+/) || [])[0] || ''
-      const blob = new Blob([d.html], { type: 'text/html' })
+      if (!r.ok || !Array.isArray(d.slides) || d.slides.length < 1) throw new Error(d.error || 'post failed')
+      const { carouselToHtml } = await import('./CarouselCard')
+      const html = carouselToHtml(d as import('./types').CarouselArt)
+      const caption = String(d.caption || '').trim().slice(0, 2200)
+      const tags = (Array.isArray(d.hashtags) ? d.hashtags : []).filter((t: unknown) => typeof t === 'string').slice(0, 12).join(' ')
+      const firstImg = (d.slides.find((s: { img?: string }) => s && typeof s.img === 'string' && s.img) || {}).img || ''
+      const blob = new Blob([html], { type: 'text/html' })
       const filename = safeName(`${platform}-${node.label}`, 'html')
       downloadBlobFile(blob, filename)
       await storeOutput({ id: uid(), flowId: f.id, flowName: f.name, nodeLabel: node.label, kind: 'website', filename, size: blob.size, ts: Date.now() }, blob)
@@ -769,9 +896,7 @@ export default function AgentsPanel() {
   // One-click auto-poster: an idea agent → platform-native Social post, scheduled
   // daily. The user just sets the topic, the platform, and (optionally) a webhook.
   const newAutoPoster = () => {
-    const idea: PNode = { id: uid(), x: 40, y: 60, type: 'agent', agent: 'social', label: 'Post idea', prompt: "You are our social media strategist. Come up with ONE fresh, on-brand, high-engagement post idea for today about our niche — a specific hook + the 5-7 points it should cover. Vary it daily so we never repeat. Return the idea and the points." }
-    const post: PNode = { id: uid(), x: 420, y: 60, type: 'social', label: 'Daily post', platform: 'Instagram', webhook: '', prompt: 'Turn the idea below into a scroll-stopping post.\n\n{{input}}' }
-    const f: Flow = { id: uid(), name: 'Auto-poster', nodes: [idea, post], edges: [{ from: idea.id, to: post.id }], schedule: 'daily', time: '09:00', enabled: false }
+    const f = buildAutoPosterFlow()
     setFlows((fs) => [f, ...fs]); setFlowId(f.id); setStates({}); setLive({})
   }
   // FULL-COMPANY BASELINE — gated behind the setup modal: you must say what the
@@ -827,30 +952,14 @@ export default function AgentsPanel() {
   // persona + analytical agents + a real-time macro/events analyst feed the Risk
   // Manager and the Portfolio Manager, which writes the decision memo.
   const createHedgeFund = (name: string, tickers: string) => {
-    const team = hedgeFundTeam(tickers)
-    const mk = (n: { key: string; title: string; engine: string; task: string }, x: number, y: number): PNode =>
-      ({ id: uid(), x, y, type: 'agent', agent: n.engine, role: n.key, label: n.title, prompt: n.task })
-    const analysts = team.analysts.map((n, i) => mk(n, 40 + (i % 3) * 340, 40 + Math.floor(i / 3) * 210))
-    const macro = mk(team.macro, 40 + (analysts.length % 3) * 340, 40 + Math.floor(analysts.length / 3) * 210)
-    const risk = mk(team.risk, 1220, 120)
-    const portfolio = mk(team.portfolio, 1580, 120)
-    const memo: PNode = { id: uid(), x: 1940, y: 120, type: 'doc', label: 'Investment decision memo', prompt: "A clean investment-committee memo: each analyst's signal, the real-time macro/event risk landscape, the Risk Manager's position limits, and the Portfolio Manager's final decision table (ticker · action · quantity · confidence · why) with the overall stance and cash level." }
-    const feeders = [...analysts, macro]
-    const f: Flow = {
-      id: uid(), name: name.trim() || 'Nalu Hedge Fund', schedule: 'daily', time: '07:00', enabled: false,
-      company: { what: `An AI-run hedge fund analyzing ${tickers.trim() || 'a watchlist'} with a full investment committee — famous investor personas plus analytical, macro, risk and portfolio agents.`, mission: 'Make disciplined, risk-managed investment decisions daily using real-time data and multiple investing philosophies.' },
-      nodes: [...analysts, macro, risk, portfolio, memo],
-      edges: [
-        ...feeders.map((a) => ({ from: a.id, to: risk.id })),
-        ...feeders.map((a) => ({ from: a.id, to: portfolio.id })),
-        { from: risk.id, to: portfolio.id },
-        { from: portfolio.id, to: memo.id },
-      ],
-    }
+    const f = buildHedgeFundFlow(name, tickers)
     setFlows((fs) => [f, ...fs]); setFlowId(f.id); setStates({}); setLive({})
   }
   const deleteFlow = (fid: string) => {
-    setFlows((fs) => { const next = fs.filter((f) => f.id !== fid); return next.length ? next : [starterFlow()] })
+    // Default pipelines are tombstoned on delete so they never re-seed anywhere.
+    const gone = flowsRef.current.find((f) => f.id === fid)
+    if (gone?.defaultKey) tombstoneFlowKey(gone.defaultKey)
+    setFlows((fs) => { const next = fs.filter((f) => f.id !== fid); return next.length ? next : [{ ...starterFlow(), name: 'New pipeline' }] })
   }
   const redownload = async (m: OutputMeta) => {
     const blob = await getOutputBlob(m.id)
@@ -892,7 +1001,7 @@ export default function AgentsPanel() {
                     <div className="my-1 border-t border-glass/[0.08]" />
                     <div className="px-3 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-dim">Start from a template</div>
                     <button onClick={() => { setCoSetup({ name: '', what: '', mission: '', notes: '' }); setNewMenu(false) }} className="block w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]"><span className="block text-[12px] text-ink">Company</span><span className="block text-[10px] text-dim">A full baseline team (CEO, COO, CFO…)</span></button>
-                    <button onClick={() => { setHfSetup({ name: 'Nalu Hedge Fund', tickers: '' }); setNewMenu(false) }} className="block w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]"><span className="block text-[12px] text-emerald-300">Nalu Hedge Fund</span><span className="block text-[10px] text-dim">A full AI investment committee</span></button>
+                    <button onClick={() => { setHfSetup({ name: 'Nalu Hedge Fund', tickers: '' }); setNewMenu(false) }} className="block w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]"><span className="block text-[12px] text-ink">Nalu Hedge Fund</span><span className="block text-[10px] text-dim">A full AI investment committee</span></button>
                     <button onClick={() => { newAutoPoster(); setNewMenu(false) }} className="block w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]"><span className="block text-[12px] text-ink">Auto-poster</span><span className="block text-[10px] text-dim">Daily social posts on a schedule</span></button>
                   </div>
                 </>
@@ -912,7 +1021,7 @@ export default function AgentsPanel() {
 
           <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-dim">Runs</div>
           {runs.length === 0 && <div className="px-4 py-1 text-[11px] text-dim">Nothing has run yet.</div>}
-          {runs.slice(0, 8).map((r) => (
+          {(runsExpanded ? runs : runs.slice(0, RUNS_PREVIEW)).map((r) => (
             <div key={r.id} className="mx-2 flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] text-ink">
               {r.status === 'running' ? <Loader2 size={12} className="shrink-0 animate-spin text-gold" />
                 : r.status === 'done' ? <CheckCircle2 size={12} className="shrink-0 text-emerald-300" />
@@ -921,6 +1030,11 @@ export default function AgentsPanel() {
               <span className="shrink-0 text-[10px] text-dim">{new Date(r.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
           ))}
+          {runs.length > RUNS_PREVIEW && (
+            <button onClick={() => setRunsExpanded((v) => !v)} className="mx-2 mt-0.5 flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-gold hover:bg-glass/[0.06]">
+              {runsExpanded ? <><ChevronUp size={12} /> Show less</> : <><ChevronDown size={12} /> Show all {runs.length} runs</>}
+            </button>
+          )}
 
           <div className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-dim">Outputs</div>
           {outputs.length === 0 && <div className="px-4 py-1 pb-4 text-[11px] text-dim">Files your pipelines create land here (and in Downloads).</div>}
@@ -965,12 +1079,6 @@ export default function AgentsPanel() {
                     <span className="block text-[12px] text-ink">{a.name}</span><span className="block truncate text-[10px] text-dim">{a.desc}</span>
                   </button>
                 ))}
-                <div className="mt-1 border-t border-glass/[0.08] px-3 py-1 text-[9.5px] font-semibold uppercase tracking-[0.18em] text-emerald-400">Nalu Hedge Fund</div>
-                {HEDGE_FUND_ROLES.map((r) => (
-                  <button key={r.key} onClick={() => addNode('agent', r.engine, r.key)} className="w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]">
-                    <span className="block text-[12px] text-emerald-200">{r.title}</span><span className="block truncate text-[10px] text-dim">{r.desc}</span>
-                  </button>
-                ))}
               </div>
             )}
           </div>
@@ -988,12 +1096,6 @@ export default function AgentsPanel() {
                 {COMPANY_ROLES.map((r) => (
                   <button key={r.key} onClick={() => addNode('agent', r.engine, r.key)} className="w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]">
                     <span className="block text-[12px] text-ink">{r.title}</span><span className="block truncate text-[10px] text-dim">{r.desc}</span>
-                  </button>
-                ))}
-                <div className="mt-1 border-t border-glass/[0.08] px-3 py-1 text-[9.5px] font-semibold uppercase tracking-[0.18em] text-emerald-400">Nalu Hedge Fund</div>
-                {HEDGE_FUND_ROLES.map((r) => (
-                  <button key={r.key} onClick={() => addNode('agent', r.engine, r.key)} className="w-full px-3 py-1.5 text-left hover:bg-glass/[0.08]">
-                    <span className="block text-[12px] text-emerald-200">{r.title}</span><span className="block truncate text-[10px] text-dim">{r.desc}</span>
                   </button>
                 ))}
               </div>
@@ -1027,6 +1129,20 @@ export default function AgentsPanel() {
                 className={`flex items-center gap-1 rounded-lg px-2 py-1.5 text-[12px] ${flow.enabled ? 'bg-emerald-500/20 text-emerald-200' : 'bg-glass/[0.07] text-dim'}`}>
                 <Power size={12} /> {flow.enabled ? 'On' : 'Off'}
               </button>
+            )}
+            {/* Durable run state — survives a hard refresh. Shows a pipeline that
+                is resuming, or one that BROKE because a step got stuck/failed. */}
+            {flow.run && flow.run.status !== 'done' && running !== flow.id && (
+              <span title={flow.run.error || ''}
+                className={`flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium ${
+                  flow.run.status === 'running' ? 'bg-amber-500/15 text-amber-200'
+                    : flow.run.status === 'stuck' || flow.run.status === 'error' ? 'bg-red-500/20 text-red-200'
+                      : 'bg-glass/[0.07] text-dim'}`}>
+                {flow.run.status === 'running' ? <><Loader2 size={11} className="animate-spin" /> Resuming{typeof flow.run.step === 'number' && flow.run.total ? ` ${flow.run.step}/${flow.run.total}` : ''}…</>
+                  : flow.run.status === 'stuck' ? <><XCircle size={11} /> Broke — stuck</>
+                    : flow.run.status === 'error' ? <><XCircle size={11} /> Failed</>
+                      : <><Clock size={11} /> Stopped</>}
+              </span>
             )}
             {running ? (
               <button onClick={() => abortRef.current?.abort()} className="flex items-center gap-1.5 rounded-lg bg-red-500/20 px-3 py-1.5 text-[13px] font-medium text-red-200 hover:bg-red-500/30">
@@ -1130,66 +1246,58 @@ export default function AgentsPanel() {
                   <button title="Output — click, then click another step's input" onClick={(e) => { e.stopPropagation(); setConnecting(connecting === n.id ? null : n.id) }}
                     className={`absolute -right-2 top-[34px] h-4 w-4 rounded-full border-2 transition-colors ${connecting === n.id ? 'border-gold bg-accent' : 'border-glass/40 bg-panel2 hover:border-gold'}`} />
                   <div className="p-2">
-                    <div className="mb-1 flex items-center gap-1.5">
-                      <input value={n.label} onChange={(e) => patchNode(n.id, { label: e.target.value })}
+                    <div className="mb-1.5 flex items-center gap-1.5">
+                      <input value={n.label} onChange={(e) => patchNode(n.id, { label: e.target.value })} onPointerDown={(e) => e.stopPropagation()}
                         className="w-full flex-1 rounded bg-transparent text-[12px] font-medium text-ink outline-none placeholder:text-dim" placeholder="Step name" />
                       {flow.schedule === 'members' && n.type === 'agent' && (
-                        <input type="time" value={n.time || ''} onChange={(e) => patchNode(n.id, { time: e.target.value })} title="This member works at…"
+                        <input type="time" value={n.time || ''} onChange={(e) => patchNode(n.id, { time: e.target.value })} onPointerDown={(e) => e.stopPropagation()} title="This member works at…"
                           className="shrink-0 rounded bg-glass/[0.06] px-1 py-0.5 text-[10px] text-ink outline-none" />
                       )}
                     </div>
-                    {n.type === 'email' && (
-                      <div className="mb-1 flex gap-1">
-                        <input value={n.to || ''} onChange={(e) => patchNode(n.id, { to: e.target.value })} placeholder="to@email.com"
-                          className="w-1/2 rounded-lg border border-glass/[0.1] bg-glass/[0.04] px-1.5 py-1 text-[11px] text-ink outline-none placeholder:text-dim" />
-                        <input value={n.subject || ''} onChange={(e) => patchNode(n.id, { subject: e.target.value })} placeholder="Subject"
-                          className="w-1/2 rounded-lg border border-glass/[0.1] bg-glass/[0.04] px-1.5 py-1 text-[11px] text-ink outline-none placeholder:text-dim" />
-                      </div>
-                    )}
-                    {n.type === 'social' && (
-                      <div className="mb-1 space-y-1">
-                        <select value={n.platform || 'Instagram'} onChange={(e) => patchNode(n.id, { platform: e.target.value })} onPointerDown={(e) => e.stopPropagation()}
-                          className="w-full rounded-lg border border-glass/[0.1] bg-glass/[0.04] px-1.5 py-1 text-[11px] text-ink outline-none">
-                          {['Instagram', 'TikTok', 'LinkedIn', 'X (Twitter)', 'Pinterest', 'Threads', 'Facebook'].map((pl) => <option key={pl} value={pl} className="bg-panel2">{pl}</option>)}
-                        </select>
-                        <select value={n.format || 'carousel'} onChange={(e) => patchNode(n.id, { format: e.target.value })} onPointerDown={(e) => e.stopPropagation()}
-                          className="w-full rounded-lg border border-glass/[0.1] bg-glass/[0.04] px-1.5 py-1 text-[11px] text-ink outline-none">
-                          <option value="carousel" className="bg-panel2">Carousel / image post</option>
-                          <option value="video" className="bg-panel2">Video (reel / TikTok) — Nalu Video</option>
-                        </select>
-                        <input value={n.webhook || ''} onChange={(e) => patchNode(n.id, { webhook: e.target.value })} placeholder="Auto-post webhook (Zapier/Make/Buffer) — optional"
-                          className="w-full rounded-lg border border-glass/[0.1] bg-glass/[0.04] px-1.5 py-1 text-[11px] text-ink outline-none placeholder:text-dim" />
-                      </div>
-                    )}
-                    <textarea value={n.prompt} onChange={(e) => patchNode(n.id, { prompt: e.target.value })} rows={4}
-                      placeholder={n.type === 'agent' ? `What should this employee do? {{input}} = upstream output.` : n.type === 'email' ? 'Email body — {{input}} = upstream output.' : `Style/brief for the ${meta.name.toLowerCase()} (the upstream output is the material).`}
-                      className="w-full resize-none rounded-lg border border-glass/[0.1] bg-glass/[0.04] p-1.5 text-[11.5px] leading-relaxed text-ink outline-none placeholder:text-dim focus:border-glass/25" />
-                    {n.type === 'agent' && (
-                      <textarea value={n.roleNotes || ''} onChange={(e) => patchNode(n.id, { roleNotes: e.target.value })} rows={2}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        placeholder="How this agent must work (notes) — exact rules that override defaults: e.g. always cite sources, keep under 200 words, use our brand voice, never contact competitors."
-                        className="mt-1.5 w-full resize-none rounded-lg border border-amber-400/20 bg-amber-500/[0.04] p-1.5 text-[11px] leading-relaxed text-ink outline-none placeholder:text-dim/70 focus:border-amber-400/40" />
-                    )}
+                    {/* Prompt + Notes open focused modals, keeping the card centered on the live OUTPUT. */}
+                    <div className="mb-1.5 flex gap-1.5">
+                      <button onClick={(e) => { e.stopPropagation(); setNodeModal({ nodeId: n.id, tab: 'prompt' }) }} onPointerDown={(e) => e.stopPropagation()}
+                        title="Edit the prompt" className="flex flex-1 items-center gap-1.5 rounded-lg border border-glass/[0.12] bg-glass/[0.04] px-2 py-1.5 text-[11px] text-ink transition-colors hover:border-glass/25 hover:bg-glass/[0.08]">
+                        <MessageSquare size={11} className="shrink-0 text-gold" />
+                        <span className="flex-1 text-left font-medium">Prompt</span>
+                        {n.prompt?.trim() ? <CheckCircle2 size={11} className="shrink-0 text-emerald-300/80" /> : <span className="shrink-0 text-[9.5px] text-dim">empty</span>}
+                      </button>
+                      {n.type === 'agent' && (
+                        <button onClick={(e) => { e.stopPropagation(); setNodeModal({ nodeId: n.id, tab: 'notes' }) }} onPointerDown={(e) => e.stopPropagation()}
+                          title="Rules this agent must follow" className="flex flex-1 items-center gap-1.5 rounded-lg border border-amber-400/25 bg-amber-500/[0.05] px-2 py-1.5 text-[11px] text-ink transition-colors hover:border-amber-400/45 hover:bg-amber-500/[0.1]">
+                          <FileText size={11} className="shrink-0 text-amber-300/90" />
+                          <span className="flex-1 text-left font-medium">Notes</span>
+                          {n.roleNotes?.trim() ? <CheckCircle2 size={11} className="shrink-0 text-emerald-300/80" /> : <span className="shrink-0 text-[9.5px] text-dim">empty</span>}
+                        </button>
+                      )}
+                    </div>
                     {flow.artifacts?.[n.id] && (
                       <button onClick={() => void redownload(flow.artifacts![n.id])} onPointerDown={(e) => e.stopPropagation()}
                         title="Download this file again"
-                        className="mt-1 flex w-full items-center gap-1.5 rounded-lg border border-emerald-400/25 bg-emerald-500/10 px-2 py-1.5 text-left transition-colors hover:bg-emerald-500/20">
+                        className="mb-1.5 flex w-full items-center gap-1.5 rounded-lg border border-emerald-400/25 bg-emerald-500/10 px-2 py-1.5 text-left transition-colors hover:bg-emerald-500/20">
                         <Download size={11} className="shrink-0 text-emerald-300" />
                         <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-ink">{flow.artifacts[n.id].filename}</span>
                         <span className="shrink-0 text-[9.5px] tabular-nums text-dim">{Math.max(1, Math.round(flow.artifacts[n.id].size / 1024))} KB</span>
                       </button>
                     )}
-                    {(out || st === 'running') && (
-                      <div className="mt-1 rounded-lg border border-glass/[0.08] bg-black/25 p-1.5">
-                        <div className="mb-0.5 flex items-center justify-between">
-                          <span className="text-[9px] font-semibold uppercase tracking-[0.14em] text-dim">
-                            Output{durs[n.id] ? ` · ${Math.max(1, Math.round(durs[n.id] / 1000))}s` : ''}{st === 'skipped' ? ' · skipped' : st === 'error' ? ' · failed' : ''}
-                          </span>
-                          {out && <button onClick={() => setExpanded(n.id)} className="flex items-center gap-1 text-[10px] text-gold hover:text-ink"><Maximize2 size={9} /> Expand</button>}
-                        </div>
-                        <div className="max-h-20 overflow-hidden whitespace-pre-wrap text-[10.5px] leading-snug text-dim">{cleanSnippet(out || '…').slice(-460)}</div>
+                    {/* OUTPUT — the star of the card. Streams live while running, scrolls,
+                        and Expand opens the full result. */}
+                    <div className={`rounded-lg border bg-black/30 p-2 transition-colors ${st === 'running' ? 'border-accent/45' : st === 'error' ? 'border-red-400/30' : 'border-glass/[0.08]'}`}>
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-dim">
+                          {st === 'running' && <Loader2 size={9} className="animate-spin text-gold" />}
+                          Output{durs[n.id] ? ` · ${Math.max(1, Math.round(durs[n.id] / 1000))}s` : ''}{st === 'skipped' ? ' · skipped' : st === 'error' ? ' · failed' : st === 'done' ? ' · done' : ''}
+                        </span>
+                        {out && <button onClick={(e) => { e.stopPropagation(); setExpanded(n.id) }} onPointerDown={(e) => e.stopPropagation()} className="flex items-center gap-1 text-[10px] text-gold hover:text-ink"><Maximize2 size={9} /> Expand</button>}
                       </div>
-                    )}
+                      {/* Auto-FOLLOW the stream, but only while the reader is still pinned near
+                          the bottom — so scrolling up to re-read (or selecting text) mid-run isn't
+                          yanked back. rAF defers the write out of React's commit (no forced reflow). */}
+                      <div ref={(el) => { if (el && st === 'running') requestAnimationFrame(() => { if (el.scrollHeight - el.scrollTop - el.clientHeight < 60) el.scrollTop = el.scrollHeight }) }} onPointerDown={(e) => e.stopPropagation()}
+                        className="max-h-56 min-h-[3.25rem] select-text overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-ink/85 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                        {out ? cleanSnippet(out).slice(-4000) : <span className="text-dim">{st === 'running' ? 'Working…' : st === 'queued' ? 'Queued — waiting on inputs…' : 'Runs here when you press Run.'}</span>}
+                      </div>
+                    </div>
                   </div>
                 </div>
               )
@@ -1212,7 +1320,7 @@ export default function AgentsPanel() {
             <div className="text-sm font-semibold text-ink">Set up your company</div>
             <div className="mt-0.5 text-[11.5px] leading-relaxed text-dim">Every employee's work is grounded in this — you can tweak each position after it's created.</div>
             <label className="mt-4 block text-[10px] font-semibold uppercase tracking-[0.16em] text-dim">Company name</label>
-            <input autoFocus value={coSetup.name} onChange={(e) => setCoSetup({ ...coSetup, name: e.target.value })} placeholder="Hillpointe Coffee Co."
+            <input autoFocus value={coSetup.name} onChange={(e) => setCoSetup({ ...coSetup, name: e.target.value })} placeholder="Acme Coffee Co."
               className="mt-1 w-full rounded-lg border border-glass/[0.12] bg-glass/[0.05] px-2.5 py-1.5 text-[13px] text-ink outline-none placeholder:text-dim focus:border-glass/30" />
             <label className="mt-3 block text-[10px] font-semibold uppercase tracking-[0.16em] text-dim">What the company is</label>
             <textarea value={coSetup.what} onChange={(e) => setCoSetup({ ...coSetup, what: e.target.value })} rows={2} placeholder="A specialty coffee roaster selling online and wholesale to cafes in Texas."
@@ -1239,7 +1347,7 @@ export default function AgentsPanel() {
       {hfSetup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur" onClick={() => setHfSetup(null)}>
           <div className="w-full max-w-lg rounded-2xl border border-emerald-400/25 bg-panel2 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="text-[13px] font-semibold text-emerald-300">Nalu Hedge Fund model</div>
+            <div className="text-[13px] font-semibold text-ink">Nalu Hedge Fund model</div>
             <p className="mt-1 text-[11.5px] leading-relaxed text-dim">A full AI investment committee — Buffett, Munger, Graham, Wood, Burry, Ackman, Lynch, Druckenmiller, Damodaran, Taleb, Pabrai, Jhunjhunwala + fundamentals, valuation, technicals, sentiment and growth analysts, a real-time macro/events desk (disasters, pandemics, rates), a Risk Manager and a Portfolio Manager. Every agent researches live data; the PM makes the final buy/sell/short/hold calls.</p>
             <label className="mt-3 block text-[10px] font-semibold uppercase tracking-[0.16em] text-dim">Fund name</label>
             <input autoFocus value={hfSetup.name} onChange={(e) => setHfSetup({ ...hfSetup, name: e.target.value })} placeholder="Nalu Hedge Fund"
@@ -1272,6 +1380,80 @@ export default function AgentsPanel() {
           </div>
         </div>
       )}
+
+      {/* Prompt / Notes editor — big, focused, autosaves as you type. */}
+      {nodeModal && (() => {
+        const nm = flow.nodes.find((n) => n.id === nodeModal.nodeId)
+        if (!nm) return null
+        const isAgent = nm.type === 'agent'
+        const tab: 'prompt' | 'notes' = nodeModal.tab === 'notes' && isAgent ? 'notes' : 'prompt'
+        const promptPlaceholder = nm.type === 'agent'
+          ? 'What should this agent do? Use {{input}} for the previous step’s output.'
+          : nm.type === 'email' ? 'Email body — {{input}} = upstream output.'
+            : `Style / brief for the ${nodeMeta(nm).name.toLowerCase()} (the upstream output is the material). {{input}} = upstream output.`
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur" onClick={() => setNodeModal(null)}>
+            <div className="flex max-h-[82vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-glass/[0.16] bg-panel2" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-2 border-b border-glass/[0.1] px-4 py-2.5">
+                <span className="truncate text-sm font-medium text-ink">{nm.label || 'Step'}</span>
+                {isAgent ? (
+                  <div className="ml-2 flex gap-1 rounded-lg bg-glass/[0.06] p-0.5">
+                    <button onClick={() => setNodeModal({ nodeId: nm.id, tab: 'prompt' })} className={`rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors ${tab === 'prompt' ? 'bg-glass/15 text-ink' : 'text-dim hover:text-ink'}`}>Prompt</button>
+                    <button onClick={() => setNodeModal({ nodeId: nm.id, tab: 'notes' })} className={`rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors ${tab === 'notes' ? 'bg-amber-500/20 text-amber-100' : 'text-dim hover:text-ink'}`}>Notes</button>
+                  </div>
+                ) : <span className="text-[12px] text-dim">· Prompt</span>}
+                <button onClick={() => setNodeModal(null)} className="ml-auto flex h-7 w-7 items-center justify-center rounded-md bg-glass/10 text-ink hover:bg-glass/20"><X size={14} /></button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4">
+                {tab === 'prompt' ? (
+                  <>
+                    {nm.type === 'email' && (
+                      <div className="mb-3 grid grid-cols-2 gap-2">
+                        <input value={nm.to || ''} onChange={(e) => patchNode(nm.id, { to: e.target.value })} placeholder="to@email.com"
+                          className="rounded-lg border border-glass/[0.12] bg-glass/[0.04] px-2.5 py-1.5 text-[12.5px] text-ink outline-none placeholder:text-dim focus:border-glass/30" />
+                        <input value={nm.subject || ''} onChange={(e) => patchNode(nm.id, { subject: e.target.value })} placeholder="Subject"
+                          className="rounded-lg border border-glass/[0.12] bg-glass/[0.04] px-2.5 py-1.5 text-[12.5px] text-ink outline-none placeholder:text-dim focus:border-glass/30" />
+                      </div>
+                    )}
+                    {nm.type === 'social' && (
+                      <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                        <select value={nm.platform || 'Instagram'} onChange={(e) => patchNode(nm.id, { platform: e.target.value })}
+                          className="rounded-lg border border-glass/[0.12] bg-glass/[0.04] px-2.5 py-1.5 text-[12.5px] text-ink outline-none focus:border-glass/30">
+                          {['Instagram', 'TikTok', 'LinkedIn', 'X (Twitter)', 'Pinterest', 'Threads', 'Facebook'].map((pl) => <option key={pl} value={pl} className="bg-panel2">{pl}</option>)}
+                        </select>
+                        <select value={nm.format || 'carousel'} onChange={(e) => patchNode(nm.id, { format: e.target.value })}
+                          className="rounded-lg border border-glass/[0.12] bg-glass/[0.04] px-2.5 py-1.5 text-[12.5px] text-ink outline-none focus:border-glass/30">
+                          <option value="carousel" className="bg-panel2">Carousel / image post</option>
+                          <option value="video" className="bg-panel2">Video (reel / TikTok) — Nalu Video</option>
+                        </select>
+                        <input value={nm.webhook || ''} onChange={(e) => patchNode(nm.id, { webhook: e.target.value })} placeholder="Auto-post webhook (Zapier/Make/Buffer) — optional"
+                          className="rounded-lg border border-glass/[0.12] bg-glass/[0.04] px-2.5 py-1.5 text-[12.5px] text-ink outline-none placeholder:text-dim focus:border-glass/30 sm:col-span-2" />
+                      </div>
+                    )}
+                    <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.14em] text-dim">Prompt</label>
+                    <textarea autoFocus value={nm.prompt} onChange={(e) => patchNode(nm.id, { prompt: e.target.value })} rows={12}
+                      placeholder={promptPlaceholder}
+                      className="w-full resize-y rounded-lg border border-glass/[0.14] bg-glass/[0.04] p-3 text-[13px] leading-relaxed text-ink outline-none placeholder:text-dim focus:border-glass/30" />
+                    <p className="mt-2 text-[11.5px] text-dim"><b className="font-semibold text-ink/80">{'{{input}}'}</b> is replaced by the previous step’s output when this step runs.</p>
+                  </>
+                ) : (
+                  <>
+                    <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-200/80">Notes — hard rules for this agent</label>
+                    <textarea autoFocus value={nm.roleNotes || ''} onChange={(e) => patchNode(nm.id, { roleNotes: e.target.value })} rows={11}
+                      placeholder="How this agent must work — exact rules that override defaults: e.g. always cite sources, keep under 200 words, use our brand voice, never contact competitors."
+                      className="w-full resize-y rounded-lg border border-amber-400/25 bg-amber-500/[0.05] p-3 text-[13px] leading-relaxed text-ink outline-none placeholder:text-dim focus:border-amber-400/45" />
+                    <p className="mt-2 text-[11.5px] text-dim">These override default behavior and are injected into every run of this agent.</p>
+                  </>
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-2 border-t border-glass/[0.1] px-4 py-2.5">
+                <span className="text-[11px] text-dim">Saved automatically</span>
+                <button onClick={() => setNodeModal(null)} className="rounded-lg bg-gradient-to-r from-[#c9a86a] to-accent px-3.5 py-1.5 text-[12.5px] font-semibold text-[#15170f] hover:brightness-110">Save &amp; close</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

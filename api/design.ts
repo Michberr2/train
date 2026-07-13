@@ -47,7 +47,7 @@ function deriveUrl(prompt: string, kind: string): string | null {
   if (u) return u[0]
   const dom = prompt.match(/\b([a-z0-9-]{2,}\.(?:com|ai|io|co|net|org|app|dev|studio|design|xyz))\b/i)
   if (dom) return `https://${dom[1].toLowerCase()}`
-  // For brand/logo/webpage of a NAMED company ("brand book for Hillpointe"), try <name>.com.
+  // For brand/logo/webpage of a NAMED company ("brand book for Acme"), try <name>.com.
   if (kind === 'brand' || kind === 'logo' || kind === 'webpage') {
     const m = prompt.match(/\b(?:for|of|by)\s+([A-Z][A-Za-z0-9&]+(?:\s+[A-Z][A-Za-z0-9&]+){0,2})/)
     if (m) {
@@ -166,10 +166,10 @@ function normalizeKind(raw: unknown): DesignKind {
 // ---------------------------------------------------------------------------
 
 // The Nalu house aesthetic — the BASELINE for every generated design. Quiet,
-// timeless luxury in the spirit of Four Seasons and Hillpointe.
-const LUXE_BASELINE = `NALU DESIGN BASELINE — quiet, timeless luxury (think Four Seasons, Hillpointe), unless the user explicitly asks for another style:
+// timeless luxury in the spirit of Four Seasons.
+const LUXE_BASELINE = `NALU DESIGN BASELINE — quiet, timeless luxury (think Four Seasons), unless the user explicitly asks for another style:
 - Restraint over decoration. Generous, intentional whitespace; a calm, confident composition; never busy or loud.
-- Palette (the real Four Seasons × Hillpointe house colors): deep navy-black (#0F1B2D and #14345A), warm off-white neutrals (#F5F6F8, ivory, stone), crisp near-black text (#1F1F1F), and ONE restrained antique-gold accent (#AF8C56, lighter sheen #E4B96F) used sparingly for hairlines, eyebrows and key moments. Mostly black/navy on white. Avoid bright, neon or saturated colors.
+- Palette (the real Four Seasons house colors): deep navy-black (#0F1B2D and #14345A), warm off-white neutrals (#F5F6F8, ivory, stone), crisp near-black text (#1F1F1F), and ONE restrained antique-gold accent (#AF8C56, lighter sheen #E4B96F) used sparingly for hairlines, eyebrows and key moments. Mostly black/navy on white. Avoid bright, neon or saturated colors.
 - Typography: PREFER an elegant high-contrast display serif — **Playfair Display** (or Cormorant Garamond / Fraunces) — for headlines at a refined LIGHT weight, paired with **Work Sans** (or Jost / Inter) for body. Load both from Google Fonts. Use UPPERCASE, widely letter-spaced (0.2–0.3em) small labels. Mix in occasional italic-serif emphasis.
 - Thin hairline rules, refined detailing, real specific copy — never lorem ipsum, never a stale year (use 2026 if needed).`
 
@@ -547,7 +547,7 @@ CONTENT RULES:
 - brand.tagline: one short, memorable line. brand.mission / vision / positioning: one to two crisp sentences each, distinct from one another (mission = why we exist now; vision = the future we're building; positioning = who we serve and why we're the only choice).
 - brand.values: 4 to 6 entries. Each "label" is 1–2 words; each "description" is ONE directive line. Do NOT repeat the label inside the description and do NOT glue label+description with a dash, colon, or en/em dash — they are separate JSON fields.
 - brand.voice: 3 to 5 entries. Each "label" is a single voice trait (e.g. "Clear", "Warm", "Confident"); each "description" is ONE line on how it shows up in writing. Same field-separation rule as values.
-- palette: 5 to 6 colors. "role" MUST be drawn from: primary, secondary, accent, dark, light, neutral — include exactly one primary, one secondary, one accent, one dark (for text), and one light (for backgrounds). Every "hex" MUST be a valid 6-digit #RRGGBB (the template computes RGB and CMYK from it — do NOT supply them). Give each color an evocative "name" and a directive one-line "usage" note. Ensure the dark color reads as body text on the light color, and the light color works as a page background. AESTHETIC TARGET — quiet, timeless luxury in the spirit of Four Seasons and Hillpointe: restrained, refined, expensive-feeling, NOT loud or saturated. For Nalu, design a sophisticated palette: a deep midnight-navy primary (around #0F1B2D), a deep harbor-blue secondary, ONE muted gold/bronze accent (around #AF8C56) used sparingly for hairlines and labels, a near-black ink, and a warm linen/ivory light (around #F4F1EA). Avoid bright or neon colors entirely.
+- palette: 5 to 6 colors. "role" MUST be drawn from: primary, secondary, accent, dark, light, neutral — include exactly one primary, one secondary, one accent, one dark (for text), and one light (for backgrounds). Every "hex" MUST be a valid 6-digit #RRGGBB (the template computes RGB and CMYK from it — do NOT supply them). Give each color an evocative "name" and a directive one-line "usage" note. Ensure the dark color reads as body text on the light color, and the light color works as a page background. AESTHETIC TARGET — quiet, timeless luxury in the spirit of Four Seasons: restrained, refined, expensive-feeling, NOT loud or saturated. For Nalu, design a sophisticated palette: a deep midnight-navy primary (around #0F1B2D), a deep harbor-blue secondary, ONE muted gold/bronze accent (around #AF8C56) used sparingly for hairlines and labels, a near-black ink, and a warm linen/ivory light (around #F4F1EA). Avoid bright or neon colors entirely.
 - typography: pick exactly TWO real Google Fonts that exist in the Google Fonts library — for heading, an ELEGANT high-contrast display serif suited to quiet luxury (prefer Cormorant Garamond, Playfair Display, or Fraunces); for body, a refined, understated sans (prefer Jost, Inter, or Work Sans). Use the EXACT Google Fonts family name (correct spelling and capitalization) so the font URL resolves. Heading and body MUST be different families. "usage" on each says where it is used. "scale" is exactly 6 labels from Display down to Caption.
 - logo.direction: describe the primary lockup in words (wordmark style + the wave motif), 1–2 sentences. logo.clearspace: a concrete rule (e.g. "Clear space equals the cap-height of the wordmark on all sides"). logo.minSize: concrete digital + print minimums (e.g. "24px digital · 12mm print").
 - dos: 4 to 6 short directive lines of correct usage across the system. donts: 4 to 6 short lines of misuse to avoid. Keep them parallel where possible (the template pairs the first four as we-say / we-don't and lists all as a do/don't table).

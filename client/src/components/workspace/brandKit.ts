@@ -19,17 +19,17 @@ export type BrandKit = {
 
 // One global Brand Kit for the whole app — stored in localStorage, so it persists
 // across EVERY chat and every session (not per-chat). The "routine" primary brand.
-// v2 — re-seeds the Four Seasons × Hillpointe house palette over any stale v1 default.
+// v2 — re-seeds the Four Seasons house palette over any stale v1 default.
 const KEY = 'nalu.brandkit.v2'
 
-// The Nalu house brand — quiet luxury (Four Seasons / Hillpointe). This is the
+// The Nalu house brand — quiet luxury (Four Seasons). This is the
 // always-present default so every doc / deck / sheet / design is premium out of
 // the box AND the Brand bar is always there to edit. Colors only (no fonts) so
 // generated designs still pick their own elegant display serif.
 export const DEFAULT_BRAND: BrandKit = {
   name: 'Nalu',
-  primary: '14345A', // Hillpointe brand navy (--hp-primary)
-  accent: 'AF8C56', // Hillpointe antique gold (--hp-accent) — shared with Four Seasons' gold
+  primary: '14345A', // house navy (--hp-primary)
+  accent: 'AF8C56', // antique gold (--hp-accent) — shared with Four Seasons' gold
   dark: '0F1B2D', // deep navy-black for dark title backgrounds
   text: '1F1F1F', // Four Seasons --color-text-primary (crisp near-black body)
   onDark: 'FFFFFF',

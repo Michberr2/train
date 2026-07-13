@@ -14,7 +14,7 @@ function cleanName(t?: string): string {
   return (t || 'nalu-deck').replace(/[\\/:*?"<>|]+/g, '').trim() || 'nalu-deck'
 }
 
-// Quiet-luxury deck palette (Four Seasons / Hillpointe) — from the active brand,
+// Quiet-luxury deck palette (Four Seasons) — from the active brand,
 // with refined defaults. Headings use an elegant serif that's installed in
 // PowerPoint everywhere (Georgia) unless the brand sets its own.
 function deckStyle() {

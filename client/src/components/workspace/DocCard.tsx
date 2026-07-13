@@ -122,7 +122,7 @@ function buildDocx(doc: DocDoc, coverImg?: ArrayBuffer | null): Document {
     )
   }
   const bodyFont = brand?.bodyFont || 'Calibri'
-  // Elegant serif headings (Four Seasons / Hillpointe house style); clean sans body.
+  // Elegant serif headings (Four Seasons house style); clean sans body.
   const titleFont = brand?.headingFont || 'Georgia'
   const children: (Paragraph | Table)[] = []
   children.push(
