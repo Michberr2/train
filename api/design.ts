@@ -24,10 +24,12 @@ function env(name: string): string | undefined {
 
 const LLM_KEY = env('TINKER_API_KEY') || ''
 const LLM_MODEL = env('NALU_DESIGN_MODEL') || 'deepseek-ai/DeepSeek-V3.1'
-// Prefer the FAST provider (HF router / DeepInfra serve DeepSeek-V3.1 far faster
-// than Tinker) for big HTML pages, so a full site finishes well inside the 300s
-// function cap instead of timing out → 504. Fails over to primary, then emergency.
-const FAST_PROVIDERS = () => [fallbackProvider(), primaryProvider(LLM_MODEL), emergencyProvider()].filter(Boolean) as NonNullable<ReturnType<typeof primaryProvider>>[]
+// A SINGLE fast provider (HF router / DeepInfra serve DeepSeek-V3.1 far faster
+// than Tinker) for big HTML pages — one provider so the per-attempt timeout is a
+// true hard cap (a multi-provider list is tried sequentially and can blow the
+// 300s budget). The outer 2-attempt loop provides failover.
+const FAST_PROVIDERS = () => { const f = fallbackProvider() || primaryProvider(LLM_MODEL) || emergencyProvider(); return f ? [f] : [] }
+const PRIM_ONLY = () => { const p = primaryProvider(LLM_MODEL) || fallbackProvider(); return p ? [p] : [] }
 
 // ── Web grounding ────────────────────────────────────────────────────────────
 // Before building a brand book / site / logo for a REAL company, research the
@@ -2117,15 +2119,15 @@ export default async function handler(req: any, res: any) {
         let html = ''
         try {
           const budget = attempt === 0
-            ? { maxTokens, timeoutMs: 170000 }
-            : { maxTokens: Math.min(maxTokens, 10000), timeoutMs: 80000 }
+            ? { maxTokens, timeoutMs: 150000, providers: FAST_PROVIDERS() }
+            : { maxTokens: Math.min(maxTokens, 10000), timeoutMs: 70000, providers: PRIM_ONLY() }
           html = cleanHtml(
             await chatComplete(
               [
                 { role: 'system', content: system },
                 { role: 'user', content: user },
               ],
-              { model: LLM_MODEL, retryPrimary: false, temperature: 0.8, providers: FAST_PROVIDERS(), ...budget },
+              { model: LLM_MODEL, retryPrimary: false, temperature: 0.8, ...budget },
             ),
           )
         } catch (e) {
