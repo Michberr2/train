@@ -33,6 +33,8 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   Shield,
   MapPin,
   Sparkles,
@@ -754,7 +756,18 @@ function cleanForDisplay(s: string): string {
     .replace(/\{\s*["'](?:function|tool|name|recipient_name|query|url|path)["']\s*:[\s\S]*$/i, '')
     .replace(new RegExp(`(?:tool_call|invoke)?\\s*${TOOL_NAME_RE.source}\\s*[({][\\s\\S]*$`, 'i'), (m: string) => (TOOL_NAME_RE.test(m) ? '' : m))
   out = out.replace(/\u0000CHART(\d+)\u0000/g, (_, i: string) => chartGuards[+i] || '')
-  return out.replace(/\n{3,}/g, '\n\n').trim()
+  return scrubModelNames(out).replace(/\n{3,}/g, '\n\n').trim()
+}
+
+// Final safety net: Nalu is always "Nalu". If a backing model ever names its own
+// family in an answer (even split across streamed tokens, which the per-delta
+// server scrub can miss), catch it here on the fully-assembled text. Narrow to
+// obscure model families so a real answer ABOUT NVIDIA/Google/etc. is never touched.
+function scrubModelNames(s: string): string {
+  if (!s || !/[dgnqz]/i.test(s)) return s
+  return s
+    .replace(/\bglm[-\s.]?[\w.]*/gi, 'Nalu')
+    .replace(/\b(deep\s?seek[-\w.]*|qwen[-\w.]*|nemotron[-\w.]*|zhipu(?:\s?ai)?|thinking\s?machines|zai-org|deepinfra)\b/gi, 'Nalu')
 }
 
 // Deep-think split: while the model is reasoning, the chain-of-thought (plain
@@ -854,6 +867,7 @@ export default function Workspace({ user, onLogout }: Props) {
   const logoClass = `brightness-0 ${isDark ? 'invert' : ''}`
   const [routeName, setRouteName] = useState('Nalu')
   const [query, setQuery] = useState('')
+  const [chatsExpanded, setChatsExpanded] = useState(false) // preview latest few; "Show all" reveals the rest
   // Sidebar is a push-column on desktop but an off-canvas overlay on phones, so
   // it defaults open on desktop and closed on mobile (chat gets the full width).
   // Start collapsed so the chat gets the full, clean width on open; the user
@@ -1703,12 +1717,36 @@ export default function Workspace({ user, onLogout }: Props) {
         setRouteName('Nalu Studio')
         accLoading = 'design'
         flush()
+        // Reference image: if the user attached a picture with a logo/brand/palette
+        // ask, READ it with vision and create the artifact in that same spirit
+        // (its style, colors, symbol) — instead of ignoring it.
+        let refAnalysis = ''
+        if (imageAtts.length > 0 && (studioKind === 'logo' || studioKind === 'brand' || studioKind === 'palette')) {
+          try {
+            await streamChat(
+              [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: `The user attached this reference image for a ${studioKind} they want. Describe it precisely so we can create a ${studioKind} in the SAME visual spirit: the STYLE (flat/minimal/geometric/hand-drawn/vintage/etc.), the exact COLORS (name each), any SYMBOL/ICON/MARK and its exact shapes and composition, the typography vibe, and the overall mood. Be specific and concise.` },
+                    ...imageAtts.map((a) => ({ type: 'image_url' as const, image_url: { url: a.dataUrl as string } })),
+                  ],
+                },
+              ],
+              model,
+              { onDelta: (t) => { refAnalysis += t }, signal: ctrl.signal },
+            )
+          } catch { /* proceed without the reference */ }
+        }
         try {
           const r = await fetch('/api/design', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               prompt:
+                (refAnalysis.trim()
+                  ? `REFERENCE IMAGE the user attached — create the ${studioKind} in THIS SAME visual spirit (match its style, colors, and the form of its symbol/mark as described here):\n${refAnalysis.trim()}\n\n----\n\n`
+                  : '') +
                 withCtx(content) +
                 (prevArt && (editTarget?.kind === 'logo' || editTarget?.kind === 'palette' || editTarget?.kind === 'shopping')
                   ? `\n\nPREVIOUS ${editTarget.kind.toUpperCase()} JSON (revise THIS — keep everything not mentioned in the request identical; output the full updated JSON):\n${JSON.stringify(prevArt).slice(0, 9000)}`
@@ -2017,8 +2055,11 @@ export default function Workspace({ user, onLogout }: Props) {
   }, [closeSidebarOnMobile])
 
   const matchesQuery = (c: Chat) => (query.trim() ? c.title.toLowerCase().includes(query.toLowerCase()) : true)
-  // Chats with no project (shown at the bottom under "Chats").
+  // Chats with no project (shown at the bottom under "Chats"). Newest-first
+  // (new chats are prepended), so the preview slice shows the most recent.
   const unfiledChats = chats.filter((c) => !c.projectId).filter(matchesQuery)
+  const CHATS_PREVIEW = 8
+  const visibleChats = chatsExpanded || query.trim() ? unfiledChats : unfiledChats.slice(0, CHATS_PREVIEW)
 
   // One chat row — reused inside a project folder and in the unfiled list.
   const renderChatRow = (c: Chat) => (
@@ -2241,7 +2282,15 @@ export default function Workspace({ user, onLogout }: Props) {
               {unfiledChats.length === 0 && projects.length === 0 && (
                 <div className="px-2 py-3 text-xs text-dim">No chats yet.</div>
               )}
-              {unfiledChats.map(renderChatRow)}
+              {visibleChats.map(renderChatRow)}
+              {!query.trim() && unfiledChats.length > CHATS_PREVIEW && (
+                <button
+                  onClick={() => setChatsExpanded((v) => !v)}
+                  className="mt-0.5 flex w-full items-center gap-1 rounded-lg px-2 py-1.5 text-[12px] font-medium text-gold hover:bg-glass/[0.06]"
+                >
+                  {chatsExpanded ? <><ChevronUp size={13} /> Show less</> : <><ChevronDown size={13} /> Show all {unfiledChats.length} chats</>}
+                </button>
+              )}
             </div>
           </>
         )}
