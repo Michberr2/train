@@ -12,6 +12,7 @@ type Flow = {
   id: string; name?: string; nodes?: PNode[]; edges?: Edge[]
   schedule?: 'manual' | 'hourly' | 'daily' | 'weekly' | 'continuous' | 'members'
   time?: string; enabled?: boolean; lastRun?: number; results?: Record<string, string>; company?: Company; run?: FlowRun
+  refDoc?: { name: string; text: string } // user-attached reference doc for every agent
 }
 // A run whose heartbeat is older than this has lost its tab (hard refresh / close)
 // — the server takes it over and finishes it. Generous so a briefly-backgrounded
@@ -105,6 +106,10 @@ async function runFlow(f: Flow, onProgress?: ProgressFn): Promise<{ results: Rec
       node.roleNotes ? `HOW YOU MUST WORK — exact instructions for you that OVERRIDE defaults: ${node.roleNotes}` : '',
     ].filter(Boolean).join(' ')
     if (charter) prompt = `${charter}\n\nYOUR TASK:\n${prompt}`
+    // A reference document the user attached to this flow — authoritative context.
+    if (f.refDoc?.text?.trim()) {
+      prompt = `REFERENCE DOCUMENT the user attached for this pipeline — "${f.refDoc.name}". Treat it as authoritative context and ground your work in it:\n"""\n${f.refDoc.text.slice(0, 12000)}\n"""\n\n${prompt}`
+    }
     const startedAt = Date.now()
     try {
       const out = await chatComplete([{ role: 'user', content: prompt }], { maxTokens: 2200, timeoutMs: NODE_TIMEOUT_MS, temperature: 0.6 })

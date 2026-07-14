@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Bot, Play, Plus, Trash2, X, Loader2, Clock, Power, ChevronRight, ChevronUp, ChevronDown,
+  Bot, Play, Plus, Trash2, X, Loader2, Clock, Power, ChevronRight, ChevronUp, ChevronDown, Paperclip,
   CircleDollarSign, Palette, MessageSquare, Code2, Bitcoin, Home, Scale,
   HeartPulse, Stethoscope, Building2, HardHat, Megaphone, BrainCircuit, FlaskConical, Sigma, Maximize2, FileText, BarChart3, Table2,
   Mail, Download, CheckCircle2, XCircle, PanelLeft, Users, type LucideIcon,
@@ -109,7 +109,10 @@ type Company = { what: string; mission: string; notes?: string }
 // and syncs to the server). `heartbeat` is bumped by whoever is actively running;
 // if it goes stale the run is orphaned and can be safely resumed/taken over.
 type FlowRun = { status: 'running' | 'done' | 'error' | 'stuck' | 'stopped'; step: number; total: number; startedAt: number; updatedAt: number; heartbeat: number; node?: string; nodeLabel?: string; error?: string }
-type Flow = { id: string; name: string; nodes: PNode[]; edges: Edge[]; schedule: Schedule; time: string; enabled: boolean; lastRun?: number; results?: Record<string, string>; company?: Company; artifacts?: Record<string, OutputMeta>; defaultKey?: string; run?: FlowRun }
+// refDoc: a document the user uploads from their computer that every agent in the
+// flow gets as authoritative reference context on each run.
+type RefDoc = { name: string; text: string }
+type Flow = { id: string; name: string; nodes: PNode[]; edges: Edge[]; schedule: Schedule; time: string; enabled: boolean; lastRun?: number; results?: Record<string, string>; company?: Company; artifacts?: Record<string, OutputMeta>; defaultKey?: string; run?: FlowRun; refDoc?: RefDoc }
 type Run = { id: string; flowId: string; flowName: string; startedAt: number; finishedAt?: number; status: 'running' | 'done' | 'error' | 'stopped'; note?: string }
 const FLOWS_KEY = 'nalu-agent-flows'
 const RUNS_KEY = 'nalu-agent-runs'
@@ -287,6 +290,16 @@ export default function AgentsPanel() {
   const [coNotesOpen, setCoNotesOpen] = useState(false)
   const [hfSetup, setHfSetup] = useState<null | { name: string; tickers: string }>(null)
   const [newMenu, setNewMenu] = useState(false)
+  const refDocInput = useRef<HTMLInputElement>(null)
+  // Attach a document from the user's computer as reference context for the flow.
+  const onRefDocFile = useCallback((file: File) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const text = String(reader.result || '').slice(0, 40000) // keep the synced flow light
+      if (text.trim()) patchFlow(flow.id, { refDoc: { name: file.name, text } })
+    }
+    reader.readAsText(file)
+  }, [flow?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   const [runsExpanded, setRunsExpanded] = useState(false)
   const [runWarn, setRunWarn] = useState<string | null>(null)
   const [durs, setDurs] = useState<Record<string, number>>({})
@@ -595,6 +608,11 @@ export default function AgentsPanel() {
         const prevOwn = f.results?.[node.id]
         const notes = node.roleNotes ? `\n\nHOW YOU MUST WORK — these are exact instructions for you and OVERRIDE any default behavior: ${node.roleNotes}` : ''
         prompt = `${roleCharter(role, f)}${notes}\n\nYOUR TASK TODAY:\n${prompt}${prevOwn ? `\n\n--- YOUR PREVIOUS WORK (last run — build on it, update what changed, never repeat verbatim) ---\n${prevOwn.slice(0, 3500)}` : ''}`
+      }
+      // A reference document the user attached to this pipeline — authoritative
+      // context every agent should ground its work in.
+      if (f.refDoc?.text?.trim()) {
+        prompt = `REFERENCE DOCUMENT the user attached for this pipeline — "${f.refDoc.name}". Treat it as authoritative context and ground your work in it:\n"""\n${f.refDoc.text.slice(0, 12000)}\n"""\n\n${prompt}`
       }
       let out = ''
       const r = await streamChat([{ role: 'user', content: prompt }], undefined, { signal: ctrl.signal, onDelta: (t) => { out += t; onLive(out) } }, undefined, undefined, undefined, node.agent)
@@ -1105,6 +1123,32 @@ export default function AgentsPanel() {
                   </button>
                 ))}
               </div>
+            )}
+          </div>
+          {/* Reference doc — attach a file from your computer that every agent
+              gets as context on each run. */}
+          <div className="relative">
+            <input
+              ref={refDocInput}
+              type="file"
+              accept=".txt,.md,.markdown,.csv,.json,.html,.xml,.log,.tsv,.yaml,.yml,text/*"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) onRefDocFile(f); e.target.value = '' }}
+            />
+            {flow.refDoc ? (
+              <div className="flex items-center gap-1.5 rounded-lg bg-gold/15 px-2.5 py-1.5 text-[12px] text-ink" title={flow.refDoc.name}>
+                <Paperclip size={12} className="text-gold" />
+                <span className="max-w-[120px] truncate">{flow.refDoc.name}</span>
+                <button onClick={() => patchFlow(flow.id, { refDoc: undefined })} title="Remove reference doc" className="text-dim hover:text-red-300"><X size={11} /></button>
+              </div>
+            ) : (
+              <button
+                onClick={() => refDocInput.current?.click()}
+                title="Attach a document from your computer for the agents to reference as they run"
+                className="flex items-center gap-1.5 rounded-lg bg-glass/[0.07] px-2.5 py-1.5 text-[12px] text-ink hover:bg-glass/[0.12]"
+              >
+                <Paperclip size={13} className="text-gold" /> Reference doc
+              </button>
             )}
           </div>
           <div className="ml-auto flex items-center gap-2">
