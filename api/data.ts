@@ -262,7 +262,10 @@ export default async function handler(req: any, res: any) {
     const isCron = action === 'cron' || String(reqAny.query?.action || '') === 'cron' || String(reqAny.url || '').includes('action=cron')
     if (isCron) {
       const secret = process.env.CRON_SECRET
-      if (secret && reqAny.headers['authorization'] !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' })
+      // Fail CLOSED: with no secret configured, refuse — otherwise anyone could
+      // POST ?action=cron and run EVERY user's due pipelines (unauth cross-user
+      // write + token burn).
+      if (!secret || reqAny.headers['authorization'] !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' })
       const r = await runDueCrons(client)
       return res.status(200).json({ ok: true, ...r, at: new Date().toISOString() })
     }

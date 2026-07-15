@@ -194,13 +194,22 @@ export default async function handler(req: any, res: any) {
       // Two attempts server-side (bad JSON happens) — a long build must not
       // lose chapters to a single flaky response.
       let secBlocks: unknown[] | null = null
+      // Hard wall-clock budget so a slow chapter ALWAYS returns before Vercel's
+      // 300s kill — otherwise the platform terminates the instance before
+      // release() runs and the user's doc quota slot is burned for nothing.
+      // (chatCompleteContinued can make 2 calls, so each attempt gets ~half the
+      // remaining time.)
+      const CAP = Date.now() + 250000
+      const left = () => CAP - Date.now()
       for (let attempt = 0; attempt < 2 && !secBlocks; attempt++) {
+        if (left() < 20000) break
+        const tMs = Math.min(160000, Math.max(30000, Math.floor((left() - 15000) / 2)))
         const { content } = await chatCompleteContinued(
           [
             { role: 'system', content: SYSTEM_SECTION + whoLine + (attempt ? '\nYour previous reply was not valid JSON — output ONLY the minified {"blocks":[...]} object.' : '') },
             { role: 'user', content: userMsg },
           ],
-          { model: LLM_MODEL, maxTokens: 12000, timeoutMs: 200000, retryPrimary: false, temperature: attempt ? 0.3 : 0.5, json: true },
+          { model: LLM_MODEL, maxTokens: 12000, timeoutMs: tMs, retryPrimary: false, temperature: attempt ? 0.3 : 0.5, json: true },
         )
         const sec = extractJson(content) as { blocks?: unknown[] } | null
         if (sec && Array.isArray(sec.blocks) && sec.blocks.length) secBlocks = sec.blocks

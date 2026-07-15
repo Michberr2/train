@@ -946,6 +946,10 @@ export default async function handler(req: any, res: any) {
     }
 
     const ac = new AbortController()
+    // Stop the upstream model the instant the client disconnects (Stop button,
+    // tab close, CLI Ctrl-C, dropped network) — never orphan the generation.
+    req.on?.('close', () => { try { if (!res.writableEnded) ac.abort() } catch { /* noop */ } })
+    const streamStart = Date.now()
     let sawData = false
     let lastFinish = ''
     let streamBroke = false
@@ -955,7 +959,10 @@ export default async function handler(req: any, res: any) {
     let stall = setTimeout(() => { try { ac.abort() } catch { /* noop */ } }, cliMode ? 30000 : 7000)
     const bumpStall = () => {
       clearTimeout(stall)
-      stall = setTimeout(() => { try { ac.abort() } catch { /* noop */ } }, 25000)
+      // Per-chunk 25s window, but NEVER let the whole stream outlive an absolute
+      // cap — a model that drips one token every 24s can't run to the 300s kill.
+      const remaining = (cliMode ? 280000 : 240000) - (Date.now() - streamStart)
+      stall = setTimeout(() => { try { ac.abort() } catch { /* noop */ } }, Math.max(1000, Math.min(25000, remaining)))
     }
 
     let upstream: Response | null = null
@@ -1080,15 +1087,22 @@ export default async function handler(req: any, res: any) {
           { role: 'assistant', content: answerSoFar },
           { role: 'user', content: 'Continue your previous answer exactly where it stopped. Do not repeat anything already written; output only the remaining text.' },
         ]
-        const cr = await fetch(`${backend.base}/chat/completions`, {
-          method: 'POST',
-          headers: upstreamHeaders,
-          body: JSON.stringify({ ...buildPayload(false), messages: contMessages }),
-        })
-        if (cr.ok) {
-          const cd = (await cr.json().catch(() => null)) as { choices?: Array<{ message?: { content?: string } }> } | null
-          const cc = cd?.choices?.[0]?.message?.content
-          if (typeof cc === 'string' && cc.trim()) { const a = stripThinkTags(cc); answerSoFar += a; send('delta', { text: a }) }
+        const contAc = new AbortController()
+        const contTimer = setTimeout(() => { try { contAc.abort() } catch { /* noop */ } }, 30000)
+        try {
+          const cr = await fetch(`${backend.base}/chat/completions`, {
+            method: 'POST',
+            headers: upstreamHeaders,
+            body: JSON.stringify({ ...buildPayload(false), messages: contMessages }),
+            signal: contAc.signal, // never hang the stream here — 30s watchdog
+          })
+          if (cr.ok) {
+            const cd = (await cr.json().catch(() => null)) as { choices?: Array<{ message?: { content?: string } }> } | null
+            const cc = cd?.choices?.[0]?.message?.content
+            if (typeof cc === 'string' && cc.trim()) { const a = stripThinkTags(cc); answerSoFar += a; send('delta', { text: a }) }
+          }
+        } finally {
+          clearTimeout(contTimer)
         }
       } catch {
         /* best-effort continuation */

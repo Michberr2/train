@@ -10,6 +10,12 @@ export function getClient(): Client {
   return new Client({
     connectionString,
     ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
+    // Never wait forever: if Neon becomes a TCP black hole (scaling/failover) a
+    // connect or query REJECTS instead of hanging, so callers' fail-open catches
+    // fire and a chat/Studio request can't stall before it even starts.
+    connectionTimeoutMillis: 8000,
+    query_timeout: 20000,
+    statement_timeout: 20000,
   })
 }
 

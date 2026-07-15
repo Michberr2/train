@@ -249,19 +249,29 @@ async function search(query: string): Promise<{ text: string; results: Result[] 
 }
 
 async function fetchPage(url: string): Promise<{ text: string }> {
-  const r = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow' })
-  const ct = r.headers.get('content-type') || ''
-  if (!ct.includes('text/html') && !ct.includes('text/plain') && !ct.includes('json')) {
-    return { text: `(${ct || 'non-text'} content at ${url})` }
+  // Hard 10s watchdog + never throw: a trickling/never-ending third-party body
+  // must not hang research()'s Promise.all (which the chat stream awaits) — a bad
+  // source is just skipped.
+  const ac = new AbortController()
+  const timer = setTimeout(() => { try { ac.abort() } catch { /* noop */ } }, 10000)
+  try {
+    const r = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow', signal: ac.signal })
+    const ct = r.headers.get('content-type') || ''
+    if (!ct.includes('text/html') && !ct.includes('text/plain') && !ct.includes('json')) {
+      return { text: `(${ct || 'non-text'} content at ${url})` }
+    }
+    let html = await r.text()
+    html = html
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+    return { text: decodeEntities(html).slice(0, 6000) }
+  } catch {
+    return { text: `(could not read ${url})` }
+  } finally {
+    clearTimeout(timer)
   }
-  let html = await r.text()
-  html = html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-  const text = decodeEntities(html).slice(0, 6000)
-  return { text }
 }
 
 // Deep research: search, then READ the top sources in parallel and return a
