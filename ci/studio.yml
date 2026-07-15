@@ -1,0 +1,45 @@
+name: Nalu Test Studio
+
+# Runs the fast (token-free) studio smoke suite — health, security, scalability,
+# accessibility (ADA/WCAG), and mobile — against production on every push and on
+# demand. Use the "full" suite locally (npm run studio:full) for token-spending
+# end-to-end generation tests.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Site to test'
+        default: 'https://n4lu.ai'
+
+concurrency:
+  group: studio-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  studio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm install
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run studio smoke
+        env:
+          BASE_URL: ${{ github.event.inputs.base_url || 'https://n4lu.ai' }}
+        run: npm run studio:smoke
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-report
+          path: tests/.report
+          retention-days: 14
