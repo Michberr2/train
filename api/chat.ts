@@ -497,7 +497,7 @@ export default async function handler(req: any, res: any) {
   const quota = await reserveDailyQuota(req, 'chat', {
     anonPerDay: Number(process.env.NALU_CHAT_ANON_PER_DAY ?? 1500),
     userPerDay: Number(process.env.NALU_CHAT_USER_PER_DAY ?? 6000),
-  }).catch(() => ({ ok: true }) as { ok: boolean })
+  }).catch(() => ({ ok: true, used: 0, limit: 0, signedIn: false, release: async () => {} }))
   if (!quota.ok) {
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
     res.write(`event: error\ndata: ${JSON.stringify({ message: 'Daily message limit reached — sign in for a higher limit, or come back tomorrow.' })}\n\n`)
@@ -903,6 +903,9 @@ export default async function handler(req: any, res: any) {
         clearTimeout(t2)
       }
     }
+    // Every provider failed and we produced no answer — refund the message slot so
+    // a run of upstream outages doesn't burn down the user's daily allowance.
+    await quota.release().catch(() => {})
     send('error', { message: `Nalu engine error ${scrubVendor(lastErr).slice(0, 300)}` })
     return false
   }

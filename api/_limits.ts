@@ -5,6 +5,7 @@
 // HARD RULE: fail OPEN. If the DB is unavailable or anything throws, allow the
 // request — a metering outage must never take video down.
 import { getClient, readToken, userIdForToken } from './_db'
+import crypto from 'node:crypto'
 
 const USAGE_DDL = `CREATE TABLE IF NOT EXISTS nalu_usage (
   subject TEXT NOT NULL,
@@ -18,6 +19,25 @@ const USAGE_DDL = `CREATE TABLE IF NOT EXISTS nalu_usage (
 function clientIp(req: any): string {
   const xf = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim()
   return xf || String(req?.socket?.remoteAddress || req?.connection?.remoteAddress || 'unknown')
+}
+
+// Anonymous subject key. Keying purely on IP means everyone behind one corporate/
+// campus/carrier NAT shares a single daily bucket. So prefer a stable per-device
+// id the client sends (X-Nalu-Device / nalu_did cookie), and otherwise fold the
+// user-agent + language into the IP hash so distinct devices on the same IP get
+// distinct buckets (only truly-identical clients still collide).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function anonSubject(req: any): string {
+  const h = req?.headers || {}
+  const dev = String(h['x-nalu-device'] || '').trim()
+  if (dev) return `dev:${dev.slice(0, 64)}`
+  const cookie = String(h['cookie'] || '')
+  const m = cookie.match(/(?:^|;\s*)nalu_did=([^;]+)/)
+  if (m) return `dev:${decodeURIComponent(m[1]).slice(0, 64)}`
+  const ua = String(h['user-agent'] || '')
+  const lang = String(h['accept-language'] || '')
+  const hash = crypto.createHash('sha256').update(`${clientIp(req)}|${ua}|${lang}`).digest('hex').slice(0, 16)
+  return `ipd:${hash}`
 }
 
 function intEnv(name: string, dflt: number): number {
@@ -63,7 +83,7 @@ export async function reserveDailyQuota(
     await client.connect()
     await client.query(USAGE_DDL)
 
-    let subject = `ip:${clientIp(req)}`
+    let subject = anonSubject(req)
     let signedIn = false
     try {
       const uid = await userIdForToken(client, readToken(req))
@@ -104,18 +124,26 @@ export async function reserveDailyQuota(
     }
 
     // Reserved. Hand back a release() that refunds the slot on downstream failure.
+    // Retry a few times: a transient DB blip must NOT permanently burn a slot the
+    // user never got value from (esp. the low anon video limit).
+    let released = false
     const release = async () => {
-      const c = getClient()
-      try {
-        await c.connect()
-        await c.query(
-          `UPDATE nalu_usage SET count = GREATEST(count - 1, 0) WHERE subject = $1 AND day = CURRENT_DATE AND kind = $2`,
-          [subject, kind],
-        )
-      } catch {
-        /* best-effort refund */
-      } finally {
-        await c.end().catch(() => {})
+      if (released) return // idempotent — safe to call on multiple failure paths
+      for (let i = 0; i < 3; i++) {
+        const c = getClient()
+        try {
+          await c.connect()
+          await c.query(
+            `UPDATE nalu_usage SET count = GREATEST(count - 1, 0) WHERE subject = $1 AND day = CURRENT_DATE AND kind = $2`,
+            [subject, kind],
+          )
+          released = true
+          await c.end().catch(() => {})
+          return
+        } catch {
+          await c.end().catch(() => {})
+          await new Promise((r) => setTimeout(r, 200 * (i + 1)))
+        }
       }
     }
     await client.end().catch(() => {})
