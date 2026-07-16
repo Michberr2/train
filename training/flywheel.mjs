@@ -32,7 +32,11 @@ const BATTERY_PATH = path.join(HERE, 'eval', 'agent-battery.json')
 const SESSIONS = path.join(os.homedir(), '.nalu', 'data', 'sessions.jsonl')
 const GOLD = path.join(HERE, 'data', 'nalu-agent.jsonl')
 const VENV_PY = path.join(HERE, '.venv', 'bin', 'python')
-const BASE_MODEL = process.env.FLYWHEEL_BASE || 'Qwen/Qwen3.5-9B'
+// Baseline for the per-domain LoRA fine-tunes. Inkling (Thinking Machines' open
+// 975B MoE, Apache-2.0) is the new baseline; train_nalu_sft.py auto-selects the
+// Inkling renderer (tml-renderers) when the base is Inkling. Override with
+// FLYWHEEL_BASE=Qwen/Qwen3.5-9B for cheap dev iterations.
+const BASE_MODEL = process.env.FLYWHEEL_BASE || 'thinkingmachines/Inkling'
 const MIN_NEW = { agent: Number(process.env.FLYWHEEL_MIN_NEW || 60), domain: Number(process.env.FLYWHEEL_MIN_DOMAIN || 40) }
 const WIN_MARGIN = Number(process.env.FLYWHEEL_MARGIN || 5) // points out of 100
 const TINKER_BASE = process.env.TINKER_BASE_URL || 'https://tinker.thinkingmachines.dev/services/tinker-prod/oai/api/v1'

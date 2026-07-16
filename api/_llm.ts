@@ -31,7 +31,10 @@ const TINKER_BASE = 'https://tinker.thinkingmachines.dev/services/tinker-prod/oa
 const HF_ROUTER_BASE = 'https://router.huggingface.co/v1'
 // A capable, widely-served default that BOTH the primary (Tinker) and the
 // HuggingFace router can run, so failover lands on a real, equivalent model.
-const DEFAULT_MODEL = 'deepseek-ai/DeepSeek-V3.1'
+// The default served model (baseline when no specialist LoRA matches). Set
+// NALU_DEFAULT_MODEL=thinkingmachines/Inkling to make Inkling the serving baseline
+// (975B MoE — stronger, but pricier per token, so it's an explicit env flip).
+const DEFAULT_MODEL = process.env.NALU_DEFAULT_MODEL || 'deepseek-ai/DeepSeek-V3.1'
 
 /** The primary provider (Tinker), if configured. */
 export function primaryProvider(model?: string): Provider | null {
