@@ -16,9 +16,9 @@
 // kept only as FAST: the tiny classifier/utility model, where Inkling's 975B and
 // its reasoning budget would be wasteful and blow a 6-token routing call.
 export const DS = 'thinkingmachines/Inkling'
-export const FAST = 'deepseek-ai/DeepSeek-V3.1'
 export const MODEL_REASONING = 'thinkingmachines/Inkling'
-export const VISION_MODEL = 'gemini-2.5-pro'
+// Vision runs on Inkling too — it's natively multimodal (accepts image_url parts).
+export const VISION_MODEL = 'thinkingmachines/Inkling'
 
 export interface Specialist {
   kind: string // env key + route id

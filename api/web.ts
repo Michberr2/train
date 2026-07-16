@@ -710,7 +710,7 @@ async function proxyImage(url: string): Promise<{ dataUrl?: string; error?: stri
 // + history; we return the SINGLE next action as JSON. DOM-grounded (refs).
 type AgentEl = { ref: number; role?: string; tag?: string; text?: string; value?: string; x?: number; y?: number }
 // Vision model for the agent when a screenshot is present (Hybrid+Vision flagship).
-const AGENT_VISION_MODEL = env('NALU_AGENT_VISION_MODEL') || 'Qwen/Qwen3.6-35B-A3B'
+const AGENT_VISION_MODEL = env('NALU_AGENT_VISION_MODEL') || 'thinkingmachines/Inkling'
 function firstJsonObject(s: string): string | null {
   const i = s.indexOf('{')
   if (i === -1) return null

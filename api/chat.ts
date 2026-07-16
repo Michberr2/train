@@ -18,7 +18,7 @@ import { research } from './web'
 import { fallbackProvider, emergencyProvider, chatComplete } from './_llm'
 import { reserveDailyQuota } from './_limits'
 import { identityForRequest, identityBlock, saveProfile } from './_db'
-import { type Specialist, SPECIALISTS, VISION, GENERAL, VISION_CAPABLE, DS, FAST, MODEL_REASONING, hasImage, scoreSpecialistEx, pickSpecialist, pickSpecialistsMulti, classifierSystem, classifierUser, normalizeKind } from './_specialists'
+import { type Specialist, SPECIALISTS, VISION, GENERAL, VISION_CAPABLE, DS, MODEL_REASONING, hasImage, scoreSpecialistEx, pickSpecialist, pickSpecialistsMulti, classifierSystem, classifierUser, normalizeKind } from './_specialists'
 
 interface ToolCall {
   id?: string
@@ -92,10 +92,11 @@ type Backend = { base: string; key: string; model: string; gated: boolean; name:
 /** Resolve the live backend for a specialist, applying per-kind env overrides. */
 function backendFor(spec: Specialist): Backend {
   const K = spec.kind.toUpperCase()
-  // Vision runs on Gemini's OpenAI endpoint with the GEMINI key (Tinker 422s on
-  // images; the HF router ran out of credits).
-  const defBase = spec.kind === 'vision' ? VISION_BASE : DEFAULT_BASE
-  const defKey = spec.kind === 'vision' ? GEMINI_KEY || env('HUGGINGFACE_API_TOKEN') || DEFAULT_KEY : DEFAULT_KEY
+  // Vision now runs on Inkling (multimodal) via Tinker, like every other model —
+  // verified: Inkling decodes image_url parts and answers. Override to Gemini with
+  // NALU_VISION_BASE_URL + NALU_VISION_API_KEY if ever needed.
+  const defBase = DEFAULT_BASE
+  const defKey = DEFAULT_KEY
   const base = (env(`NALU_${K}_BASE_URL`) || defBase).replace(/\/+$/, '')
   const key = env(`NALU_${K}_API_KEY`) || defKey
   const model = env(`NALU_${K}_MODEL`) || (spec.kind === 'vision' ? spec.model : env('NALU_DEFAULT_MODEL') || spec.model)
@@ -554,7 +555,7 @@ export default async function handler(req: any, res: any) {
             { role: 'system', content: classifierSystem() },
             { role: 'user', content: classifierUser(classifyText, hits >= 1 && kwSpec ? kwSpec.kind : null) },
           ],
-          { model: FAST, maxTokens: 6, timeoutMs: 11000, temperature: 0, retryPrimary: false },
+          { model: DS, reasoningEffort: 'none', maxTokens: 6, timeoutMs: 11000, temperature: 0, retryPrimary: false },
         )
         const k = normalizeKind(raw)
         if (k && k !== 'general' && k !== 'vision') {
@@ -1159,7 +1160,7 @@ export default async function handler(req: any, res: any) {
             { role: 'system', content: `You are a meticulous verifier. Independently re-derive the answer: recompute the math, re-trace the code/logic, check units and every stated constraint, AND check for (a) FABRICATED specifics the user never gave (invented dates, names, figures, versions, citations) and (b) WRONG domain limits/rules (e.g. IRA/401k contribution caps, filing deadlines, dosing ceilings, legal thresholds). Judge ONLY correctness, not style. Output EXACTLY "OK" if the answer's conclusion and its key specifics are correct. Only on a DEFINITE error, output "FIX:" on the first line, then 1-4 sentences naming the specific error and the correction. When unsure, output "OK".` },
             { role: 'user', content: `QUESTION:\n${lastUserText.slice(0, 3000)}\n\nANSWER TO CHECK:\n${answerSoFar.slice(0, 6000)}` },
           ],
-          { model: FAST, maxTokens: 400, timeoutMs: 12000, temperature: 0, retryPrimary: false },
+          { model: DS, reasoningEffort: 'none', maxTokens: 400, timeoutMs: 12000, temperature: 0, retryPrimary: false },
         )
         const v = (check || '').trim()
         if (/^fix:/i.test(v)) {

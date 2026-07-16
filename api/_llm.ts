@@ -100,6 +100,7 @@ export interface CompleteOpts {
   json?: boolean // ask the provider for native JSON output (response_format)
   frequencyPenalty?: number
   presencePenalty?: number
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' // Inkling: override the 'low' default (e.g. 'none' for tiny classify calls)
 }
 
 export interface CompleteResult {
@@ -171,7 +172,7 @@ async function callOne(p: Provider, messages: Msg[], opts: CompleteOpts, timeout
         ...(!isGemini && opts.presencePenalty != null ? { presence_penalty: opts.presencePenalty } : {}),
         // flash / reasoning models burn the budget on internal thinking and leak
         // it into content unless told to keep reasoning light
-        ...(isGemini || isInkling ? { reasoning_effort: 'low' } : {}),
+        ...(isGemini || isInkling ? { reasoning_effort: opts.reasoningEffort || 'low' } : {}),
         ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: ac.signal,
