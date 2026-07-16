@@ -452,7 +452,7 @@ for (const s of SPECIALISTS) {
 }
 
 /** Models that accept image_url content parts. */
-export const VISION_CAPABLE = /\bvl\b|-vl-|vision|gemma-3|gemini|llama-?4|pixtral|internvl|phi-4-multimodal/i
+export const VISION_CAPABLE = /\bvl\b|-vl-|vision|gemma-3|gemini|llama-?4|pixtral|internvl|phi-4-multimodal|inkling/i
 
 export function hasImage(messages: RouteMsg[]): boolean {
   return messages.some(
