@@ -154,6 +154,10 @@ async function callOne(p: Provider, messages: Msg[], opts: CompleteOpts, timeout
   try {
     // Gemini's OpenAI-compat endpoint 400s on the penalty fields — strip them there.
     const isGemini = /generativelanguage\.googleapis/i.test(p.base)
+    // Inkling (base or a trained Inkling LoRA) is a REASONING model: without a
+    // reasoning_effort it dumps its chain-of-thought into `content`. Setting it to
+    // 'low' routes reasoning to `reasoning_content` and leaves `content` clean.
+    const isInkling = /inkling/i.test(p.model)
     const r = await fetch(`${p.base}/chat/completions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${p.key}`, 'Content-Type': 'application/json' },
@@ -165,9 +169,9 @@ async function callOne(p: Provider, messages: Msg[], opts: CompleteOpts, timeout
         ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
         ...(!isGemini && opts.frequencyPenalty != null ? { frequency_penalty: opts.frequencyPenalty } : {}),
         ...(!isGemini && opts.presencePenalty != null ? { presence_penalty: opts.presencePenalty } : {}),
-        // flash models burn the budget on internal thinking and return EMPTY
-        // content unless told to keep reasoning light
-        ...(isGemini ? { reasoning_effort: 'low' } : {}),
+        // flash / reasoning models burn the budget on internal thinking and leak
+        // it into content unless told to keep reasoning light
+        ...(isGemini || isInkling ? { reasoning_effort: 'low' } : {}),
         ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: ac.signal,

@@ -807,6 +807,10 @@ export default async function handler(req: any, res: any) {
           // agentic tool calls — omit it in CLI mode.
           ...(cliMode ? {} : { frequency_penalty: 0.3 }),
           ...(isGlm ? { thinking: { type: think ? 'enabled' : 'disabled' } } : {}),
+          // Inkling (base or a trained Inkling LoRA) is a reasoning model: without
+          // this it dumps chain-of-thought into content. 'low' routes reasoning to
+          // the separate reasoning_content field and keeps content clean.
+          ...(/inkling/i.test(backend.model) ? { reasoning_effort: 'low' } : {}),
           // When we've already injected live research, don't offer tools — the model
           // should just write the answer (no tool-call text to mangle).
           ...(!wantResearch && Array.isArray(tools) && tools.length > 0 ? { tools, tool_choice: tool_choice ?? 'auto' } : {}),
