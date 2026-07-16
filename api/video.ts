@@ -112,7 +112,7 @@ function pickUrl(result: unknown): string {
 }
 
 // ---- 0x) Google Veo (Gemini API predictLongRunning + operation polling) ----
-async function veoVideo(prompt: string, image?: string): Promise<{ url?: string; error?: string }> {
+async function veoVideo(prompt: string, image?: string, wantVertical = false): Promise<{ url?: string; error?: string }> {
   const dims = image ? imageDims(image) : null
   const portrait = wantVertical || (!!dims && dims.h > dims.w)
   const imgPart = image ? (() => { const m = image.match(/^data:(image\/[a-z+]+);base64,(.+)$/i); return m ? { bytesBase64Encoded: m[2], mimeType: m[1] } : null } )() : null
@@ -527,7 +527,7 @@ export default async function handler(req: any, res: any) {
   const free: Backend = { name: 'free', run: () => freeSpaceVideo(finalPrompt, image) }
   const wan: Backend = { name: 'wan', run: () => (image ? wanSpaceVideo(finalPrompt, image) : Promise.resolve({ error: 'wan is i2v-only' })) }
   const hfWan: Backend = { name: 'hf-wan', run: () => hfWanVideo(finalPrompt, image) }
-  const veo: Backend = { name: 'veo', run: () => veoVideo(finalPrompt, image) }
+  const veo: Backend = { name: 'veo', run: () => veoVideo(finalPrompt, image, wantVertical) }
 
   const ladder: Backend[] = []
   const add = (b: Backend, ok: boolean) => { if (ok) ladder.push(b) }
