@@ -655,29 +655,31 @@ export default async function handler(req: any, res: any) {
   })
 
   if (wantResearch) {
-    if (think) send('reasoning', { text: 'Researching the latest information for your question…\n\n' })
+    // Web-search activity + the source links ALWAYS go to the thinking pane (not
+    // just deep-think mode) — the user wants thoughts, searches, and links there.
+    send('reasoning', { text: 'Searching the web for current information…\n\n' })
     try {
       const r = await research(researchQueryFor(lastUserText, backend.kind), 4, backend.kind)
       if (r && typeof r.text === 'string' && r.text.length > 20) {
         researchBrief = r.text
         if (r.sources && r.sources.length) researchSources = r.sources
-        if (think && r.sources && r.sources.length) {
+        if (r.sources && r.sources.length) {
           send('reasoning', {
-            text: `Read ${r.sources.length} sources:\n` + r.sources.map((s) => `• ${s.url}`).join('\n') + '\n\nSynthesizing the answer…\n',
+            text: `Read ${r.sources.length} source${r.sources.length === 1 ? '' : 's'}:\n` + r.sources.map((s) => `• ${s.title ? s.title + ' — ' : ''}${s.url}`).join('\n') + '\n\nSynthesizing the answer…\n',
           })
         }
       }
     } catch {
       /* ignore — the no-tools knowledge fallback below still gives a clean answer */
     }
-    if (think && !researchBrief) send('reasoning', { text: 'No fresh sources found — answering from knowledge.\n' })
+    if (!researchBrief) send('reasoning', { text: 'No fresh sources found — answering from knowledge.\n' })
   }
 
   // COUNCIL: each qualifying expert answers the question in their own lane
   // (in parallel), and the streamed reply below fuses them into ONE answer.
   let councilBrief = ''
   if (useCouncil) {
-    if (think) send('reasoning', { text: `Consulting ${council.map((c) => c.name).join(', ')}…\n` })
+    send('reasoning', { text: `Consulting ${council.map((c) => c.name).join(', ')}…\n` })
     const expert = async (c: Specialist) => {
       const b = backendFor(c)
       try {
@@ -784,7 +786,7 @@ export default async function handler(req: any, res: any) {
       if (aRaw) emitAnswer(aRaw)
     } else {
       const { answer, reasoning } = extract(delta)
-      if (think && !wantResearch && reasoning) emitReasoning(reasoning)
+      if (!wantResearch && reasoning) emitReasoning(reasoning)
       if (answer) emitAnswer(answer)
     }
   }
@@ -911,7 +913,7 @@ export default async function handler(req: any, res: any) {
         }
         if (typeof msg?.reasoning_content === 'string' && msg.reasoning_content) {
           reasoningFieldSeen = true // content is the clean answer; ungate pushDelta
-          if (think && !wantResearch) send('reasoning', { text: stripThinkTags(msg.reasoning_content) })
+          if (!wantResearch) send('reasoning', { text: stripThinkTags(msg.reasoning_content) })
         }
         for (let ti = 0; ti < msgToolCalls.length; ti++) {
           const tc = msgToolCalls[ti]
@@ -1042,7 +1044,7 @@ export default async function handler(req: any, res: any) {
                 sawData = true
                 reasoningFieldSeen = true
                 bumpStall()
-                if (think && !wantResearch) send('reasoning', { text: stripThinkTags(reasoningField) })
+                if (!wantResearch) send('reasoning', { text: stripThinkTags(reasoningField) })
               }
               const delta = choice?.delta?.content
               if (typeof delta === 'string' && delta.length > 0) {
