@@ -13,7 +13,7 @@ function env(name: string): string | undefined {
 }
 
 const LLM_KEY = env('TINKER_API_KEY') || ''
-const LLM_MODEL = env('NALU_CAD_MODEL') || 'deepseek-ai/DeepSeek-V3.1'
+const LLM_MODEL = env('NALU_CAD_MODEL') || 'thinkingmachines/Inkling'
 
 const SYSTEM = `You are a world-class mechanical and industrial product designer who writes expert, production-grade OpenSCAD. Given a description, output ONE compilable OpenSCAD program that models the object in realistic, detailed, professional quality — like a finished engineered product, never a bare primitive.
 

@@ -23,7 +23,7 @@ function env(name: string): string | undefined {
 }
 
 const LLM_KEY = env('TINKER_API_KEY') || ''
-const LLM_MODEL = env('NALU_DESIGN_MODEL') || 'deepseek-ai/DeepSeek-V3.1'
+const LLM_MODEL = env('NALU_DESIGN_MODEL') || 'thinkingmachines/Inkling'
 // A SINGLE provider per call so timeoutMs is a TRUE hard cap. The default chain
 // fails over sequentially (primary times out at 215s → then fallback runs → 295s+
 // → 504). Tinker (primary) is reliable, so bound it hard; completeHtml repairs a

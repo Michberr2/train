@@ -34,7 +34,7 @@ const HF_ROUTER_BASE = 'https://router.huggingface.co/v1'
 // The default served model (baseline when no specialist LoRA matches). Set
 // NALU_DEFAULT_MODEL=thinkingmachines/Inkling to make Inkling the serving baseline
 // (975B MoE — stronger, but pricier per token, so it's an explicit env flip).
-const DEFAULT_MODEL = process.env.NALU_DEFAULT_MODEL || 'deepseek-ai/DeepSeek-V3.1'
+const DEFAULT_MODEL = process.env.NALU_DEFAULT_MODEL || 'thinkingmachines/Inkling'
 
 /** The primary provider (Tinker), if configured. */
 export function primaryProvider(model?: string): Provider | null {
@@ -56,8 +56,8 @@ export function fallbackProvider(): Provider | null {
     base: (env('NALU_FALLBACK_BASE_URL') || HF_ROUTER_BASE).replace(/\/+$/, ''),
     key,
     // The fallback model is deliberately a generic, router-served id (NOT the
-    // primary's possibly-Tinker-only override), so the failover actually serves.
-    model: env('NALU_FALLBACK_MODEL') || DEFAULT_MODEL,
+    // primary's Tinker-only Inkling), so the failover actually serves on HF.
+    model: env('NALU_FALLBACK_MODEL') || 'deepseek-ai/DeepSeek-V3.1',
     label: 'fallback',
   }
 }

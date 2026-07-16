@@ -16,7 +16,7 @@ function env(name: string): string | undefined {
 }
 
 const LLM_KEY = env('TINKER_API_KEY') || ''
-const LLM_MODEL = env('NALU_SHEET_MODEL') || 'deepseek-ai/DeepSeek-V3.1'
+const LLM_MODEL = env('NALU_SHEET_MODEL') || 'thinkingmachines/Inkling'
 
 const SYSTEM = `You are a world-class spreadsheet engineer — better than anyone at Excel.
 Build exactly the spreadsheet the user asks for, with realistic, correct, useful data.

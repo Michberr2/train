@@ -15,7 +15,7 @@ function env(name: string): string | undefined {
 }
 
 const LLM_KEY = env('TINKER_API_KEY') || ''
-const LLM_MODEL = env('NALU_SLIDES_MODEL') || 'deepseek-ai/DeepSeek-V3.1'
+const LLM_MODEL = env('NALU_SLIDES_MODEL') || 'thinkingmachines/Inkling'
 
 const SYSTEM = `You are a world-class presentation designer and storyteller (think YC pitch decks).
 Build exactly the deck the user asks for — compelling narrative, crisp, investor/audience-ready.

@@ -18,7 +18,7 @@ const LLM_BASE = (
   env('TINKER_BASE_URL') || 'https://tinker.thinkingmachines.dev/services/tinker-prod/oai/api/v1'
 ).replace(/\/+$/, '')
 const LLM_KEY = env('TINKER_API_KEY') || ''
-const LLM_MODEL = env('NALU_AGENT_MODEL') || 'deepseek-ai/DeepSeek-V3.1'
+const LLM_MODEL = env('NALU_AGENT_MODEL') || 'thinkingmachines/Inkling'
 
 const AGENT_SYSTEM = `You control a real web browser to accomplish the user's TASK. You get the current URL, page title, and a numbered list of interactive elements (links, buttons, inputs).
 Decide the SINGLE next action. Output ONLY minified JSON: {"action":"click|type|navigate|scroll|wait|done","index":<int>,"text":"<for type>","url":"<for navigate>","reason":"<short>"}

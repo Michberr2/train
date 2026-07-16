@@ -16,7 +16,7 @@ function env(name: string): string | undefined {
 }
 
 const LLM_KEY = env('TINKER_API_KEY') || ''
-const LLM_MODEL = env('NALU_DOC_MODEL') || 'deepseek-ai/DeepSeek-V3.1'
+const LLM_MODEL = env('NALU_DOC_MODEL') || 'thinkingmachines/Inkling'
 
 const SYSTEM = `You are a world-class business writer and document designer.
 Produce exactly the document the user asks for (business plan, report, proposal, essay, letter, memo, etc.) — thorough, well-structured, and professional.
