@@ -8,8 +8,19 @@ import {
   Moon,
   Sun,
   Info,
+  Gauge,
 } from 'lucide-react'
+import { useState } from 'react'
 import { useTheme } from '../ThemeProvider'
+import {
+  REASONING_LEVELS,
+  REASONING_DESC,
+  MIN_TOKENS,
+  MAX_TOKENS,
+  getModelSettings,
+  setModelSettings,
+  type ReasoningLevel,
+} from '../../lib/naluSettings'
 
 // The Nalu "Settings" panel.
 
@@ -22,6 +33,9 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
   const name = displayName?.trim() || 'You'
   const initial = name.charAt(0).toUpperCase()
   const { isDark, toggleTheme } = useTheme()
+  const [{ reasoning, maxTokens }, setSettings] = useState(getModelSettings())
+  const pickReasoning = (r: ReasoningLevel) => setSettings(setModelSettings({ reasoning: r }))
+  const pickTokens = (t: number) => setSettings(setModelSettings({ maxTokens: t }))
 
   return (
     <div className="flex h-full flex-col bg-glass/[0.09] backdrop-blur-2xl text-ink font-sans">
@@ -71,6 +85,48 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
               <span className="rounded-full bg-emerald-500/20 px-2.5 py-1 text-xs font-medium text-emerald-300 shrink-0">
                 Active
               </span>
+            </div>
+          </Section>
+
+          {/* Reasoning & capacity */}
+          <Section icon={<Gauge size={15} />} title="Reasoning &amp; capacity" desc="How hard Nalu thinks + answer length">
+            <div className="rounded-xl border border-glass/[0.18] bg-glass/[0.11] backdrop-blur-2xl px-4 py-3.5 space-y-4">
+              <div>
+                <div className="text-sm font-medium text-ink mb-2">Reasoning level</div>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {REASONING_LEVELS.map((lvl) => (
+                    <button
+                      key={lvl}
+                      onClick={() => pickReasoning(lvl)}
+                      className={`rounded-lg px-2 py-2 text-xs font-medium capitalize transition-colors ${
+                        reasoning === lvl ? 'bg-gold text-black' : 'bg-glass/10 text-dim hover:bg-glass/[0.16]'
+                      }`}
+                    >
+                      {lvl}
+                    </button>
+                  ))}
+                </div>
+                <div className="text-xs text-dim mt-2">{REASONING_DESC[reasoning]}</div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-medium text-ink">Token capacity</div>
+                  <div className="text-xs text-dim tabular-nums">{maxTokens.toLocaleString()} tokens</div>
+                </div>
+                <input
+                  type="range"
+                  min={MIN_TOKENS}
+                  max={MAX_TOKENS}
+                  step={256}
+                  value={maxTokens}
+                  onChange={(e) => pickTokens(Number(e.target.value))}
+                  className="w-full accent-gold cursor-pointer"
+                />
+                <div className="flex justify-between text-[10px] text-dim mt-1">
+                  <span>256</span>
+                  <span>32k</span>
+                </div>
+              </div>
             </div>
           </Section>
 

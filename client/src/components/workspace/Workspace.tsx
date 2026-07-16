@@ -40,6 +40,7 @@ import {
   Sparkles,
   Wand2,
   Brain,
+  Image as ImageIcon,
 } from 'lucide-react'
 import { streamChat, recoverToolCalls, findJsonObjects, isToolCallShape, type WireMessage } from './agentApi'
 import { lazy, Suspense } from 'react'
@@ -2875,6 +2876,31 @@ function Composer({
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [showTools, setShowTools] = useState(false)
+  // Voice dictation via the browser Speech API — transcribes into the composer.
+  const [listening, setListening] = useState(false)
+  const recRef = useRef<{ stop: () => void } | null>(null)
+  const toggleVoice = () => {
+    const SR = (window as unknown as { SpeechRecognition?: new () => any; webkitSpeechRecognition?: new () => any }).SpeechRecognition
+      || (window as unknown as { webkitSpeechRecognition?: new () => any }).webkitSpeechRecognition
+    if (!SR) return
+    if (listening) { try { recRef.current?.stop() } catch { /* noop */ } return }
+    const rec = new SR()
+    rec.lang = 'en-US'
+    rec.interimResults = true
+    rec.continuous = false
+    const base = input
+    rec.onresult = (e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => {
+      let txt = ''
+      for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript
+      setInput((base ? base + ' ' : '') + txt)
+    }
+    rec.onend = () => { setListening(false); recRef.current = null }
+    rec.onerror = () => { setListening(false); recRef.current = null }
+    recRef.current = rec
+    setListening(true)
+    try { rec.start() } catch { setListening(false) }
+  }
+  const voiceSupported = typeof window !== 'undefined' && !!((window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition || (window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition)
   const [dragOver, setDragOver] = useState(false)
   // Hide the chip when the user ×'d out of it for this exact prompt — editing
   // the text brings it back (the stored dismissal no longer matches).
@@ -2980,12 +3006,27 @@ function Composer({
       <button
         onClick={() => fileRef.current?.click()}
         disabled={attaching}
-        title="Attach any file — photos, PDFs, docs, spreadsheets, code, data"
-        className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-glass/10 text-ink hover:bg-glass/20 disabled:opacity-50"
-        aria-label="Attach"
+        title="Attach an image or file — photos, PDFs, docs, spreadsheets, code, data"
+        className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-dim hover:text-ink hover:bg-glass/15 disabled:opacity-50"
+        aria-label="Attach image or file"
       >
-        {attaching ? <Loader2 size={15} className="animate-spin" /> : <Paperclip size={15} />}
+        {attaching ? <Loader2 size={15} className="animate-spin" /> : <ImageIcon size={18} strokeWidth={1.75} />}
       </button>
+      {voiceSupported && (
+        <button
+          onClick={toggleVoice}
+          title={listening ? 'Listening… tap to stop' : 'Dictate with your voice'}
+          className={`mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg hover:bg-glass/15 ${listening ? 'text-gold animate-pulse' : 'text-dim hover:text-ink'}`}
+          aria-label="Voice input"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="5" y1="9" x2="5" y2="15" />
+            <line x1="9.5" y1="5.5" x2="9.5" y2="18.5" />
+            <line x1="14" y1="8" x2="14" y2="16" />
+            <line x1="18.5" y1="10.5" x2="18.5" y2="13.5" />
+          </svg>
+        </button>
+      )}
       {/* Composer with an inline highlight backdrop: typing think / ultrathink /
           packmind lights up gold/blue so you SEE the thinking tier engage. */}
       <div className="relative min-w-0 flex-1">
@@ -3043,7 +3084,7 @@ function Composer({
         <button
           onClick={onSend}
           disabled={!input.trim()}
-          className="w-8 h-8 rounded-lg bg-white text-black disabled:bg-glass/15 disabled:text-glass/40 flex items-center justify-center shrink-0 transition-colors"
+          className="w-8 h-8 rounded-full bg-white text-black disabled:bg-glass/15 disabled:text-glass/40 flex items-center justify-center shrink-0 transition-colors"
           aria-label="Send"
         >
           <ArrowUp size={16} strokeWidth={2.5} />

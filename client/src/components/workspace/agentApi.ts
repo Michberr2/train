@@ -4,6 +4,8 @@
 
 // A user message can carry text + images (OpenAI vision parts). /api/chat routes
 // any message containing an image part to the Nalu Vision model.
+import { getModelSettings } from '../../lib/naluSettings'
+
 export type ContentPart =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } }
@@ -361,7 +363,7 @@ export async function streamChat(
     res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, model, ...(tools && tools.length ? { tools } : {}), ...(context || {}), ...(think && think > 0 ? { think: true, thinkLevel: think } : {}), ...(specialist ? { specialist } : {}) }),
+      body: JSON.stringify({ messages, model, ...(tools && tools.length ? { tools } : {}), ...(context || {}), ...(think && think > 0 ? { think: true, thinkLevel: think } : {}), ...(specialist ? { specialist } : {}), ...(() => { const s = getModelSettings(); return { reasoning: s.reasoning, maxTokens: s.maxTokens } })() }),
       signal,
     })
   } catch (e) {

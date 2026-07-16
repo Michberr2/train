@@ -461,7 +461,7 @@ export default async function handler(req: any, res: any) {
     return
   }
 
-  const { messages, repo, githubConnected, origin, branch, tools, tool_choice, think, specialist, cli, cwd, projectDoc } = body as {
+  const { messages, repo, githubConnected, origin, branch, tools, tool_choice, think, specialist, cli, cwd, projectDoc, reasoning, maxTokens } = body as {
     messages?: ChatMessage[]
     repo?: string
     githubConnected?: boolean
@@ -474,15 +474,21 @@ export default async function handler(req: any, res: any) {
     cli?: boolean // request comes from the Nalu CLI terminal agent
     cwd?: string // the CLI's working directory (context only)
     projectDoc?: string // the CLI's .nalu folder contents (project memory)
+    reasoning?: string // Inkling reasoning level: 'none' | 'low' | 'medium' | 'high' (user setting)
+    maxTokens?: number // token capacity for the answer (user setting)
   }
   // CLI mode: the terminal agent drives LOCAL tools in a loop, so the request
   // must keep its tools — skip the paths that strip them (auto-research,
   // council fuse) and let the model use its own web_search/fetch_url instead.
   const cliMode = cli === true
+  // User-chosen Inkling reasoning level (falls back to 'low' — clean, separated
+  // reasoning) and answer token capacity (clamped to a safe range).
+  const reasoningEffort = ['none', 'low', 'medium', 'high'].includes(String(reasoning)) ? String(reasoning) : 'low'
+  const userMaxTokens = Number.isFinite(Number(maxTokens)) ? Math.max(256, Math.min(32000, Math.round(Number(maxTokens)))) : 0
   // Thinking tier from the chat keywords: 1 think · 2 ultrathink · 3 packmind.
   // Scales the reasoning/answer token budget so "packmind" thinks much harder.
   const thinkLevel = Math.max(0, Math.min(3, Number((body as { thinkLevel?: number }).thinkLevel) || (think ? 1 : 0)))
-  const thinkTokens = [8192, 14000, 22000, 32000][thinkLevel]
+  const thinkTokens = userMaxTokens || [8192, 14000, 22000, 32000][thinkLevel]
   if (!Array.isArray(messages)) {
     res.status(400).json({ error: 'messages array required' })
     return
@@ -808,9 +814,10 @@ export default async function handler(req: any, res: any) {
           ...(cliMode ? {} : { frequency_penalty: 0.3 }),
           ...(isGlm ? { thinking: { type: think ? 'enabled' : 'disabled' } } : {}),
           // Inkling (base or a trained Inkling LoRA) is a reasoning model: without
-          // this it dumps chain-of-thought into content. 'low' routes reasoning to
-          // the separate reasoning_content field and keeps content clean.
-          ...(/inkling/i.test(backend.model) ? { reasoning_effort: 'low' } : {}),
+          // this it dumps chain-of-thought into content. The user's chosen level
+          // ('none'|'low'|'medium'|'high', default 'low') routes reasoning to the
+          // separate reasoning_content field and keeps content clean.
+          ...(/inkling/i.test(backend.model) ? { reasoning_effort: reasoningEffort } : {}),
           // When we've already injected live research, don't offer tools — the model
           // should just write the answer (no tool-call text to mangle).
           ...(!wantResearch && Array.isArray(tools) && tools.length > 0 ? { tools, tool_choice: tool_choice ?? 'auto' } : {}),
