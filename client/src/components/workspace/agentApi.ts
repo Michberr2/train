@@ -363,7 +363,7 @@ export async function streamChat(
     res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, model, ...(tools && tools.length ? { tools } : {}), ...(context || {}), ...(think && think > 0 ? { think: true, thinkLevel: think } : {}), ...(specialist ? { specialist } : {}), ...(() => { const s = getModelSettings(); return { reasoning: s.reasoning, maxTokens: s.maxTokens } })() }),
+      body: JSON.stringify({ messages, model, ...(tools && tools.length ? { tools } : {}), ...(context || {}), ...(think && think > 0 ? { think: true, thinkLevel: think } : {}), ...(specialist ? { specialist } : {}), ...(() => { const s = getModelSettings(); return { reasoning: s.reasoning, maxTokens: s.maxTokens, webSearch: s.webSearch } })() }),
       signal,
     })
   } catch (e) {

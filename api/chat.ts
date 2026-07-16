@@ -461,7 +461,7 @@ export default async function handler(req: any, res: any) {
     return
   }
 
-  const { messages, repo, githubConnected, origin, branch, tools, tool_choice, think, specialist, cli, cwd, projectDoc, reasoning, maxTokens } = body as {
+  const { messages, repo, githubConnected, origin, branch, tools: toolsRaw, tool_choice, think, specialist, cli, cwd, projectDoc, reasoning, maxTokens, webSearch } = body as {
     messages?: ChatMessage[]
     repo?: string
     githubConnected?: boolean
@@ -476,7 +476,17 @@ export default async function handler(req: any, res: any) {
     projectDoc?: string // the CLI's .nalu folder contents (project memory)
     reasoning?: string // Inkling reasoning level: 'none' | 'low' | 'medium' | 'high' (user setting)
     maxTokens?: number // token capacity for the answer (user setting)
+    webSearch?: boolean // user setting: allow live web search / auto-research (default true)
   }
+  // Web search on by default; when the user turns it OFF, strip the web tools and
+  // skip auto-research so the model answers from its own knowledge only.
+  const webAllowed = webSearch !== false
+  const WEB_TOOL_NAMES = new Set(['web_search', 'fetch_url', 'deep_research'])
+  const tools = webAllowed
+    ? toolsRaw
+    : Array.isArray(toolsRaw)
+      ? toolsRaw.filter((t) => !(t && typeof t === 'object' && WEB_TOOL_NAMES.has((t as { function?: { name?: string } }).function?.name || '')))
+      : toolsRaw
   // CLI mode: the terminal agent drives LOCAL tools in a loop, so the request
   // must keep its tools — skip the paths that strip them (auto-research,
   // council fuse) and let the model use its own web_search/fetch_url instead.
@@ -614,6 +624,7 @@ export default async function handler(req: any, res: any) {
   const who = await identityForRequest(req).catch(() => null)
 
   const wantResearch =
+    webAllowed &&
     !cliMode &&
     !!lastUserText &&
     (needsResearch(lastUserText, backend.kind) || (useCouncil && council.some((c) => needsResearch(lastUserText, c.kind))))

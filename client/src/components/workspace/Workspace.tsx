@@ -43,6 +43,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react'
 import { streamChat, recoverToolCalls, findJsonObjects, isToolCallShape, type WireMessage } from './agentApi'
+import { getModelSettings } from '../../lib/naluSettings'
 import { lazy, Suspense } from 'react'
 import Markdown from './Markdown'
 import { useTheme } from '../ThemeProvider'
@@ -1331,6 +1332,9 @@ export default function Workspace({ user, onLogout }: Props) {
         revealRaf = shown < acc.length ? requestAnimationFrame(reveal) : 0
       }
       const scheduleFlush = () => {
+        // Streaming OFF → don't reveal progressively; the final flush() shows the
+        // whole answer at once.
+        if (!getModelSettings().streaming) return
         if (!revealRaf) revealRaf = requestAnimationFrame(reveal)
       }
 

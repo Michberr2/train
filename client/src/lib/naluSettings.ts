@@ -18,9 +18,11 @@ export const REASONING_DESC: Record<ReasoningLevel, string> = {
 export interface NaluModelSettings {
   reasoning: ReasoningLevel
   maxTokens: number // answer token capacity (256–32000)
+  webSearch: boolean // allow live web search / auto-research
+  streaming: boolean // stream the reply live vs. reveal it all at once
 }
 
-export const DEFAULT_SETTINGS: NaluModelSettings = { reasoning: 'low', maxTokens: 8192 }
+export const DEFAULT_SETTINGS: NaluModelSettings = { reasoning: 'low', maxTokens: 8192, webSearch: true, streaming: true }
 export const MIN_TOKENS = 256
 export const MAX_TOKENS = 32000
 
@@ -32,7 +34,9 @@ export function getModelSettings(): NaluModelSettings {
     const reasoning: ReasoningLevel = REASONING_LEVELS.includes(raw.reasoning) ? raw.reasoning : DEFAULT_SETTINGS.reasoning
     const n = Number(raw.maxTokens)
     const maxTokens = Number.isFinite(n) ? Math.max(MIN_TOKENS, Math.min(MAX_TOKENS, Math.round(n))) : DEFAULT_SETTINGS.maxTokens
-    return { reasoning, maxTokens }
+    const webSearch = typeof raw.webSearch === 'boolean' ? raw.webSearch : DEFAULT_SETTINGS.webSearch
+    const streaming = typeof raw.streaming === 'boolean' ? raw.streaming : DEFAULT_SETTINGS.streaming
+    return { reasoning, maxTokens, webSearch, streaming }
   } catch {
     return { ...DEFAULT_SETTINGS }
   }

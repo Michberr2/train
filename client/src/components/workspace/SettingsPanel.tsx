@@ -9,6 +9,8 @@ import {
   Sun,
   Info,
   Gauge,
+  Globe,
+  Zap,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTheme } from '../ThemeProvider'
@@ -33,9 +35,11 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
   const name = displayName?.trim() || 'You'
   const initial = name.charAt(0).toUpperCase()
   const { isDark, toggleTheme } = useTheme()
-  const [{ reasoning, maxTokens }, setSettings] = useState(getModelSettings())
+  const [{ reasoning, maxTokens, webSearch, streaming }, setSettings] = useState(getModelSettings())
   const pickReasoning = (r: ReasoningLevel) => setSettings(setModelSettings({ reasoning: r }))
   const pickTokens = (t: number) => setSettings(setModelSettings({ maxTokens: t }))
+  const toggleWeb = () => setSettings(setModelSettings({ webSearch: !webSearch }))
+  const toggleStream = () => setSettings(setModelSettings({ streaming: !streaming }))
 
   return (
     <div className="flex h-full flex-col bg-glass/[0.09] backdrop-blur-2xl text-ink font-sans">
@@ -130,6 +134,26 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
             </div>
           </Section>
 
+          {/* Web & streaming */}
+          <Section icon={<Globe size={15} />} title="Web &amp; streaming" desc="Live search and how replies appear">
+            <div className="rounded-xl border border-glass/[0.18] bg-glass/[0.11] backdrop-blur-2xl divide-y divide-glass/[0.12]">
+              <ToggleRow
+                icon={<Globe size={16} className="text-dim" />}
+                title="Web search"
+                desc="Let Nalu search the live web when it helps"
+                on={webSearch}
+                onToggle={toggleWeb}
+              />
+              <ToggleRow
+                icon={<Zap size={16} className="text-dim" />}
+                title="Stream replies"
+                desc={streaming ? 'Replies type out live as they generate' : 'Replies appear all at once when ready'}
+                on={streaming}
+                onToggle={toggleStream}
+              />
+            </div>
+          </Section>
+
           {/* Appearance */}
           <Section icon={<Palette size={15} />} title="Appearance" desc="Theme and visual style">
             <button
@@ -188,5 +212,26 @@ function Section({
       </div>
       {children}
     </section>
+  )
+}
+
+function ToggleRow({ icon, title, desc, on, onToggle }: { icon: React.ReactNode; title: string; desc: string; on: boolean; onToggle: () => void }) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-3.5">
+      <div className="w-9 h-9 rounded-lg bg-glass/5 flex items-center justify-center shrink-0">{icon}</div>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-ink">{title}</div>
+        <div className="text-xs text-dim">{desc}</div>
+      </div>
+      <button
+        onClick={onToggle}
+        role="switch"
+        aria-checked={on}
+        aria-label={title}
+        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${on ? 'bg-gold' : 'bg-glass/25'}`}
+      >
+        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+      </button>
+    </div>
   )
 }
