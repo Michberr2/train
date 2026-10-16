@@ -53,7 +53,7 @@ try {
       const hostname = url.hostname
       const response = (body, status = 200, type = 'application/json') => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status, headers: { 'content-type': type } })
       if (options.networkFailure) throw new Error('fixture network failure')
-      if (hostname === 'api.vercel.com') return response({ id: options.wrongMetadataId ? 'dpl_unexpected' : url.pathname.split('/').pop(), readyState: options.metadataNotReady ? 'ERROR' : 'READY', projectId: options.wrongProject ? 'prj_other' : 'prj_fixture', meta: { naluSourceCommit: options.wrongCommit ? '2'.repeat(40) : commit } }, options.metadataUnauthorized ? 401 : 200)
+      if (hostname === 'api.vercel.com') return response({ id: options.wrongMetadataId ? 'dpl_unexpected' : url.pathname.split('/').pop(), readyState: options.metadataNotReady ? 'ERROR' : 'READY', target: url.pathname.endsWith(deploymentId) && Object.hasOwn(options, 'candidateTarget') ? options.candidateTarget : 'production', projectId: options.wrongProject ? 'prj_other' : 'prj_fixture', meta: { naluSourceCommit: options.wrongCommit ? '2'.repeat(40) : commit } }, options.metadataUnauthorized ? 401 : 200)
       if (url.pathname === '/api/health') return response({ ok: options.badHealth !== hostname, checks: { db: { ok: true } }, config: { llmPrimary: true, llmModel: 'fixture' } })
       if (url.pathname === '/') return response('<!doctype html><script type="module" src="/assets/app.js"></script>', 200, 'text/html')
       if (url.pathname === '/assets/app.js') return response(options.wrongEntry === hostname ? 'wrong release' : 'verified app', 200, 'application/javascript')
@@ -86,6 +86,8 @@ try {
     ['metadata unauthorized', { metadataUnauthorized: true }, /cannot verify authenticated deployment metadata/, false],
     ['metadata identity mismatch', { wrongMetadataId: true }, /metadata deployment ID mismatch/, false],
     ['metadata state mismatch', { metadataNotReady: true }, /authenticated deployment state is not READY/, false],
+    ['preview environment candidate', { candidateTarget: 'preview' }, /not built with production environment settings/, false],
+    ['missing candidate environment', { candidateTarget: null }, /not built with production environment settings/, false],
     ['wrong source revision', { wrongCommit: true }, /checked source commit/, false],
     ['deployment not ready', { notReady: true }, /not READY/, false],
     ['candidate health', { badHealth: new URL(candidateUrl).host }, /health is degraded/, false],
@@ -125,6 +127,13 @@ try {
   await assert.rejects(release({ cwd: directory, publish: candidateUrl, ...unrelatedCandidate, log: () => {}, writeReceipt: false }), /checked source commit/)
   assert.equal(unrelatedCandidate.calls.filter(call => call.command === 'vercel' && call.args[0] === 'alias').length, 0)
   report.push('publication rejects an existing candidate from another commit before changing domains')
+  for (const mode of ['publish', 'target']) for (const candidateTarget of ['preview', null]) {
+    const wrongEnvironment = fixture({ candidateTarget })
+    await assert.rejects(release({ cwd: directory, [mode]: candidateUrl, ...wrongEnvironment, log: line => wrongEnvironment.logs.push(line), writeReceipt: false }), /not built with production environment settings/)
+    assert.equal(wrongEnvironment.calls.filter(call => call.command === 'vercel' && call.args[0] === 'alias').length, 0)
+    assert.ok(!wrongEnvironment.logs.some(line => line.startsWith('Live and verified:')))
+    report.push(`${mode === 'target' ? 'rollback' : 'publication'} rejects ${candidateTarget === null ? 'missing' : 'preview'} environment metadata even when the project and commit match`)
+  }
   await assert.rejects(release({ cwd: directory, publish: candidateUrl, target: candidateUrl, ...fixture(), writeReceipt: false }), /Choose publication or rollback/)
   report.push('ambiguous publication and rollback modes are rejected')
 

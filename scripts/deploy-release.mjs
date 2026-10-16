@@ -41,6 +41,7 @@ export async function verifyDeploymentMetadata(deploymentId, project, { fetchImp
   assert.equal(metadata.id, deploymentId, `${deploymentId}: metadata deployment ID mismatch`)
   assert.equal(metadata.projectId || metadata.project?.id, project.projectId, `${deploymentId}: wrong Vercel project`)
   assert.equal(metadata.readyState, 'READY', `${deploymentId}: authenticated deployment state is not READY`)
+  assert.equal(metadata.target, 'production', `${deploymentId}: deployment was not built with production environment settings`)
   // Retain only nonsecret identity fields; never persist raw deployment/env data.
   return { sourceCommit: metadata.meta?.naluSourceCommit }
 }
