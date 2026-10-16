@@ -1,0 +1,7 @@
+.scenery-reveal { animation: scenery-reveal .45s ease-out both; }
+.scenery-breeze { background: radial-gradient(ellipse at center,rgba(255,255,255,.16),transparent 60%); animation: scenery-breeze 4s ease-in-out infinite alternate; }
+.scenery-ball { animation: scenery-bounce 1.1s ease-in-out infinite alternate; }
+@keyframes scenery-reveal { from { opacity: 0; } to { opacity: 1; } }
+@keyframes scenery-breeze { from { transform: translateX(-12%); opacity: .35; } to { transform: translateX(12%); opacity: .8; } }
+@keyframes scenery-bounce { from { transform: translateY(0) scaleX(1.08); } to { transform: translateY(-18px) scaleX(.98); } }
+@media (prefers-reduced-motion: reduce) { .scenery-reveal,.scenery-breeze,.scenery-ball { animation: none; } }

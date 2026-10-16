@@ -1,18 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
-import { Search, Loader2, Star, MapPin, ExternalLink, Layers, Sparkles, Trash2, X, PanelLeftOpen } from 'lucide-react'
+import { useEffect, useLayoutEffect, useRef, useState, lazy, Suspense } from 'react'
+import { Search, Loader2, Star, MapPin, ExternalLink, Layers, Sparkles, Trash2, X, Boxes, Eye, EyeOff, Maximize2, Minimize2 } from 'lucide-react'
+import MapLayerControls from './MapLayerControls'
+import { isMapBackground, mapLayerOpacity, mapLayerZoomRange, readMapDisplay } from './mapLayerDisplay'
+
+const MapGlobe3D = lazy(() => import('./MapGlobe3D'))
 import { PARCEL_SVCS, parcelSvcFor, parcelFacts, permitSvcFor, queryPermitsNear, permitCities } from '../../lib/geoData'
 import { useTheme } from '../ThemeProvider'
+import { MapRequestScope, mapJson, mapPlaces, mapPlaceUrl, validMapPoint, mapHtml, savedMapLayers, type MapPlace as Place } from './mapRequests'
+import type { MapCameraRequest } from './MapGlobe3D'
 
 // Ploti-style real-estate map: AI/Places search, a stack of free open-source data
 // layers, multiple base maps, and drawing tools (polygons/areas/markers) you can
 // categorize. Drawn shapes persist. Parcel/zoning at national scale still needs a
 // paid provider (Regrid/ATTOM) — everything else here is free + open.
 
-type Place = {
-  name: string; address: string; lat: number | null; lng: number | null
-  rating: number | null; userRatings: number | null; priceLevel: number | null
-  types: string[]; placeId: string; openNow: boolean | null; photoUrl: string | null
-}
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type GMaps = any
 
@@ -24,21 +25,24 @@ function teardownMaps() {
 }
 function loadMaps(key: string): Promise<GMaps> {
   const w = window as unknown as { google?: { maps?: unknown } }
-  if (w.google?.maps) return Promise.resolve((w as { google: GMaps }).google)
+  if ((w.google?.maps as GMaps)?.Map) return Promise.resolve((w as { google: GMaps }).google)
   if (mapsPromise) return mapsPromise
   mapsPromise = new Promise<GMaps>((resolve, reject) => {
     const s = document.createElement('script')
+    const timer = window.setTimeout(() => fail(new Error('The map took too long to load. Please retry.')), 20_000)
+    const fail = (error: Error) => { window.clearTimeout(timer); s.remove(); reject(error) }
     s.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places,geometry`
     s.async = true; s.defer = true
     s.onload = async () => {
       const g = (window as unknown as { google?: GMaps }).google
       try { if (g?.maps?.importLibrary) await g.maps.importLibrary('maps') } catch { /* */ }
+      window.clearTimeout(timer)
       if (g?.maps?.Map) resolve(g)
-      else reject(new Error('Google Maps loaded but the Map class is unavailable — confirm "Maps JavaScript API" is enabled.'))
+      else fail(new Error('Google Maps loaded but the Map class is unavailable — confirm "Maps JavaScript API" is enabled.'))
     }
-    s.onerror = () => reject(new Error('Failed to load Google Maps — check the API key and that Maps JavaScript API is enabled.'))
+    s.onerror = () => fail(new Error('Failed to load Google Maps. Check your connection and retry.'))
     document.head.appendChild(s)
-  })
+  }).catch((error) => { mapsPromise = null; throw error })
   return mapsPromise
 }
 
@@ -99,7 +103,7 @@ const LAYER_CATS: { key: string; label: string }[] = [
   { key: 'nature', label: 'Nature & conservation' },
   { key: 'agriculture', label: 'Agriculture & soils' },
   { key: 'geology', label: 'Geology & energy' },
-  { key: 'infra', label: 'Infrastructure' },
+  { key: 'infra', label: 'Infrastructure & utilities' },
   { key: 'demographics', label: 'Demographics & society' },
   { key: 'imagery', label: 'Imagery & terrain' },
 ]
@@ -113,6 +117,9 @@ type LayerDef = {
   // "Showcase" view [lat, lng, zoom] for sparse/regional data: enabling the layer
   // from the panel jumps here so the button ALWAYS shows visible data.
   home?: [number, number, number]
+  // For kind:'feature' layers backed by an ArcGIS FeatureServer (url = …/FeatureServer/N):
+  // how to draw + label the queried features (lines/points/polys, click-through attrs).
+  feat?: { style?: 'line' | 'point' | 'poly'; color?: string; title?: string }
 }
 // Every entry below was endpoint-verified to serve live tiles (no API key).
 const LAYERS: LayerDef[] = [
@@ -300,6 +307,12 @@ const LAYERS: LayerDef[] = [
   { key: "nacei-solar-resource", label: "Solar Resource (GHI)", desc: "Solar resource potential, NSRDB PSM Global Horizontal Irradiance — North American Cooperation on Energy Information / NREL", cat: "infra", kind: "export", url: "https://geoappext.nrcan.gc.ca/arcgis/rest/services/NACEI/energy_resource_potential_of_north_america_en/MapServer", layers: "0", opacity: 0.7, minZoom: 4 },
   { key: "epa-solar-potential", label: "Solar Re-Power Sites", desc: "Solar renewable-energy potential on contaminated lands/landfills/mines — EPA RE-Powering America's Land (geopub.epa.gov OLEM/RePM)", cat: "infra", kind: "export", url: "https://geopub.epa.gov/ArcGIS/rest/services/OLEM/RePM/MapServer", layers: "0", opacity: 0.85, minZoom: 5 },
   { key: "epa-wind-potential", label: "Wind Re-Power Sites", desc: "Wind renewable-energy potential on contaminated lands/landfills/mines — EPA RE-Powering America's Land (geopub.epa.gov OLEM/RePM)", cat: "infra", kind: "export", url: "https://geopub.epa.gov/ArcGIS/rest/services/OLEM/RePM/MapServer", layers: "1", opacity: 0.85, minZoom: 5 },
+  // ---- Utilities: live, CLICKABLE FeatureServers (voltage/owner/operator on tap) — verified free 2026 ----
+  { key: "util-transmission", label: "Power lines (clickable)", desc: "High-voltage electric transmission lines with voltage & owner — HIFLD (DHS/Oak Ridge). Click a line for details.", cat: "infra", kind: "feature", url: "https://services1.arcgis.com/Hp6G80Pky0om7QvQ/arcgis/rest/services/Electric_Power_Transmission_Lines/FeatureServer/0", opacity: 1, minZoom: 8, home: [32.55, -116.9, 10], feat: { style: "line", color: "#f59e0b", title: "Transmission line" } },
+  { key: "util-substations", label: "Electric substations", desc: "Electric power substations (≥69kV) with name & max voltage — HIFLD. Click a point for details.", cat: "infra", kind: "feature", url: "https://services.arcgis.com/G4S1dGvn7PIgYd6Y/arcgis/rest/services/HIFLD_electric_power_substations/FeatureServer/0", opacity: 1, minZoom: 10, home: [39.86, -75.75, 11], feat: { style: "point", color: "#fbbf24", title: "Substation" } },
+  { key: "util-powerplants", label: "Power plants (clickable)", desc: "Electric generating plants by fuel type & capacity — EIA US Energy Atlas. Click a plant for details.", cat: "infra", kind: "feature", url: "https://services2.arcgis.com/FiaPA4ga0iQKduv3/arcgis/rest/services/Power_Plants_in_the_US/FeatureServer/0", opacity: 1, minZoom: 6, home: [39.5, -98.35, 6], feat: { style: "point", color: "#f97316", title: "Power plant" } },
+  { key: "hifld-gas-pipelines", label: "Gas pipelines", desc: "Natural-gas transmission pipelines with operator & status — EIA via US DOT. Click a line for details.", cat: "infra", kind: "feature", url: "https://geo.dot.gov/server/rest/services/Hosted/Natural_Gas_Pipelines_US_EIA/FeatureServer/0", opacity: 1, minZoom: 7, home: [29.76, -95.37, 8], feat: { style: "line", color: "#a855f7", title: "Gas pipeline" } },
+  { key: "hifld-cell-towers", label: "Cell towers", desc: "Cellular tower locations with licensee & structure type (FCC via HIFLD). Click a tower for details.", cat: "infra", kind: "feature", url: "https://services2.arcgis.com/FiaPA4ga0iQKduv3/ArcGIS/rest/services/Cellular_Towers_in_the_United_States/FeatureServer/0", opacity: 1, minZoom: 10, home: [39.95, -75.16, 12], feat: { style: "point", color: "#22d3ee", title: "Cell tower" } },
   { key: "hifld-transmission-subs", label: "Transmission + Substations", desc: "HIFLD electric transmission lines (by voltage) and substations (by max voltage), national US dataset rehosted on Rutgers ArcGIS", cat: "infra", kind: "export", url: "https://oceandata.rad.rutgers.edu/arcgis/rest/services/RenewableEnergy/HIFLD_Electric_SubstationsTransmissionLines/MapServer", layers: "0,1", opacity: 0.8, minZoom: 5 },
   { key: "boem-atlantic-energy", label: "Atlantic OCS Oil & Gas", desc: "Atlantic OCS oil & natural gas wells, lease blocks and planning areas — US BOEM (gis.boem.gov BOEM_BSEE/ATL_Layers, can be slow)", cat: "infra", kind: "export", url: "https://gis.boem.gov/arcgis/rest/services/BOEM_BSEE/ATL_Layers/MapServer", layers: "1,4,5", opacity: 0.7, minZoom: 5, home: [38, -74, 6] },
   { key: "usgs-transportation", label: "Roads, Rail & Trails", desc: "USGS The National Map - Transportation: roads, railroads, ferries, trails (national, Census/USGS-sourced)", cat: "infra", kind: "export", url: "https://carto.nationalmap.gov/arcgis/rest/services/transportation/MapServer", opacity: 0.85, minZoom: 5 },
@@ -361,7 +374,10 @@ function makeOverlay(g: GMaps, def: LayerDef): GMaps {
     name: def.label,
     tileSize: new g.maps.Size(256, 256),
     opacity: def.opacity,
+    minZoom: def.minZoom,
+    maxZoom: layerZoomCap(def),
     getTileUrl: (coord: { x: number; y: number }, zoom: number) => {
+      if (zoom < def.minZoom || zoom > layerZoomCap(def)) return ''
       const date = recentDateUTC()
       const sub = (u: string) =>
         u
@@ -481,6 +497,13 @@ const LAYER_KEYWORDS: { re: RegExp; key: string }[] = [
   { re: /\b(national parks?|\bnps\b)\b/i, key: 'nps-national-parks' },
   { re: /\b(tribal|reservations?|indian land|native land|aian)\b/i, key: 'tiger-tribal-reservations' },
   { re: /\b(true ?colou?r|live satellite|satellite imagery today|modis|viirs)\b/i, key: 'viirs-noaa20-truecolor' },
+  // ---- utilities / zoning / surveyor (the "infra + land" asks) ----
+  { re: /\b(utilit(y|ies)|power grid|the grid|electric grid)\b/i, key: 'nacei-transmission' },
+  { re: /\b(substations?|transformer|electrical substation)\b/i, key: 'util-substations' },
+  { re: /\b(pipelines?|gas line|oil pipeline|natural gas line)\b/i, key: 'hifld-gas-pipelines' },
+  { re: /\b(cell towers?|cell service|cellular|antenna|broadband|5g|coverage)\b/i, key: 'hifld-cell-towers' },
+  { re: /\b(zoning|zoned|land ?use|permitted use|entitlement)\b/i, key: 'nlcd-land-cover-2021' },
+  { re: /\b(surveyor|boundary survey|\bplat\b|survey lines?|section corners?)\b/i, key: 'plss' },
 ]
 // keyword → category (drives the color of an AI-drawn zone polygon).
 const CAT_KEYWORDS: { re: RegExp; key: string }[] = [
@@ -538,6 +561,7 @@ const MAP_KEYS = [
   (import.meta.env.VITE_GOOGLE_MAPS_KEY2 as string) || '',
 ].filter(Boolean)
 const SHAPES_KEY = 'nalu-map-shapes'
+const ACTIVE_KEY = 'nalu-map-active-layers' // layers you turned on persist + reload with the map
 
 export default function MapPanel() {
   const { isDark } = useTheme()
@@ -545,6 +569,7 @@ export default function MapPanel() {
   // keep Google's native imagery.
   const roadmapStyle = isDark ? DARK_STYLE : LIGHT_STYLE
   const [keyIdx, setKeyIdx] = useState(0)
+  const [mapAttempt, setMapAttempt] = useState(0)
   const key = MAP_KEYS[keyIdx] || ''
   const mapEl = useRef<HTMLDivElement>(null)
   const mapRef = useRef<GMaps>(null)
@@ -555,12 +580,43 @@ export default function MapPanel() {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Place[]>([])
   const [loading, setLoading] = useState(false)
+  const searchRequests = useRef(new MapRequestScope())
+  const layerRequests = useRef<Record<string, MapRequestScope>>({})
+  const layerIdleTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const [err, setErr] = useState('')
   const [ready, setReady] = useState(false)
   const [authErr, setAuthErr] = useState(false)
   const [sel, setSel] = useState<string | null>(null)
-  const [base, setBase] = useState('dark')
+  const initialDisplay = useRef(readMapDisplay())
+  const [base, setBase] = useState(initialDisplay.current.base)
+  const [opacity, setOpacity] = useState(initialDisplay.current.opacity)
+  const opacityRef = useRef(opacity)
+  const [layersHidden, setLayersHidden] = useState(false)
+  const [soloLayer, setSoloLayer] = useState<string | null>(null)
+  const displayRef = useRef({ hidden: false, solo: null as string | null })
+  const [viewZoom, setViewZoom] = useState(initialDisplay.current.view?.zoom ?? 6)
+  const [expandedMap, setExpandedMap] = useState(false)
+  const workspaceRef = useRef<HTMLDivElement>(null)
   const [active, setActive] = useState<Record<string, boolean>>({})
+  const activeRef = useRef<Record<string, boolean>>({})
+  const initialLayersRef = useRef<string[] | null>(null)
+  if (initialLayersRef.current === null) {
+    try { initialLayersRef.current = savedMapLayers(localStorage, ACTIVE_KEY, LAYERS.map((layer) => layer.key)) } catch { initialLayersRef.current = [] }
+  }
+  const setLayerActive = (lk: string, on: boolean) => {
+    activeRef.current = { ...activeRef.current, [lk]: on }
+    setActive(activeRef.current)
+  }
+  const layerScope = (lk: string) => layerRequests.current[lk] ||= new MapRequestScope()
+  const cancelLayerRequest = (lk: string) => {
+    layerRequests.current[lk]?.cancel()
+    clearTimeout(layerIdleTimers.current[lk])
+    delete layerIdleTimers.current[lk]
+  }
+  const scheduleLayerLoad = (lk: string, load: () => void) => {
+    cancelLayerRequest(lk)
+    layerIdleTimers.current[lk] = setTimeout(() => { delete layerIdleTimers.current[lk]; load() }, 220)
+  }
   const overlaysRef = useRef<Record<string, GMaps>>({})
   const parcelDataRef = useRef<GMaps>(null)
   const parcelIdleRef = useRef<GMaps>(null)
@@ -570,50 +626,137 @@ export default function MapPanel() {
   const permitIdleRef = useRef<GMaps>(null)
   const permitLoadRef = useRef(0)
   const [permitMsg, setPermitMsg] = useState('')
+  // Generic ArcGIS FeatureServer overlays (utilities: transmission, substations,
+  // pipelines, cell towers…) — one google.maps.Data + idle-query per active layer.
+  const featDataRef = useRef<Record<string, GMaps>>({})
+  const featIdleRef = useRef<Record<string, GMaps>>({})
+  const featLoadRef = useRef<Record<string, number>>({})
+  const [featMsg, setFeatMsg] = useState<Record<string, string>>({})
   const [coverageJump, setCoverageJump] = useState<{ label: string; lat: number; lng: number }[] | null>(null)
   const [showLayers, setShowLayers] = useState(false)
-  const [layerQuery, setLayerQuery] = useState('')
-  const [panelOpen, setPanelOpen] = useState(true)
+  const [panelOpen, setPanelOpen] = useState(() => window.innerWidth >= 1240)
+  const [compactPanels, setCompactPanels] = useState(false)
   const [answer, setAnswer] = useState('')
   type Comparison = { title: string; criteria: string[]; places: Array<{ name: string; lat: number; lng: number; scores: Record<string, number>; note?: string }>; winner?: string }
   const [comparison, setComparison] = useState<Comparison | null>(null)
+  // Keep the 2D map mounted for its saved layers and camera, but expose only the active renderer.
+  const [globe, setGlobe] = useState<{ lat: number; lng: number; zoom: number; cameraRequest?: MapCameraRequest } | null>(null)
+  const is3D = globe !== null
+  useLayoutEffect(() => { if (mapEl.current) mapEl.current.inert = is3D }, [is3D])
+  const moveGlobe = (cameraRequest: MapCameraRequest) => setGlobe((current) => current ? { ...current, cameraRequest } : current)
+  const fitGlobe = (bounds: GMaps, padding: number) => {
+    const sw = bounds.getSouthWest(), ne = bounds.getNorthEast()
+    const west = sw.lng(), east = ne.lng()
+    moveGlobe({ kind: 'bounds', bounds: [[west, sw.lat()], [east < west ? east + 360 : east, ne.lat()]], padding })
+  }
 
   useEffect(() => {
-    ;(window as unknown as { gm_authFailure?: () => void }).gm_authFailure = () => {
+    const host = window as unknown as { gm_authFailure?: () => void }
+    const previous = host.gm_authFailure
+    const onFailure = () => {
       if (keyIdx + 1 < MAP_KEYS.length) { teardownMaps(); setReady(false); setKeyIdx((i) => i + 1) }
       else setAuthErr(true)
     }
+    host.gm_authFailure = onFailure
+    return () => { if (host.gm_authFailure === onFailure) host.gm_authFailure = previous }
   }, [keyIdx])
 
   // ---- init map + manual drawing listeners ----
   useEffect(() => {
     if (!key) { setErr('Map key not configured (VITE_GOOGLE_MAPS_KEY).'); return }
     let alive = true
+    let sdk: GMaps
+    setErr(''); setReady(false); setAuthErr(false)
     loadMaps(key).then((g) => {
       if (!alive || !mapEl.current) return
+      sdk = g
+      const savedView = initialDisplay.current.view
       const map = new g.maps.Map(mapEl.current, {
-        center: { lat: 28.4, lng: -81.4 }, zoom: 6, clickableIcons: false,
-        styles: roadmapStyle, backgroundColor: isDark ? '#1c2230' : '#e9e5db', disableDoubleClickZoom: true,
-        mapTypeControl: false, streetViewControl: false, fullscreenControl: false, mapTypeId: 'roadmap',
+        center: savedView ? { lat: savedView.lat, lng: savedView.lng } : { lat: 28.4, lng: -81.4 }, zoom: savedView?.zoom ?? 6, clickableIcons: false,
+        styles: roadmapStyle, backgroundColor: isDark ? '#1c2230' : '#e9e5db', gestureHandling: 'greedy', isFractionalZoomEnabled: true,
+        mapTypeControl: false, streetViewControl: false, fullscreenControl: false, mapTypeId: 'roadmap', scaleControl: true,
       })
       mapRef.current = map
+      map.addListener('idle', () => {
+        setViewZoom(map.getZoom() ?? 6)
+        const c = map.getCenter()
+        if (c) { initialDisplay.current.view = { lat: c.lat(), lng: c.lng(), zoom: map.getZoom() ?? 6 }; saveDisplay() }
+      })
       infoRef.current = new g.maps.InfoWindow()
       // No manual drawing toolbar — Nalu draws polygons/lines/markers itself in
       // answer to map questions (see runSearch → drawAIShapes). Saved shapes from
       // earlier sessions still restore.
       restoreShapes(g, map)
       setReady(true)
-    }).catch((e) => setErr(e.message))
-    return () => { alive = false }
-  }, [key])
+    }).catch((e) => { if (alive) setErr(e.message) })
+    return () => {
+      alive = false
+      searchRequests.current.cancel()
+      Object.values(layerRequests.current).forEach((scope) => scope.cancel())
+      Object.values(layerIdleTimers.current).forEach(clearTimeout); layerIdleTimers.current = {}
+      ++permitLoadRef.current; ++parcelLoadRef.current
+      const g = sdk || (window as unknown as { google?: GMaps }).google
+      const detach = (item: GMaps) => { if (!item) return; g?.maps?.event?.clearInstanceListeners(item); item.setMap?.(null) }
+      ;[...markersRef.current, ...shapesRef.current, ...permitMarkersRef.current, parcelDataRef.current, ...Object.values(featDataRef.current), ...Object.values(acsDataRef.current).map((entry) => entry.data)].forEach(detach)
+      if (mapRef.current) g?.maps?.event?.clearInstanceListeners(mapRef.current)
+      mapRef.current?.overlayMapTypes?.clear()
+      infoRef.current?.close(); acsInfoRef.current?.close()
+      markersRef.current = []; shapesRef.current = []; aiShapesRef.current = []; permitMarkersRef.current = []
+      parcelDataRef.current = null; parcelIdleRef.current = null; permitIdleRef.current = null
+      featDataRef.current = {}; featIdleRef.current = {}; acsDataRef.current = {}; overlaysRef.current = {}
+      mapRef.current = null; infoRef.current = null; acsInfoRef.current = null
+      if (restoredLayersRef.current) initialLayersRef.current = Object.keys(activeRef.current).filter((lk) => activeRef.current[lk])
+      activeRef.current = {}; restoredLayersRef.current = false
+    }
+  }, [key, mapAttempt])
+
+  const saveDisplay = () => {
+    try { localStorage.setItem('nalu-map-display', JSON.stringify({ ...initialDisplay.current, opacity: opacityRef.current })) } catch { /* Preferences remain usable for this session. */ }
+  }
+  useEffect(() => { initialDisplay.current.base = base; saveDisplay() }, [base, opacity])
+  useEffect(() => {
+    if (!mapEl.current || !ready) return
+    const observer = new ResizeObserver(() => {
+      const g = (window as unknown as { google?: GMaps }).google
+      g?.maps?.event?.trigger?.(mapRef.current, 'resize')
+    })
+    observer.observe(mapEl.current)
+    return () => observer.disconnect()
+  }, [ready])
+  useLayoutEffect(() => {
+    const workspace = workspaceRef.current
+    if (!workspace) return
+    const measure = () => {
+      const compact = workspace.clientWidth < 1000
+      setCompactPanels(compact)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(workspace)
+    return () => observer.disconnect()
+  }, [])
+  useLayoutEffect(() => {
+    if (compactPanels && showLayers) setPanelOpen(false)
+  }, [compactPanels, showLayers])
+  useEffect(() => {
+    const escape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || globe) return
+      if (showLayers) setShowLayers(false)
+      else if (expandedMap) setExpandedMap(false)
+      else if (compactPanels) setPanelOpen(false)
+    }
+    document.addEventListener('keydown', escape)
+    return () => document.removeEventListener('keydown', escape)
+  }, [showLayers, expandedMap, globe, compactPanels])
+
 
   // ---- shapes persistence ----
   const saveShapes = () => {
     const g = (window as unknown as { google?: GMaps }).google
     const out = shapesRef.current.map((ov) => {
       if (ov.getPath) return { t: ov.getPaths ? 'polygon' : 'polyline', cat: ov.__cat, path: ov.getPath().getArray().map((p: GMaps) => ({ lat: p.lat(), lng: p.lng() })) }
-      if (ov.getBounds) { const b = ov.getBounds(); return { t: 'rectangle', cat: ov.__cat, ne: { lat: b.getNorthEast().lat(), lng: b.getNorthEast().lng() }, sw: { lat: b.getSouthWest().lat(), lng: b.getSouthWest().lng() } } }
       if (ov.getRadius) { const c = ov.getCenter(); return { t: 'circle', cat: ov.__cat, lat: c.lat(), lng: c.lng(), r: ov.getRadius() } }
+      if (ov.getBounds) { const b = ov.getBounds(); return { t: 'rectangle', cat: ov.__cat, ne: { lat: b.getNorthEast().lat(), lng: b.getNorthEast().lng() }, sw: { lat: b.getSouthWest().lat(), lng: b.getSouthWest().lng() } } }
       const p = ov.getPosition(); return { t: 'marker', cat: ov.__cat, lat: p.lat(), lng: p.lng() }
     })
     try { localStorage.setItem(SHAPES_KEY, JSON.stringify(out)) } catch { /* */ }
@@ -622,15 +765,17 @@ export default function MapPanel() {
   const restoreShapes = (g: GMaps, map: GMaps) => {
     let saved: GMaps[] = []
     try { saved = JSON.parse(localStorage.getItem(SHAPES_KEY) || '[]') } catch { /* */ }
-    for (const s of saved) {
+    for (const s of Array.isArray(saved) ? saved.slice(0, 300) : []) {
+      if (!s || typeof s !== 'object') continue
       const color = CATEGORIES.find((c) => c.key === s.cat)?.color || GOLD
       const opt = { fillColor: color, strokeColor: color, fillOpacity: 0.18, strokeWeight: 2, map }
       let ov: GMaps
-      if (s.t === 'polygon') ov = new g.maps.Polygon({ ...opt, paths: s.path })
-      else if (s.t === 'polyline') ov = new g.maps.Polyline({ ...opt, path: s.path, fillOpacity: 0 })
-      else if (s.t === 'rectangle') ov = new g.maps.Rectangle({ ...opt, bounds: { north: s.ne.lat, east: s.ne.lng, south: s.sw.lat, west: s.sw.lng } })
-      else if (s.t === 'circle') ov = new g.maps.Circle({ ...opt, center: { lat: s.lat, lng: s.lng }, radius: s.r })
-      else ov = new g.maps.Marker({ position: { lat: s.lat, lng: s.lng }, map })
+      if (s.t === 'polygon' && Array.isArray(s.path) && s.path.length >= 3 && s.path.every(validMapPoint)) ov = new g.maps.Polygon({ ...opt, paths: s.path })
+      else if (s.t === 'polyline' && Array.isArray(s.path) && s.path.length >= 2 && s.path.every(validMapPoint)) ov = new g.maps.Polyline({ ...opt, path: s.path, fillOpacity: 0 })
+      else if (s.t === 'rectangle' && validMapPoint(s.ne) && validMapPoint(s.sw)) ov = new g.maps.Rectangle({ ...opt, bounds: { north: s.ne.lat, east: s.ne.lng, south: s.sw.lat, west: s.sw.lng } })
+      else if (s.t === 'circle' && validMapPoint({ lat: s.lat, lng: s.lng }) && Number.isFinite(s.r) && s.r > 0) ov = new g.maps.Circle({ ...opt, center: { lat: s.lat, lng: s.lng }, radius: s.r })
+      else if (s.t === 'marker' && validMapPoint(s)) ov = new g.maps.Marker({ position: { lat: s.lat, lng: s.lng }, map })
+      else continue
       ov.__cat = s.cat
       shapesRef.current.push(ov)
     }
@@ -644,6 +789,7 @@ export default function MapPanel() {
   // The trashcan: undo everything on the map — all active data layers AND drawn
   // shapes. (clearLayers is defined below; both are in scope by click time.)
   const clearMap = () => {
+    clearSearch()
     clearLayers()
     clearShapes()
     clearAIShapes()
@@ -656,37 +802,19 @@ export default function MapPanel() {
     const b = BASES.find((x) => x.key === base) || BASES[0]
     mapRef.current.setMapTypeId(b.gType)
     // Satellite/terrain keep native imagery; roadmap bases follow the theme.
-    const styled = b.gType === 'roadmap'
+    const styled = b.gType === 'roadmap' && base !== 'streets'
     mapRef.current.setOptions({ styles: styled ? roadmapStyle : [] })
   }, [base, ready, roadmapStyle])
 
-  // Frame the view so a just-enabled layer is actually VISIBLE.
-  //  'toggle' (layer button): sparse/regional layers jump to their guaranteed-data
-  //           home view; everything else nudges the zoom into the drawing range.
-  //  'auto'   (AI/keyword enable): only jump home when the current view can't
-  //           render the layer at all; otherwise gently nudge.
-  //  'none'   (AI provided its own center/zoom): leave the view alone.
+  // Layer switches preserve the area being studied. Navigation is an explicit
+  // action in the layer card (zoom here or explore a regional example).
   const frameLayer = (def: LayerDef, mode: 'toggle' | 'auto' | 'none') => {
     const map = mapRef.current
-    if (!map || mode === 'none') return
+    if (!map || mode !== 'auto') return
     const cap = layerZoomCap(def)
     const cur = map.getZoom() ?? 4
-    if (def.home && (mode === 'toggle' || cur < def.minZoom)) {
-      map.panTo({ lat: def.home[0], lng: def.home[1] })
-      map.setZoom(Math.min(def.home[2], cap))
-      return
-    }
-    if (def.opacity >= 1) {
-      // A basemap renders at every zoom — only clamp to its floor/ceiling.
-      if (cur < def.minZoom) map.setZoom(def.minZoom)
-      else if (cur > cap) map.setZoom(cap)
-      return
-    }
-    // Frame a DATA overlay where it's clearly visible: zoom IN if we're too far
-    // out for it to render, and zoom OUT for broad/national layers when we're too
-    // deep to see the pattern — so toggling any layer immediately shows it working.
-    const target = Math.min(Math.max(6, Math.min(17, def.minZoom + 1)), cap)
-    if (Math.abs(cur - target) > 1) map.setZoom(target)
+    if (cur < def.minZoom) map.setZoom(def.minZoom)
+    else if (cur > cap) map.setZoom(cap)
   }
 
   // ---- ACS choropleths (live Census data drawn as colored polygons) --------
@@ -694,6 +822,34 @@ export default function MapPanel() {
   // visible and correct at EVERY zoom height. Click any area for its value.
   const acsDataRef = useRef<Record<string, { data: GMaps; listener: GMaps | null; seq: number }>>({})
   const acsInfoRef = useRef<GMaps | null>(null)
+  const displayOpacity = (def: LayerDef) => mapLayerOpacity(def, opacityRef.current, displayRef.current.hidden, displayRef.current.solo)
+  const applyDataDisplay = (data: GMaps, def: LayerDef) => {
+    const style = data.__naluStyle
+    data.setStyle((feature: GMaps) => {
+      const original = typeof style === 'function' ? style(feature) : style || {}
+      const amount = displayOpacity(def)
+      const scale = amount / (def.opacity || 1)
+      return { ...original, visible: amount > 0 && original.visible !== false, clickable: amount > 0 && original.clickable !== false,
+        fillOpacity: (original.fillOpacity ?? 0.1) * scale, strokeOpacity: Math.min(1, (original.strokeOpacity ?? 1) * scale),
+        ...(original.icon ? { icon: { ...original.icon, fillOpacity: Math.min(1, (original.icon.fillOpacity ?? 1) * scale), strokeOpacity: Math.min(1, scale) } } : {}) }
+    })
+  }
+  const setDataDisplay = (data: GMaps, def: LayerDef, style: GMaps) => { data.__naluStyle = style; applyDataDisplay(data, def) }
+  const refreshLayerDisplay = () => {
+    LAYERS.filter(l => activeRef.current[l.key]).forEach(def => {
+      overlaysRef.current[def.key]?.setOpacity(displayOpacity(def))
+      const data = acsDataRef.current[def.key]?.data || featDataRef.current[def.key] || (def.key === 'parcels' ? parcelDataRef.current : null)
+      if (data) applyDataDisplay(data, def)
+    })
+    const permits = LAYERS.find(l => l.key === 'permits')!
+    permitMarkersRef.current.forEach(marker => { marker.setOpacity?.(displayOpacity(permits)); marker.setVisible?.(displayOpacity(permits) > 0) })
+  }
+  const updateOpacity = (key: string, value: number) => { opacityRef.current = { ...opacityRef.current, [key]: value }; setOpacity(opacityRef.current); refreshLayerDisplay() }
+  const updateSolo = (key: string | null) => { displayRef.current = { hidden: false, solo: key }; setLayersHidden(false); setSoloLayer(key); refreshLayerDisplay() }
+  const updateHidden = (hidden: boolean) => { displayRef.current.hidden = hidden; setLayersHidden(hidden); refreshLayerDisplay() }
+  const removeBackgrounds = (except?: string) => {
+    LAYERS.filter(l => isMapBackground(l) && l.key !== except && activeRef.current[l.key]).forEach(l => toggleLayer(l.key))
+  }
   const acsLevelFor = (zoom: number) => (zoom < 7 ? 0 : zoom < 11 ? 1 : 2)
   const ACS_RAMP = ['#f5ead7', '#e8cf9f', '#d4ab62', '#b57f35', '#8a5a1d'] // brand-gold ramp
   const fmtAcs = (v: number, fmt: string) =>
@@ -714,19 +870,21 @@ export default function MapPanel() {
     const url =
       `https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/${service}/FeatureServer/${lvl}/query` +
       `?geometry=${sw.lng()},${sw.lat()},${ne.lng()},${ne.lat()}&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326` +
-      `&spatialRel=esriSpatialRelIntersects&outFields=${field},NAME&returnGeometry=true&geometryPrecision=4&resultRecordCount=2000&f=geojson`
+      `&spatialRel=esriSpatialRelIntersects&outFields=${field},NAME${fmt === 'density' ? ',ALAND' : ''}&returnGeometry=true&geometryPrecision=4&resultRecordCount=2000&f=geojson`
+    const scope = layerScope(lk)
+    const request = scope.start(20_000)
     try {
-      const r = await fetch(url)
-      const gj = (await r.json()) as { features?: Array<{ properties?: Record<string, unknown> }> }
-      if (seq !== entry.seq || !acsDataRef.current[lk]) return // superseded / disabled
+      const gj = await mapJson(await fetch(url, { signal: request.signal })) as { features?: Array<{ properties?: Record<string, unknown> }> }
+      if (!scope.active(request) || seq !== entry.seq || acsDataRef.current[lk] !== entry) return
+      if (!Array.isArray(gj.features)) throw new Error('Invalid Census response')
       const feats = gj.features || []
       // quantile breaks over the visible values
       const vals = feats
         .map((f) => {
           const raw = Number(f.properties?.[field])
           if (fmt === 'density') {
-            const area = Number((f.properties as Record<string, unknown>)?.Shape__Area)
-            return area > 0 ? raw / (area / 2.59e6) : NaN
+            const area = Number((f.properties as Record<string, unknown>)?.ALAND)
+            return area > 0 ? raw / (area / 2_589_988.110336) : NaN
           }
           return raw
         })
@@ -739,70 +897,76 @@ export default function MapPanel() {
       for (const f of added as GMaps[]) {
         let v = Number(f.getProperty(field))
         if (fmt === 'density') {
-          const area = Number(f.getProperty('Shape__Area'))
-          v = area > 0 ? v / (area / 2.59e6) : NaN
+          const area = Number(f.getProperty('ALAND'))
+          v = area > 0 ? v / (area / 2_589_988.110336) : NaN
         }
         f.setProperty('__v', v)
       }
-      entry.data.setStyle((f: GMaps) => {
+      setDataDisplay(entry.data, def, (f: GMaps) => {
         const v = Number(f.getProperty('__v'))
         if (!isFinite(v) || v <= 0) return { visible: false }
         let i = 0
         while (i < 4 && v > breaks[i]) i++
         return { fillColor: ACS_RAMP[i], fillOpacity: def.opacity, strokeColor: '#8a5a1d', strokeOpacity: 0.35, strokeWeight: 0.5, clickable: true }
       })
+      setFeatMsg((messages) => ({ ...messages, [lk]: `${def.label}: ${feats.length} areas in view` }))
     } catch {
-      /* transient — next idle retries */
-    }
+      if (scope.owns(request)) setFeatMsg((messages) => ({ ...messages, [lk]: `${def.label} unavailable — pan to retry` }))
+    } finally { scope.finish(request) }
   }
   const enableAcs = (lk: string) => {
     const g = (window as unknown as { google?: GMaps }).google
     const map = mapRef.current
     const def = LAYERS.find((l) => l.key === lk)
-    if (!g || !map || !def?.acs) return
+    if (!g || !map || !def?.acs || acsDataRef.current[lk]) return
     const data = new g.maps.Data({ map })
     if (!acsInfoRef.current) acsInfoRef.current = new g.maps.InfoWindow()
     data.addListener('click', (e: GMaps) => {
       const v = Number(e.feature.getProperty('__v'))
       const name = e.feature.getProperty('NAME')
       if (isFinite(v) && acsInfoRef.current) {
-        acsInfoRef.current.setContent(`<div style="font:12px system-ui;color:#111"><b>${name || ''}</b><br/>${def.label}: <b>${fmtAcs(v, def.acs!.fmt)}</b></div>`)
+        acsInfoRef.current.setContent(`<div style="font:12px system-ui;color:#111"><b>${mapHtml(name)}</b><br/>${def.label}: <b>${fmtAcs(v, def.acs!.fmt)}</b></div>`)
         acsInfoRef.current.setPosition(e.latLng)
         acsInfoRef.current.open({ map })
       }
     })
-    const listener = map.addListener('idle', () => void loadAcs(lk))
+    const listener = map.addListener('idle', () => scheduleLayerLoad(lk, () => void loadAcs(lk)))
     acsDataRef.current[lk] = { data, listener, seq: 0 }
     void loadAcs(lk)
   }
   const disableAcs = (lk: string) => {
+    cancelLayerRequest(lk)
     const g = (window as unknown as { google?: GMaps }).google
     const entry = acsDataRef.current[lk]
     if (!entry) return
     entry.data.setMap(null)
     if (entry.listener && g) g.maps.event.removeListener(entry.listener)
     delete acsDataRef.current[lk]
+    setFeatMsg((messages) => { const next = { ...messages }; delete next[lk]; return next })
   }
 
   const toggleLayer = (lk: string) => {
     const g = (window as unknown as { google?: GMaps }).google
     if (!g || !mapRef.current) return
     const def = LAYERS.find((l) => l.key === lk)!
-    const on = !active[lk]
+    const on = !activeRef.current[lk]
+    if (on && isMapBackground(def)) removeBackgrounds(lk)
+    if (!on && displayRef.current.solo === lk) updateSolo(null)
     if (def.kind === 'feature') {
-      setActive((a) => ({ ...a, [lk]: on }))
-      if (lk === 'permits') { if (on) enablePermits(); else disablePermits() }
+      setLayerActive(lk, on)
+      if (def.url) { if (on) { enableFeatureLayer(def); frameLayer(def, 'toggle') } else disableFeatureLayer(lk) }
+      else if (lk === 'permits') { if (on) enablePermits(); else disablePermits() }
       else if (on) enableParcels(); else disableParcels()
       return
     }
     if (def.kind === 'acs') {
-      setActive((a) => ({ ...a, [lk]: on }))
+      setLayerActive(lk, on)
       if (on) { enableAcs(lk); frameLayer(def, 'toggle') } else disableAcs(lk)
       return
     }
-    setActive((a) => ({ ...a, [lk]: on }))
+    setLayerActive(lk, on)
     if (on) {
-      const ov = makeOverlay(g, def)
+      const ov = makeOverlay(g, { ...def, opacity: displayOpacity(def) })
       overlaysRef.current[lk] = ov
       // opaque basemaps go to the bottom; transparent data overlays stack on top.
       if (def.opacity >= 1) mapRef.current.overlayMapTypes.insertAt(0, ov)
@@ -818,28 +982,67 @@ export default function MapPanel() {
   // Turn a layer on if it isn't already (used by the AI command). Returns the
   // layer label when it newly enabled one, else ''.
   const enableLayer = (lk: string, frame: 'auto' | 'none' = 'auto'): string => {
-    if (active[lk]) return ''
+    if (activeRef.current[lk]) return ''
     const g = (window as unknown as { google?: GMaps }).google
     if (!g || !mapRef.current) return ''
     const def = LAYERS.find((l) => l.key === lk)
     if (!def) return ''
-    if (def.kind === 'feature') { setActive((a) => ({ ...a, [lk]: true })); if (lk === 'permits') enablePermits(); else enableParcels(); return def.label }
-    if (def.kind === 'acs') { setActive((a) => ({ ...a, [lk]: true })); enableAcs(lk); frameLayer(def, frame); return def.label }
-    const ov = makeOverlay(g, def)
+    if (isMapBackground(def)) removeBackgrounds(lk)
+    if (def.kind === 'feature') {
+      setLayerActive(lk, true)
+      if (def.url) { enableFeatureLayer(def); frameLayer(def, frame) }
+      else if (lk === 'permits') enablePermits(); else enableParcels()
+      return def.label
+    }
+    if (def.kind === 'acs') { setLayerActive(lk, true); enableAcs(lk); frameLayer(def, frame); return def.label }
+    const ov = makeOverlay(g, { ...def, opacity: displayOpacity(def) })
     overlaysRef.current[lk] = ov
     if (def.opacity >= 1) mapRef.current.overlayMapTypes.insertAt(0, ov)
     else mapRef.current.overlayMapTypes.push(ov)
     frameLayer(def, frame)
-    setActive((a) => ({ ...a, [lk]: true }))
+    setLayerActive(lk, true)
     return def.label
   }
-  // Pan + zoom the map to a coverage location (the idle listener then loads data).
-  const jumpTo = (lat: number, lng: number, zoom = 15) => {
-    if (!mapRef.current) return
-    mapRef.current.panTo({ lat, lng }); mapRef.current.setZoom(zoom)
+  // ---- active-layer persistence: the layers you turn on are REMEMBERED and
+  // re-applied when you return, so a map you built (utilities, zoning, parcels…)
+  // stays built — "store it and call it" without re-asking. ----
+  useEffect(() => {
+    if (!restoredLayersRef.current) return
+    try { localStorage.setItem(ACTIVE_KEY, JSON.stringify(Object.keys(active).filter((k) => active[k]))) } catch { /* */ }
+  }, [active])
+  const restoredLayersRef = useRef(false)
+  useEffect(() => {
+    if (!ready || restoredLayersRef.current) return
+    restoredLayersRef.current = true
+    const saved = initialLayersRef.current || []
+    // frame 'none' so restoring many layers doesn't fight over the viewport
+    saved.filter((k) => LAYERS.some((l) => l.key === k)).forEach((k) => enableLayer(k, 'none'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready])
+
+  // One navigation request: let the map pan naturally, without a chain of
+  // forced zoom steps that competes with dragging and reloads every data layer.
+  const flyTo = (lat: number, lng: number, finalZoom = 15) => {
+    const map = mapRef.current
+    if (!map) return
+    moveGlobe({ kind: 'point', lat, lng, zoom: finalZoom })
+    const target = { lat, lng }
+    map.setZoom(finalZoom)
+    map.panTo(target)
+  }
+  const jumpTo = (lat: number, lng: number, zoom = 15) => flyTo(lat, lng, zoom)
+
+  // Open the real 3D globe (MapLibre) centered on the current Google-map view.
+  const openGlobe = () => {
+    const map = mapRef.current
+    const c = map?.getCenter?.()
+    setGlobe({ lat: c ? c.lat() : 28.4, lng: c ? c.lng() : -81.4, zoom: (map?.getZoom?.() ?? 12) as number })
   }
   // ---- Property parcels: live public-records overlay (geometry + attributes) ----
   const loadParcels = () => {
+    const scope = layerScope('parcels')
+    scope.cancel()
+    const id = ++parcelLoadRef.current
     const g = (window as unknown as { google?: GMaps }).google
     const map = mapRef.current
     const data = parcelDataRef.current
@@ -851,7 +1054,7 @@ export default function MapPanel() {
     if (!svc) { data.forEach((f: GMaps) => data.remove(f)); setParcelMsg(`Parcels are live in ${PARCEL_SVCS.length} states`); setCoverageJump(PARCEL_JUMPS); return }
     setCoverageJump(null)
     if (map.getZoom() < 15) { data.forEach((f: GMaps) => data.remove(f)); setParcelMsg(`Zoom in closer to load ${svc.name} parcels`); return }
-    const id = ++parcelLoadRef.current
+    const request = scope.start(20_000)
     setParcelMsg(`Loading ${svc.name} parcels…`)
     const qs = new URLSearchParams({
       where: '1=1', geometry: `${sw.lng()},${sw.lat()},${ne.lng()},${ne.lat()}`,
@@ -859,39 +1062,42 @@ export default function MapPanel() {
       spatialRel: 'esriSpatialRelIntersects', outFields: '*', resultRecordCount: '700',
       returnGeometry: 'true', f: 'geojson',
     })
-    fetch(`${svc.url}/query?${qs}`)
-      .then((r) => r.json())
+    fetch(`${svc.url}/query?${qs}`, { signal: request.signal })
+      .then(mapJson)
       .then((gj) => {
-        if (id !== parcelLoadRef.current || !parcelDataRef.current) return
+        if (!scope.active(request) || id !== parcelLoadRef.current || parcelDataRef.current !== data) return
+        if (!Array.isArray(gj.features)) throw new Error('Invalid parcel response')
         data.forEach((f: GMaps) => data.remove(f))
         const n = (gj.features || []).length
         if (n) { try { data.addGeoJson(gj) } catch { /* skip bad geometry */ } }
         setParcelMsg(n ? `${svc.name}: ${n} parcels — click one for owner & assessment` : `No parcels in view (${svc.name})`)
       })
-      .catch(() => { if (id === parcelLoadRef.current) setParcelMsg(`${svc.name} parcel service is busy — pan to retry`) })
+      .catch(() => { if (scope.owns(request)) setParcelMsg(`${svc.name} parcel service is busy — pan to retry`) })
+      .finally(() => scope.finish(request))
   }
   const enableParcels = () => {
     const g = (window as unknown as { google?: GMaps }).google
     if (!g || !mapRef.current) return
     if (!parcelDataRef.current) {
       const data = new g.maps.Data({ map: mapRef.current })
-      data.setStyle({ strokeColor: GOLD, strokeWeight: 1.1, fillColor: GOLD, fillOpacity: 0.05 })
+      setDataDisplay(data, LAYERS.find(l => l.key === 'parcels')!, { strokeColor: '#f0c77e', strokeWeight: 1.6, fillColor: GOLD, fillOpacity: 0.05 })
       data.addListener('click', (e: { feature: GMaps; latLng: GMaps }) => {
         const props: Record<string, unknown> = {}
         e.feature.forEachProperty((v: unknown, k: string) => { props[k] = v })
         const facts = parcelFacts(props)
         const rows = facts.length
-          ? facts.map((f) => `<div style="font-size:11px;margin-top:2px"><span style="color:#888">${f.label}:</span> <b>${f.value}</b></div>`).join('')
+          ? facts.map((f) => `<div style="font-size:11px;margin-top:2px"><span style="color:#888">${mapHtml(f.label)}:</span> <b>${mapHtml(f.value)}</b></div>`).join('')
           : '<div style="font-size:11px;color:#888">No public attributes on this parcel</div>'
         infoRef.current.setContent(`<div style="font-family:Inter,sans-serif;max-width:250px;color:#111"><div style="font-weight:600;font-size:12px;margin-bottom:3px">Parcel</div>${rows}</div>`)
         infoRef.current.setPosition(e.latLng); infoRef.current.open(mapRef.current)
       })
       parcelDataRef.current = data
     }
-    if (!parcelIdleRef.current) parcelIdleRef.current = mapRef.current.addListener('idle', loadParcels)
+    if (!parcelIdleRef.current) parcelIdleRef.current = mapRef.current.addListener('idle', () => scheduleLayerLoad('parcels', loadParcels))
     loadParcels()
   }
   const disableParcels = () => {
+    cancelLayerRequest('parcels'); ++parcelLoadRef.current
     const g = (window as unknown as { google?: GMaps }).google
     if (parcelIdleRef.current && g) { g.maps.event.removeListener(parcelIdleRef.current); parcelIdleRef.current = null }
     if (parcelDataRef.current) {
@@ -901,9 +1107,80 @@ export default function MapPanel() {
     setParcelMsg(''); setCoverageJump(null)
   }
 
+  // ---- Generic FeatureServer overlay: query the features in view and draw them.
+  // Powers the utilities (transmission lines, substations, pipelines, cell towers)
+  // and works for ANY free ArcGIS FeatureServer, with click-through attributes. ----
+  const loadFeatureLayer = (def: LayerDef) => {
+    const scope = layerScope(def.key)
+    scope.cancel()
+    const id = (featLoadRef.current[def.key] = (featLoadRef.current[def.key] || 0) + 1)
+    const g = (window as unknown as { google?: GMaps }).google
+    const map = mapRef.current
+    const data = featDataRef.current[def.key]
+    if (!g || !map || !data) return
+    const b = map.getBounds(); if (!b) return
+    if (map.getZoom() < def.minZoom) { data.forEach((f: GMaps) => data.remove(f)); setFeatMsg((m) => ({ ...m, [def.key]: `Zoom in to load ${def.label}` })); return }
+    const sw = b.getSouthWest(), ne = b.getNorthEast()
+    const request = scope.start(20_000)
+    setFeatMsg((m) => ({ ...m, [def.key]: `Loading ${def.label}…` }))
+    const qs = new URLSearchParams({
+      where: '1=1', geometry: `${sw.lng()},${sw.lat()},${ne.lng()},${ne.lat()}`,
+      geometryType: 'esriGeometryEnvelope', inSR: '4326', outSR: '4326',
+      spatialRel: 'esriSpatialRelIntersects', outFields: '*', resultRecordCount: '1000',
+      returnGeometry: 'true', f: 'geojson',
+    })
+    fetch(`${def.url}/query?${qs}`, { signal: request.signal })
+      .then(mapJson)
+      .then((gj) => {
+        if (!scope.active(request) || id !== featLoadRef.current[def.key] || featDataRef.current[def.key] !== data) return
+        if (!Array.isArray(gj.features)) throw new Error('Invalid layer response')
+        data.forEach((f: GMaps) => data.remove(f))
+        const n = (gj.features || []).length
+        if (n) { try { data.addGeoJson(gj) } catch { /* skip bad geometry */ } }
+        setFeatMsg((m) => ({ ...m, [def.key]: n ? `${def.label}: ${n} in view — click one for details` : `No ${def.label} in this view` }))
+      })
+      .catch(() => { if (scope.owns(request)) setFeatMsg((m) => ({ ...m, [def.key]: `${def.label} service busy — pan to retry` })) })
+      .finally(() => scope.finish(request))
+  }
+  const enableFeatureLayer = (def: LayerDef) => {
+    const g = (window as unknown as { google?: GMaps }).google
+    if (!g || !mapRef.current) return
+    if (!featDataRef.current[def.key]) {
+      const color = def.feat?.color || GOLD
+      const isLine = def.feat?.style === 'line'
+      const data = new g.maps.Data({ map: mapRef.current })
+      setDataDisplay(data, def, (feature: GMaps) => {
+        const gt = String(feature.getGeometry?.()?.getType?.() || '')
+        if (gt.includes('Point')) return { icon: { path: g.maps.SymbolPath.CIRCLE, scale: 4.5, fillColor: color, fillOpacity: 0.95, strokeColor: '#0b1320', strokeWeight: 1 } }
+        return { strokeColor: color, strokeWeight: isLine ? 2 : 1.3, fillColor: color, fillOpacity: 0.06 }
+      })
+      data.addListener('click', (e: { feature: GMaps; latLng: GMaps }) => {
+        const entries: [string, string][] = []
+        e.feature.forEachProperty((v: unknown, k: string) => { const s = v == null ? '' : String(v).trim(); if (s && s !== 'null' && !/^shape/i.test(k)) entries.push([k, s]) })
+        const rows = entries.slice(0, 8).map(([k, v]) => `<div style="font-size:11px;margin-top:2px"><span style="color:#888">${mapHtml(k)}:</span> <b>${mapHtml(v.slice(0, 44))}</b></div>`).join('') || '<div style="font-size:11px;color:#888">No public attributes</div>'
+        infoRef.current.setContent(`<div style="font-family:Inter,sans-serif;max-width:250px;color:#111"><div style="font-weight:600;font-size:12px;margin-bottom:3px">${def.feat?.title || def.label}</div>${rows}</div>`)
+        infoRef.current.setPosition(e.latLng); infoRef.current.open(mapRef.current)
+      })
+      featDataRef.current[def.key] = data
+    }
+    if (!featIdleRef.current[def.key]) featIdleRef.current[def.key] = mapRef.current.addListener('idle', () => scheduleLayerLoad(def.key, () => loadFeatureLayer(def)))
+    loadFeatureLayer(def)
+  }
+  const disableFeatureLayer = (lk: string) => {
+    cancelLayerRequest(lk)
+    const g = (window as unknown as { google?: GMaps }).google
+    if (featIdleRef.current[lk] && g) { g.maps.event.removeListener(featIdleRef.current[lk]); delete featIdleRef.current[lk] }
+    const data = featDataRef.current[lk]
+    if (data) { data.forEach((f: GMaps) => data.remove(f)); data.setMap(null); delete featDataRef.current[lk] }
+    setFeatMsg((m) => { const n = { ...m }; delete n[lk]; return n })
+  }
+
   // ---- Building permits: live city open-data filings (pre-design → construction) ----
   const clearPermitMarkers = () => { permitMarkersRef.current.forEach((m) => m.setMap(null)); permitMarkersRef.current = [] }
   const loadPermits = async () => {
+    const scope = layerScope('permits')
+    scope.cancel()
+    const id = ++permitLoadRef.current
     const g = (window as unknown as { google?: GMaps }).google
     const map = mapRef.current
     if (!g || !map) return
@@ -912,10 +1189,14 @@ export default function MapPanel() {
     if (!permitSvcFor(c.lng(), c.lat())) { clearPermitMarkers(); setPermitMsg(`Permits are live in ${permitCities()}`); setCoverageJump(PERMIT_JUMPS); return }
     setCoverageJump(null)
     if (map.getZoom() < 13) { clearPermitMarkers(); setPermitMsg('Zoom in closer to load permits'); return }
-    const id = ++permitLoadRef.current
+    const request = scope.start(20_000)
     setPermitMsg('Loading permits…')
-    const res = await queryPermitsNear(c.lat(), c.lng(), 60)
-    if (id !== permitLoadRef.current) return
+    const res = await queryPermitsNear(c.lat(), c.lng(), 60, request.signal)
+    if (!scope.active(request) || id !== permitLoadRef.current || mapRef.current !== map) {
+      if (scope.owns(request)) { setPermitMsg('Permit service took too long — pan to retry'); scope.finish(request) }
+      return
+    }
+    scope.finish(request)
     clearPermitMarkers()
     if (res.error) { setPermitMsg(res.error); return }
     let n = 0
@@ -924,11 +1205,12 @@ export default function MapPanel() {
       n++
       const mk = new g.maps.Marker({
         position: { lat: p.lat, lng: p.lng }, map,
+        opacity: displayOpacity(LAYERS.find(l => l.key === 'permits')!), visible: displayOpacity(LAYERS.find(l => l.key === 'permits')!) > 0,
         icon: { path: g.maps.SymbolPath.CIRCLE, scale: 5, fillColor: '#5b9bff', fillOpacity: 0.95, strokeColor: '#0b1320', strokeWeight: 1 },
       })
       mk.addListener('click', () => {
-        const rows = p.facts.map((f) => `<div style="font-size:11px;margin-top:2px"><span style="color:#888">${f.label}:</span> <b>${f.value}</b></div>`).join('')
-        infoRef.current.setContent(`<div style="font-family:Inter,sans-serif;max-width:250px;color:#111"><div style="font-weight:600;font-size:12px;margin-bottom:3px">${p.title}</div>${rows}</div>`)
+        const rows = p.facts.map((f) => `<div style="font-size:11px;margin-top:2px"><span style="color:#888">${mapHtml(f.label)}:</span> <b>${mapHtml(f.value)}</b></div>`).join('')
+        infoRef.current.setContent(`<div style="font-family:Inter,sans-serif;max-width:250px;color:#111"><div style="font-weight:600;font-size:12px;margin-bottom:3px">${mapHtml(p.title)}</div>${rows}</div>`)
         infoRef.current.setPosition({ lat: p.lat, lng: p.lng }); infoRef.current.open(map)
       })
       permitMarkersRef.current.push(mk)
@@ -938,10 +1220,11 @@ export default function MapPanel() {
   const enablePermits = () => {
     const map = mapRef.current
     if (!map) return
-    if (!permitIdleRef.current) permitIdleRef.current = map.addListener('idle', loadPermits)
+    if (!permitIdleRef.current) permitIdleRef.current = map.addListener('idle', () => scheduleLayerLoad('permits', () => void loadPermits()))
     void loadPermits()
   }
   const disablePermits = () => {
+    cancelLayerRequest('permits'); ++permitLoadRef.current
     const g = (window as unknown as { google?: GMaps }).google
     if (permitIdleRef.current && g) { g.maps.event.removeListener(permitIdleRef.current); permitIdleRef.current = null }
     clearPermitMarkers()
@@ -954,7 +1237,7 @@ export default function MapPanel() {
     LAYERS.forEach((l) => {
       // ACS choropleths are google.maps.Data layers, not overlayMapTypes — tear
       // those down through their own disable path so they actually disappear.
-      if (l.kind === 'acs') { if (active[l.key]) disableAcs(l.key); return }
+      if (l.kind === 'acs') { if (acsDataRef.current[l.key]) disableAcs(l.key); return }
       const ov = overlaysRef.current[l.key]
       if (!ov) return
       const idx = mapRef.current.overlayMapTypes.getArray().indexOf(ov)
@@ -963,15 +1246,18 @@ export default function MapPanel() {
     })
     disableParcels()
     disablePermits()
-    setActive({})
+    Object.keys(featDataRef.current).forEach(disableFeatureLayer)
+    activeRef.current = {}; setActive({})
+    updateSolo(null)
   }
 
   const focus = (p: Place) => {
     if (!mapRef.current || p.lat == null || p.lng == null) return
-    mapRef.current.panTo({ lat: p.lat, lng: p.lng }); mapRef.current.setZoom(15); setSel(p.placeId)
-    infoRef.current?.setContent(`<div style="font-family:Inter,sans-serif;max-width:240px;color:#111"><div style="font-weight:600;font-size:13px">${p.name}</div><div style="font-size:11px;color:#555;margin-top:2px">${p.address}</div>${p.rating ? `<div style="font-size:11px;color:#b8860b;margin-top:3px">★ ${p.rating} (${p.userRatings || 0})</div>` : ''}</div>`)
-    const mk = markersRef.current.find((m) => m.__id === p.placeId)
+    flyTo(p.lat, p.lng, 16); setSel(p.id)
+    infoRef.current?.setContent(`<div style="font-family:Inter,sans-serif;max-width:240px;color:#111"><div style="font-weight:600;font-size:13px">${mapHtml(p.name)}</div><div style="font-size:11px;color:#555;margin-top:2px">${mapHtml(p.address)}</div>${p.rating ? `<div style="font-size:11px;color:#b8860b;margin-top:3px">★ ${p.rating} (${p.userRatings || 0})</div>` : ''}</div>`)
+    const mk = markersRef.current.find((m) => m.__id === p.id)
     if (mk) infoRef.current?.open({ map: mapRef.current, anchor: mk })
+    if (compactPanels) setPanelOpen(false)
   }
   // color search markers by category (AI/Places type) — a quick "categorize".
   const typeColor = (types: string[]) => {
@@ -994,10 +1280,10 @@ export default function MapPanel() {
         label: { text: String(i + 1), color: '#15170f', fontSize: '11px', fontWeight: '700' },
         icon: { path: g.maps.SymbolPath.CIRCLE, scale: 11, fillColor: typeColor(p.types), fillOpacity: 1, strokeColor: '#15170f', strokeWeight: 1.5 },
       })
-      mk.__id = p.placeId; mk.addListener('click', () => focus(p)); markersRef.current.push(mk)
+      mk.__id = p.id; mk.addListener('click', () => focus(p)); markersRef.current.push(mk)
       bounds.extend({ lat: p.lat, lng: p.lng })
     })
-    if (fit) mapRef.current.fitBounds(bounds, 60)
+    if (fit) { mapRef.current.fitBounds(bounds, 60); fitGlobe(bounds, 60) }
   }
 
   // Draw a category-colored zone polygon (convex hull) around a result cluster
@@ -1011,6 +1297,7 @@ export default function MapPanel() {
     const poly = new g.maps.Polygon({ paths: hull, map: mapRef.current, fillColor: color, strokeColor: color, fillOpacity: 0.14, strokeWeight: 2 })
     poly.__cat = catKey
     shapesRef.current.push(poly)
+    aiShapesRef.current.push(poly)
     saveShapes()
   }
 
@@ -1043,31 +1330,32 @@ export default function MapPanel() {
     const bounds = new g.maps.LatLngBounds()
     let any = false
     for (const s of shapes) {
+      if (!s || typeof s !== 'object') continue
       const color = CATEGORIES.find((c) => c.key === s.category)?.color || GOLD
       const opt = { fillColor: color, strokeColor: color, fillOpacity: 0.16, strokeWeight: 2.5, map }
       let ov: GMaps = null
       let at: { lat: number; lng: number } | null = null
-      if (s.type === 'polygon' && s.points && s.points.length >= 3) {
+      if (s.type === 'polygon' && Array.isArray(s.points) && s.points.length >= 3 && s.points.every(validMapPoint)) {
         ov = new g.maps.Polygon({ ...opt, paths: s.points })
         s.points.forEach((p) => bounds.extend(p)); at = s.points[0]; any = true
-      } else if (s.type === 'polyline' && s.points && s.points.length >= 2) {
+      } else if (s.type === 'polyline' && Array.isArray(s.points) && s.points.length >= 2 && s.points.every(validMapPoint)) {
         ov = new g.maps.Polyline({ ...opt, path: s.points, fillOpacity: 0 })
         s.points.forEach((p) => bounds.extend(p)); at = s.points[0]; any = true
-      } else if (s.type === 'circle' && s.center && s.radiusM) {
+      } else if (s.type === 'circle' && validMapPoint(s.center) && typeof s.radiusM === 'number' && Number.isFinite(s.radiusM) && s.radiusM > 0 && s.radiusM < 20_000_000) {
         ov = new g.maps.Circle({ ...opt, center: s.center, radius: s.radiusM })
         try { bounds.union(ov.getBounds()) } catch { bounds.extend(s.center) }
         at = s.center; any = true
-      } else if (s.type === 'marker' && s.point) {
+      } else if (s.type === 'marker' && validMapPoint(s.point)) {
         ov = new g.maps.Marker({ position: s.point, map, title: s.label || '' })
         bounds.extend(s.point); at = s.point; any = true
       }
       if (!ov) continue
       ov.__cat = s.category || 'area'
-      if (s.label) {
+      if (typeof s.label === 'string') {
         const label = s.label
         const pos = at
         ov.addListener('click', (e: { latLng?: GMaps }) => {
-          infoRef.current?.setContent(`<div style="font-family:Inter,sans-serif;max-width:240px;color:#111;font-size:12px;font-weight:600">${label}</div>`)
+          infoRef.current?.setContent(`<div style="font-family:Inter,sans-serif;max-width:240px;color:#111;font-size:12px;font-weight:600">${mapHtml(label)}</div>`)
           infoRef.current?.setPosition(e?.latLng || pos)
           infoRef.current?.open(map)
         })
@@ -1080,24 +1368,26 @@ export default function MapPanel() {
   }
 
   // Places lookup (Google Places → free OSM fallback server-side); plots pins.
-  const runPlaces = async (q: string, fit: boolean, biasAt?: { lat: number; lng: number } | null): Promise<Place[]> => {
+  const runPlaces = async (q: string, fit: boolean, request: AbortController, biasAt?: { lat: number; lng: number } | null): Promise<Place[]> => {
     // Bias the search to WHERE THE QUESTION IS ABOUT (the AI's center), not the
     // stale current view — otherwise "korean food in Orlando" searches the old spot.
     const c = mapRef.current?.getCenter?.()
     const bias = biasAt && typeof biasAt.lat === 'number' ? biasAt : (c ? { lat: c.lat(), lng: c.lng() } : {})
-    const r = await fetch('/api/web', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'places', query: q, ...bias }) })
-    const d = (await r.json()) as { results?: Place[]; error?: string }
-    const res = (d.results || []).filter((p) => p.lat != null && p.lng != null)
+    const r = await fetch('/api/web', { method: 'POST', signal: request.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'places', query: q, ...bias }) })
+    const d = await mapJson(r)
+    searchRequests.current.check(request)
+    const res = mapPlaces(d.results)
     setResults(res); plot(res, fit)
     return res
   }
 
   // Legacy flow (also the no-AI fallback): keyword layer enabling + Places pins
   // + convex-hull zone when the prompt uses a draw verb.
-  const legacySearch = async (q: string, preEnabled: string[]) => {
+  const legacySearch = async (q: string, preEnabled: string[], request: AbortController) => {
     const catKey = CAT_KEYWORDS.find((c) => c.re.test(q))?.key || 'area'
     const wantsZone = DRAW_VERB.test(q)
-    const res = await runPlaces(q, true)
+    const res = await runPlaces(q, true, request)
+    searchRequests.current.check(request)
     if (wantsZone && res.length >= 3) drawZone(res, catKey)
     const notes: string[] = []
     if (preEnabled.length) notes.push(`Enabled ${preEnabled.join(' + ')}`)
@@ -1113,37 +1403,48 @@ export default function MapPanel() {
   // Geocode a place and zoom to it. Uses the result's viewport (Google's own
   // suggested bounds) so a city, neighborhood or address each land at the right
   // zoom automatically. Returns true if it moved the map.
-  const geocodeTo = (place: string): Promise<boolean> =>
+  const geocodeTo = (place: string, request: AbortController): Promise<boolean> =>
     new Promise((resolve) => {
       const g = (window as unknown as { google?: GMaps }).google
       const map = mapRef.current
       if (!g?.maps?.Geocoder || !map || !place.trim()) return resolve(false)
+      const onAbort = () => resolve(false)
+      request.signal.addEventListener('abort', onAbort, { once: true })
       try {
         new g.maps.Geocoder().geocode({ address: place }, (results: GMaps, status: string) => {
+          request.signal.removeEventListener('abort', onAbort)
+          if (!searchRequests.current.active(request) || mapRef.current !== map) return resolve(false)
           if (status === 'OK' && results?.[0]?.geometry) {
             const geo = results[0].geometry
-            if (geo.viewport) map.fitBounds(geo.viewport, 40)
-            else if (geo.location) { map.panTo(geo.location); map.setZoom(14) }
+            if (geo.viewport) { map.fitBounds(geo.viewport, 40); fitGlobe(geo.viewport, 40) }
+            else if (geo.location) { map.panTo(geo.location); map.setZoom(14); moveGlobe({ kind: 'point', lat: geo.location.lat(), lng: geo.location.lng(), zoom: 14 }) }
             resolve(true)
           } else resolve(false)
         })
-      } catch { resolve(false) }
+      } catch { request.signal.removeEventListener('abort', onAbort); resolve(false) }
     })
 
   // Cancel / reset — clear the current answer so you can ask something new.
   const clearSearch = () => {
+    searchRequests.current.cancel()
+    setLoading(false)
     setQuery('')
     setAnswer('')
     setComparison(null)
     setResults([])
     setSel(null)
     setErr('')
+    plot([])
+    infoRef.current?.close()
     clearAIShapes()
     saveShapes()
   }
 
   const runSearch = async (q: string, aiMode = true) => {
-    if (!q || loading) return
+    if (!q || !mapRef.current || !ready || authErr) return
+    const request = searchRequests.current.start()
+    clearAIShapes(); saveShapes(); plot([]); infoRef.current?.close()
+    setResults([]); setSel(null)
     setLoading(true); setErr(''); setAnswer('')
     // keyword fast-path: obviously-referenced data layers turn on immediately
     setComparison(null)
@@ -1151,43 +1452,58 @@ export default function MapPanel() {
     try {
       if (!aiMode) {
         const pre = kwKeys.map((k) => enableLayer(k, 'auto')).filter(Boolean)
-        await legacySearch(q, pre)
+        await legacySearch(q, pre, request)
         return
       }
       const c = mapRef.current?.getCenter?.()
       const view = c ? { lat: c.lat(), lng: c.lng(), zoom: mapRef.current?.getZoom?.() ?? 6 } : {}
       const r = await fetch('/api/web', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', signal: request.signal, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'mapai', query: q, ...view,
           catalog: LAYERS.map((l) => ({ key: l.key, label: l.label, desc: l.desc.slice(0, 90) })),
           categories: CATEGORIES.map((x) => x.key),
         }),
       })
-      const d = (await r.json()) as {
+      const d = await mapJson(r).catch(() => null) as {
         answer?: string; layers?: string[]; search?: string | null
         shapes?: AIShape[]; center?: { lat: number; lng: number } | null; zoom?: number | null; error?: string
         comparison?: { title: string; criteria: string[]; places: Array<{ name: string; lat: number; lng: number; scores: Record<string, number>; note?: string }>; winner?: string } | null
-      }
-      const gotPlan = d && !d.error && (d.answer || d.shapes?.length || d.layers?.length || d.search)
+      } | null
+      searchRequests.current.check(request)
+      const gotPlan = d && !d.error && (typeof d.answer === 'string' || Array.isArray(d.shapes) || Array.isArray(d.layers) || typeof d.search === 'string')
       if (!gotPlan) {
         // AI engine missing/failed — keyword + Places still answer the command.
         const pre = kwKeys.map((k) => enableLayer(k, 'auto')).filter(Boolean)
-        await legacySearch(q, pre)
+        await legacySearch(q, pre, request)
         return
+      }
+      d.layers = Array.isArray(d.layers) ? d.layers.filter((lk) => typeof lk === 'string') : []
+      d.shapes = Array.isArray(d.shapes) ? d.shapes.filter((shape) => shape && typeof shape === 'object').slice(0, 100) : []
+      d.search = typeof d.search === 'string' ? d.search : null
+      d.center = validMapPoint(d.center) ? d.center : null
+      d.zoom = typeof d.zoom === 'number' && Number.isFinite(d.zoom) ? Math.min(20, Math.max(2, d.zoom)) : null
+      if (d.comparison) {
+        const comparison = d.comparison
+        if (typeof comparison.title !== 'string' || !Array.isArray(comparison.criteria) || !Array.isArray(comparison.places)) d.comparison = null
+        else {
+          comparison.criteria = comparison.criteria.filter((criterion) => typeof criterion === 'string').slice(0, 12)
+          comparison.places = comparison.places.filter((place) => validMapPoint(place) && typeof place.name === 'string' && place.scores && typeof place.scores === 'object').slice(0, 30).map((place) => ({ ...place, scores: Object.fromEntries(comparison.criteria.map((criterion) => [criterion, typeof place.scores[criterion] === 'number' && Number.isFinite(place.scores[criterion]) ? Math.max(0, Math.min(10, place.scores[criterion])) : 0])) }))
+        }
       }
       const hasView = !!d.center
       // enable AI-chosen + keyword layers (without yanking the view when the AI framed it)
       const enabled = [...new Set([...(d.layers || []), ...kwKeys])]
         .map((k) => enableLayer(k, hasView ? 'none' : 'auto')).filter(Boolean)
-      if (d.answer) setAnswer(d.answer)
+      if (typeof d.answer === 'string') setAnswer(d.answer)
       setComparison(d.comparison || null)
       // every compared place gets a pin even if the model drew none
       const compareMarkers: AIShape[] = (d.comparison?.places || []).map((pl) => ({ type: 'marker', category: 'area', label: pl.name, point: { lat: pl.lat, lng: pl.lng } }))
       const allShapes = [...(d.shapes || []), ...compareMarkers.filter((m) => !(d.shapes || []).some((sh) => sh.type === 'marker' && sh.label === m.label))]
       const shapeBounds = allShapes.length ? drawAIShapes(allShapes) : null
-      if (d.search) await runPlaces(d.search, !hasView && !shapeBounds, d.center)
+      if (d.search) await runPlaces(d.search, !hasView && !shapeBounds, request, d.center)
       else setResults([])
+      searchRequests.current.check(request)
       // ALWAYS frame the view on where they're asking about: AI's explicit
       // center wins, then the drawn shapes, then a live geocode of the place —
       // so the map never just sits on the old view.
@@ -1200,77 +1516,88 @@ export default function MapPanel() {
         const need = defs.length ? Math.min(...defs.map((l) => l.minZoom)) : 0
         if (need > z && need - z <= 3) z = need
         mapRef.current.setZoom(z)
+        moveGlobe({ kind: 'point', lat: d.center.lat, lng: d.center.lng, zoom: z })
         framed = true
       } else if (shapeBounds && mapRef.current) {
         mapRef.current.fitBounds(shapeBounds, 70)
+        fitGlobe(shapeBounds, 70)
         framed = true
       }
       // Fallback: geocode the place so we ALWAYS zoom to the asked-about location.
-      if (!framed) framed = await geocodeTo(d.search || q)
+      if (!framed) framed = await geocodeTo(d.search || q, request)
+      searchRequests.current.check(request)
       const notes: string[] = []
       if (enabled.length) notes.push(`Enabled ${enabled.join(' + ')}`)
       if (d.shapes?.length) notes.push(`drew ${d.shapes.length} shape${d.shapes.length > 1 ? 's' : ''}`)
       setErr(notes.join(' · '))
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Search failed')
-    } finally { setLoading(false) }
+      if (searchRequests.current.owns(request)) setErr(request.signal.aborted ? 'Map search took too long. Please try again.' : e instanceof Error ? e.message : 'Search failed')
+    } finally {
+      if (searchRequests.current.owns(request)) { searchRequests.current.finish(request); setLoading(false) }
+    }
   }
   const search = () => void runSearch(query.trim())
   // One-tap category search — straight to Places (no AI round-trip needed).
   const searchCategory = (term: string) => { setQuery(term); void runSearch(term, false) }
 
   const activeCount = LAYERS.filter((l) => active[l.key]).length
-  const lq = layerQuery.trim().toLowerCase()
-  const visibleLayers = lq ? LAYERS.filter((l) => l.label.toLowerCase().includes(lq) || l.desc.toLowerCase().includes(lq)) : LAYERS
+  const dataLayerCount = LAYERS.filter(l => active[l.key] && !isMapBackground(l)).length
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div ref={workspaceRef} className={`map-workspace flex flex-1 overflow-hidden${compactPanels ? ' map-compact' : ''}`} style={expandedMap ? { position: 'fixed', inset: 0, zIndex: 100, background: 'rgb(var(--ws-canvas))' } : undefined}>
       {/* Left: search + results (overlay on mobile, in-flow on desktop) */}
-      <div className={`${panelOpen ? 'flex' : 'hidden'} absolute inset-y-0 left-0 z-30 w-[min(20rem,86vw)] shrink-0 flex-col border-r border-glass/[0.12] bg-panel/75 backdrop-blur-2xl md:relative md:z-auto`}>
+      <div className={`map-search-panel ${panelOpen ? 'flex' : 'hidden'} w-80 min-h-0 shrink-0 flex-col border-r border-glass/[0.12] bg-panel md:relative md:z-auto`}>
         <div className="border-b border-glass/[0.08] p-3">
           <div className="mb-1 flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-md bg-accent/15 text-gold"><MapPin size={13} /></span>
             <span className="text-sm font-medium text-ink">Map search</span>
-            <button onClick={() => setPanelOpen(false)} title="Hide panel" className="ml-auto flex h-6 w-6 items-center justify-center rounded-md text-dim hover:bg-glass/10 hover:text-ink"><X size={14} /></button>
+            <button onClick={() => setPanelOpen(false)} aria-label="Hide search panel" className="ml-auto flex h-8 w-8 items-center justify-center rounded-md text-dim hover:bg-glass/10 hover:text-ink"><X size={16} /></button>
           </div>
-          <p className="mb-2 text-[11px] text-dim">Ask anything about anywhere — Nalu answers on the map: it enables the right data layers, draws its own polygons, lines and pins, and frames the view. Try "outline the flood-prone parts of New Orleans" or "best coffee neighborhoods in Portland".</p>
+          <p className="map-search-intro mb-3 text-xs leading-relaxed text-dim">Find places, compare areas, or ask Nalu to map what matters to you.</p>
           <div className="flex items-center gap-1.5 rounded-xl border border-glass/[0.12] bg-glass/[0.04] px-2.5 py-2 focus-within:border-glass/25">
             <Search size={14} className="text-dim" />
-            <input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void search() }}
+            <input aria-label="Map search" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void search() }}
               placeholder="Ask any map question…" className="w-full bg-transparent text-sm text-ink outline-none placeholder:text-dim" />
             {(query || answer || comparison) && (
-              <button onClick={clearSearch} disabled={loading} title="Clear — ask something else"
+              <button onClick={clearSearch} aria-label={loading ? 'Cancel map search' : 'Clear map search'} title={loading ? 'Cancel map search' : 'Clear — ask something else'}
                 className="shrink-0 flex h-5 w-5 items-center justify-center rounded-full text-dim hover:bg-glass/15 hover:text-ink disabled:opacity-50">
                 <X size={13} />
               </button>
             )}
-            <button onClick={() => void search()} disabled={loading} className="shrink-0 text-accent disabled:opacity-50">
+            <button onClick={() => void search()} aria-label="Search map" disabled={!ready || authErr || !query.trim()} className="shrink-0 text-accent disabled:opacity-50">
               {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
             </button>
           </div>
           <div className="mt-2 flex flex-wrap gap-1">
             {CATEGORY_CHIPS.map((c) => (
-              <button key={c.term} onClick={() => searchCategory(c.term)} disabled={loading}
+              <button key={c.term} onClick={() => searchCategory(c.term)} disabled={!ready || authErr}
                 className="rounded-full border border-glass/10 bg-glass/[0.05] px-2 py-0.5 text-[10px] text-ink hover:border-accent/50 hover:bg-accent/15 hover:text-[#e0c489] disabled:opacity-50">
                 {c.label}
               </button>
             ))}
           </div>
-          {err && <div className="mt-2 text-[11px] text-amber-300/90">{err}</div>}
+          {loading && <div role="status" className="mt-2 text-[11px] text-dim">Searching the map…</div>}
+          {err && <div role="status" className="mt-2 text-[11px] text-amber-300/90">{err}</div>}
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {comparison && (
             <div className="mb-2 overflow-hidden rounded-xl border border-accent/30 bg-accent/[0.06]">
-              <div className="border-b border-glass/10 px-2.5 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-gold">{comparison.title}</div>
-              <div className="overflow-x-auto p-1.5">
-                <table className="w-full border-collapse text-[10.5px]">
+              <div className="flex items-center justify-between border-b border-glass/10 px-2.5 py-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gold">{comparison.title}</span>
+                {comparison.criteria.length > 3 && <span className="shrink-0 text-[9px] text-dim">swipe →</span>}
+              </div>
+              {/* Horizontally scrollable: many criteria keep their real width and the
+                  table scrolls (visible thin scrollbar + touch momentum) instead of
+                  squishing or clipping columns. */}
+              <div className="map-xscroll overflow-x-auto p-1.5" style={{ WebkitOverflowScrolling: 'touch' }}>
+                <table className="w-max min-w-full border-collapse text-[10.5px]">
                   <thead>
                     <tr>
-                      <th className="px-1.5 py-1 text-left font-medium text-dim">Place</th>
+                      <th className="sticky left-0 z-10 bg-panel2 px-1.5 py-1 text-left font-medium text-dim">Place</th>
                       {comparison.criteria.map((c) => (
-                        <th key={c} className="px-1 py-1 text-center font-medium capitalize text-dim">{c.slice(0, 12)}</th>
+                        <th key={c} className="whitespace-nowrap px-1.5 py-1 text-center font-medium capitalize text-dim" title={c}>{c}</th>
                       ))}
-                      <th className="px-1 py-1 text-center font-medium text-dim">Total</th>
+                      <th className="px-1.5 py-1 text-center font-medium text-dim">Total</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1281,18 +1608,18 @@ export default function MapPanel() {
                         const isWinner = pl.name === comparison.winner
                         return (
                           <tr key={pl.name} className={isWinner ? 'bg-accent/15' : ''}>
-                            <td className="max-w-[7rem] truncate px-1.5 py-1 font-medium text-ink" title={pl.note || pl.name}>
+                            <td className={`sticky left-0 z-10 max-w-[9rem] truncate bg-panel2 px-1.5 py-1 font-medium text-ink ${isWinner ? 'border-l-2 border-gold' : ''}`} title={pl.note || pl.name}>
                               {isWinner ? '★ ' : ''}{pl.name}
                             </td>
                             {comparison.criteria.map((c) => {
                               const v = pl.scores[c] || 0
                               return (
-                                <td key={c} className="px-1 py-1 text-center tabular-nums" style={{ color: v >= 8 ? '#4ade80' : v >= 5 ? undefined : '#f87171' }}>
+                                <td key={c} className="whitespace-nowrap px-1.5 py-1 text-center tabular-nums" style={{ color: v >= 8 ? '#4ade80' : v >= 5 ? undefined : '#f87171' }}>
                                   {v || '–'}
                                 </td>
                               )
                             })}
-                            <td className="px-1 py-1 text-center font-semibold tabular-nums text-gold">{pl.total}</td>
+                            <td className="whitespace-nowrap px-1.5 py-1 text-center font-semibold tabular-nums text-gold">{pl.total}</td>
                           </tr>
                         )
                       })}
@@ -1308,8 +1635,9 @@ export default function MapPanel() {
             </div>
           )}
           {results.map((p, i) => (
-            <button key={p.placeId || i} onClick={() => focus(p)}
-              className={`mb-1.5 flex w-full gap-2.5 rounded-xl border p-2 text-left transition-colors ${sel === p.placeId ? 'border-accent/50 bg-accent/[0.08]' : 'border-glass/[0.07] hover:bg-glass/[0.04]'}`}>
+            <div key={p.id}
+              className={`mb-1.5 flex w-full gap-2.5 rounded-xl border p-2 text-left transition-colors ${sel === p.id ? 'border-accent/50 bg-accent/[0.08]' : 'border-glass/[0.07] hover:bg-glass/[0.04]'}`}>
+              <button onClick={() => focus(p)} aria-pressed={sel === p.id} aria-label={`Show ${p.name} on map`} className="flex min-w-0 flex-1 gap-2.5 text-left">
               <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-[#15170f]" style={{ background: typeColor(p.types) }}>{i + 1}</span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] font-medium text-ink">{p.name}</span>
@@ -1320,30 +1648,35 @@ export default function MapPanel() {
                   {p.types[0] && <span className="capitalize">{p.types[0].replace(/_/g, ' ')}</span>}
                 </span>
               </span>
-              <a href={`https://www.google.com/maps/place/?q=place_id:${p.placeId}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="mt-0.5 shrink-0 text-dim hover:text-ink"><ExternalLink size={12} /></a>
-            </button>
+              </button>
+              <a aria-label={`Open ${p.name} in Google Maps`} href={mapPlaceUrl(p)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="mt-0.5 shrink-0 text-dim hover:text-ink"><ExternalLink size={12} /></a>
+            </div>
           ))}
           {!results.length && !answer && !loading && !err && <div className="px-2 py-6 text-center text-[11px] text-dim">Ask a question to see the answer on the map.</div>}
         </div>
       </div>
 
       {/* Map + controls */}
-      <div className="relative flex-1">
-        <div ref={mapEl} className="h-full w-full bg-[#1c2230]" />
+      <div className="map-surface relative flex-1" data-map-mode={is3D ? '3d' : '2d'}>
+        <div ref={mapEl} aria-label="Interactive map" aria-hidden={is3D} className="map-2d-viewport h-full w-full bg-[#1c2230]" />
 
         {ready && (
           // The map controls are dark frosted-glass overlays in BOTH themes, so we
           // scope them to dark tokens — otherwise `text-ink`/`bg-glass` flip to dark
           // text in light mode and the toolbar icons vanish into the panel.
           <div className="dark contents">
-            {/* No drawing toolbar — Nalu draws shapes itself. Just panel-restore. */}
-            {!panelOpen && (
-              <button onClick={() => setPanelOpen(true)} title="Show search panel" className="absolute left-2 top-2 flex h-9 w-9 items-center justify-center rounded-xl border border-glass/[0.12] bg-black/60 text-gold backdrop-blur hover:bg-black/70"><PanelLeftOpen size={15} /></button>
-            )}
+            <div className="map-toolbar">
+              <div><button className="map-control" aria-label="Show search panel" aria-expanded={panelOpen} onClick={() => { setPanelOpen(!panelOpen); if (compactPanels) setShowLayers(false) }}><Search size={16} />Search</button></div>
+              <div>
+                {!is3D && dataLayerCount > 0 && <button className="map-control" aria-label={layersHidden ? 'Show data overlays' : 'Hide data overlays'} aria-pressed={layersHidden} onClick={() => updateHidden(!layersHidden)}>{layersHidden ? <EyeOff size={16} /> : <Eye size={16} />}</button>}
+                {!is3D && <button className="map-control" aria-expanded={showLayers} onClick={() => { setShowLayers(!showLayers); if (compactPanels) setPanelOpen(false) }}><Layers size={16} />Layers{activeCount > 0 && <span className="map-control-count">{activeCount}</span>}</button>}
+                <button className="map-control" aria-label={expandedMap ? 'Exit full map' : 'Expand map'} aria-pressed={expandedMap} onClick={() => setExpandedMap(!expandedMap)}>{expandedMap ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
+              </div>
+            </div>
 
             {/* Coverage jump banner — shown when parcels/permits are on but this view has no data */}
-            {coverageJump && (active.parcels || active.permits) && (
-              <div className="absolute left-1/2 top-3 z-20 flex max-w-[92vw] -translate-x-1/2 flex-wrap items-center justify-center gap-1.5 rounded-xl border border-accent/45 bg-black/80 px-3 py-2 text-[11px] text-ink shadow-lg backdrop-blur">
+            {!is3D && !showLayers && coverageJump && (active.parcels || active.permits) && (
+              <div className="map-coverage">
                 <span className="mr-0.5 font-medium">No {active.permits && !active.parcels ? 'building permits' : active.parcels && !active.permits ? 'parcels' : 'data'} here yet — jump to live coverage:</span>
                 {coverageJump.map((j) => (
                   <button key={j.label} onClick={() => jumpTo(j.lat, j.lng)} className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold text-[#15170f] hover:bg-gold">{j.label}</button>
@@ -1352,62 +1685,44 @@ export default function MapPanel() {
             )}
 
             {/* Base maps + clear AI drawings */}
-            <div className="absolute bottom-3 left-3 flex items-center gap-1 rounded-xl border border-glass/[0.12] bg-black/60 p-1 backdrop-blur">
-              {BASES.map((b) => (
-                <button key={b.key} onClick={() => setBase(b.key)} className={`rounded-lg px-2.5 py-1 text-[11px] ${base === b.key ? 'bg-accent text-[#15170f]' : 'text-ink hover:bg-glass/10'}`}>{b.label}</button>
-              ))}
-              <span className="mx-0.5 h-5 w-px bg-glass/15" />
-              <button onClick={clearMap} title="Clear everything — turn off all layers and drawings" className="flex h-7 w-7 items-center justify-center rounded-lg text-ink hover:bg-red-500/30 hover:text-red-200"><Trash2 size={13} /></button>
-            </div>
+            {!is3D && <div className="map-bottom-controls">
+              <label className="map-base-select">Map<select aria-label="Map background" value={LAYERS.find(l => active[l.key] && isMapBackground(l)) ? 'custom' : base} onChange={e => { removeBackgrounds(); setBase(e.target.value) }}>{BASES.filter(b => b.key !== 'streets').map(b => <option key={b.key} value={b.key}>{b.key === 'dark' ? 'Simple' : b.label}</option>)}<option value="streets">Streets</option>{LAYERS.some(l => active[l.key] && isMapBackground(l)) && <option value="custom">{LAYERS.find(l => active[l.key] && isMapBackground(l))!.label}</option>}</select></label>
+              <button className="map-control" onClick={openGlobe} title="Explore terrain and buildings in 3D"><Boxes size={15} />3D</button>
+              <button className="map-control" onClick={clearMap} aria-label="Clear layers and drawings" title="Clear layers and drawings"><Trash2 size={15} /></button>
+            </div>}
 
-            {/* Layers — searchable, sectioned by type, scrollable, mobile-safe */}
-            <div className="absolute right-2 top-2 z-20 flex flex-col items-end">
-              <button onClick={() => setShowLayers((v) => !v)} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-glass/[0.12] bg-black/60 px-2.5 py-2 text-[12px] text-ink backdrop-blur hover:bg-black/70">
-                <Layers size={14} className="text-gold" /> Layers
-                {activeCount > 0 && <span className="ml-0.5 rounded-full bg-accent px-1.5 text-[10px] font-bold text-[#15170f]">{activeCount}</span>}
-              </button>
-              {showLayers && (
-                <div className="mt-1.5 flex max-h-[min(72vh,34rem)] w-[min(18rem,calc(100vw-1rem))] flex-col overflow-hidden rounded-xl border border-glass/[0.12] bg-black/80 backdrop-blur">
-                  <div className="flex items-center gap-2 border-b border-glass/10 px-2.5 py-2">
-                    <Search size={13} className="text-dim" />
-                    <input value={layerQuery} onChange={(e) => setLayerQuery(e.target.value)} placeholder={`Search ${LAYERS.length} layers…`} className="w-full bg-transparent text-[12px] text-ink outline-none placeholder:text-dim" />
-                    {activeCount > 0 && <button onClick={clearLayers} title="Turn all off" className="shrink-0 text-[10px] text-gold hover:text-ink">Clear</button>}
-                  </div>
-                  <div className="flex-1 overflow-y-auto px-2 py-1.5">
-                    {LAYER_CATS.map((c) => {
-                      const items = visibleLayers.filter((l) => l.cat === c.key)
-                      if (!items.length) return null
-                      return (
-                        <div key={c.key} className="mb-1.5">
-                          <div className="px-1.5 py-1 text-[9.5px] font-semibold uppercase tracking-[0.16em] text-gold">{c.label}</div>
-                          {items.map((l) => (
-                            <button key={l.key} onClick={() => toggleLayer(l.key)} className="flex w-full items-start gap-2 rounded-lg px-1.5 py-1.5 text-left hover:bg-glass/[0.06]">
-                              <span className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border ${active[l.key] ? 'border-accent bg-accent' : 'border-glass/30'}`}>{active[l.key] && <span className="h-1.5 w-1.5 rounded-sm bg-[#15170f]" />}</span>
-                              <span className="min-w-0"><span className="block text-[12px] font-medium text-ink">{l.label}</span><span className="block text-[10px] leading-snug text-dim">{l.desc}</span></span>
-                            </button>
-                          ))}
-                        </div>
-                      )
-                    })}
-                    {!visibleLayers.length && <div className="px-2 py-4 text-center text-[11px] text-dim">No layers match "{layerQuery}".</div>}
-                  </div>
-                  <div className="border-t border-glass/10 px-2.5 py-1.5 text-[9px] leading-snug text-dim">{LAYERS.length} free public layers. Parcels (owner + assessment) live in {PARCEL_SVCS.length} states: {PARCEL_SVCS.map((s) => s.name).join(', ')}. Permits live in {permitCities()}. Queried live — always current.</div>
-                </div>
-              )}
-            </div>
-            <div className="pointer-events-none absolute bottom-3 right-3 max-w-[60vw] rounded-md bg-black/55 px-2 py-1 text-right text-[10px] text-dim backdrop-blur">
-              {active.parcels && parcelMsg
-                ? parcelMsg
-                : active.permits && permitMsg
-                  ? permitMsg
-                  : activeCount > 0
-                    ? `${activeCount} data layer${activeCount > 1 ? 's' : ''} on`
-                    : 'Ask a question — Nalu draws the answer on the map'}
-            </div>
+            {/* Real 3D globe overlay */}
+            {globe && (
+              <Suspense fallback={<div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-glass/5 text-sm text-ink backdrop-blur-sm"><span role="status">Loading 3D…</span><button className="map-control" onClick={() => setGlobe(null)}>Return to map</button></div>}>
+                <MapGlobe3D center={{ lat: globe.lat, lng: globe.lng }} zoom={globe.zoom} cameraRequest={globe.cameraRequest} onClose={() => setGlobe(null)} />
+              </Suspense>
+            )}
+
+            {!is3D && showLayers && <MapLayerControls layers={LAYERS} categories={LAYER_CATS} active={active} opacity={opacity} zoom={viewZoom}
+              hidden={layersHidden} solo={soloLayer} messages={{ ...featMsg, parcels: parcelMsg, permits: permitMsg }}
+              onToggle={toggleLayer} onOpacity={updateOpacity} onHidden={updateHidden} onSolo={updateSolo} onClear={clearLayers}
+              onClose={() => setShowLayers(false)}
+              onZoom={layer => { const [min, max] = mapLayerZoomRange(layer); mapRef.current?.setZoom(Math.max(min, Math.min(max, mapRef.current?.getZoom() ?? min))); if (compactPanels) setShowLayers(false) }}
+              onExample={layer => { if (layer.home) flyTo(...layer.home); if (compactPanels) setShowLayers(false) }} />}
+            {!is3D && (layersHidden || soloLayer) && <div className="map-view-state">{layersHidden ? 'Data overlays hidden · Your layers are still saved' : `Viewing only ${LAYERS.find(l => l.key === soloLayer)?.label}`}</div>}
+
+            {!is3D && (() => {
+              const msg =
+                active.parcels && parcelMsg
+                  ? parcelMsg
+                  : active.permits && permitMsg
+                    ? permitMsg
+                    : Object.values(featMsg).filter(Boolean).slice(-1)[0] || (activeCount > 0 ? `${activeCount} data layer${activeCount > 1 ? 's' : ''} on` : '')
+              // Only show real status (parcel/permit/feature/layers). No idle "ask a
+              // question" hint, and lifted above the 3D control cluster so they don't overlap.
+              return msg ? (
+                <div className="pointer-events-none absolute bottom-14 right-3 max-w-[60vw] rounded-md bg-black/55 px-2 py-1 text-right text-[10px] text-dim backdrop-blur">{msg}</div>
+              ) : null
+            })()}
           </div>
         )}
 
-        {authErr && (
+        {!is3D && authErr && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-canvas/95 p-6">
             <div className="max-w-md text-[13px] leading-relaxed text-ink">
               <div className="mb-2 text-sm font-medium text-amber-300">Google rejected the Maps key</div>
@@ -1416,7 +1731,7 @@ export default function MapPanel() {
           </div>
         )}
         {!ready && !err && !authErr && <div className="absolute inset-0 flex items-center justify-center text-sm text-dim"><Loader2 size={18} className="mr-2 animate-spin" /> Loading map…</div>}
-        {err && !ready && <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-sm text-amber-300/90">{err}</div>}
+        {err && !ready && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-sm text-amber-300/90"><span role="alert">{err}</span>{key && <button onClick={() => setMapAttempt((attempt) => attempt + 1)} className="rounded-lg border border-accent/50 px-3 py-2 text-ink">Retry map</button>}</div>}
       </div>
     </div>
   )

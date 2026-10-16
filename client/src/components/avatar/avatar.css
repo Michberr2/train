@@ -1,0 +1,6 @@
+.nalu-avatar { position:relative; flex-shrink:0; max-width:100%; margin-bottom:20px; }
+.nalu-avatar-art { width:100%; aspect-ratio:1; position:relative; border-radius:24%; overflow:hidden; background:#f3f3f4; }
+.nalu-avatar-art img,.nalu-avatar-art canvas { position:absolute; inset:0; width:100%; height:100%; display:block; object-fit:contain; }
+.nalu-avatar-art canvas { opacity:0; cursor:pointer; touch-action:pan-y; }
+.nalu-avatar-art canvas.is-ready { opacity:1; }
+.nalu-avatar-art canvas:focus-visible { outline:3px solid #ba8a32; outline-offset:-4px; border-radius:24%; }

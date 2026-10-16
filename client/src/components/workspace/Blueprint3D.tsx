@@ -190,7 +190,7 @@ export default function Blueprint3D({ floors, mode, storeKey, startWalk, initial
   const skey = storeKey ? `nalu-furnish-${storeKey}` : ''
   const [furniture, setFurniture] = useState<FurnItem[]>(() => {
     if (skey) {
-      try { const s = JSON.parse(localStorage.getItem(skey) || '[]'); if (Array.isArray(s) && s.length) return s } catch { /* */ }
+      try { const saved = localStorage.getItem(skey); if (saved !== null) { const s = JSON.parse(saved); if (Array.isArray(s)) return s } } catch { /* */ }
     }
     return initialFurniture && initialFurniture.length ? initialFurniture : []
   })

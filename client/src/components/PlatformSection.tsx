@@ -1,15 +1,13 @@
+import Scenery from './Scenery'
 export default function PlatformSection() {
   return (
     <div className="relative h-screen w-full flex flex-col">
-      <div
-        className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-        style={{ backgroundImage: 'url(/images/bg-hills-teal.png)' }}
-      />
+      <Scenery src="/images/bg-hills-teal.png" />
 
       <div className="h-28 md:h-32 flex-shrink-0" />
 
       <div className="relative z-10 flex-1 flex flex-col items-center justify-center w-full max-w-5xl mx-auto px-4 sm:px-6 pb-8">
-        <h1 className="text-3xl md:text-4xl lg:text-5xl font-light text-white mb-8 md:mb-12 tracking-tight text-center drop-shadow-lg">
+        <h1 className="scenery-caption text-3xl md:text-4xl lg:text-5xl font-light text-white mb-8 md:mb-12 tracking-tight text-center drop-shadow-lg">
           One AI. Your whole screen. Anything you need.
         </h1>
 

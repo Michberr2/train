@@ -6,14 +6,19 @@ import { AlertTriangle } from 'lucide-react'
 // error instead of letting it crash (white-screen) the whole app. A "Retry"
 // remounts the child.
 
-type Props = { children: ReactNode; label?: string }
-type State = { failed: boolean; key: number }
+type Props = { children: ReactNode; label?: string; previewHtml?: string; resetKey?: unknown }
+type State = { failed: boolean; key: number; reload: boolean }
 
 export default class CardErrorBoundary extends Component<Props, State> {
-  state: State = { failed: false, key: 0 }
+  state: State = { failed: false, key: 0, reload: false }
 
-  static getDerivedStateFromError(): Partial<State> {
-    return { failed: true }
+  static getDerivedStateFromError(error: unknown): Partial<State> {
+    const message = error instanceof Error ? error.message : String(error)
+    return { failed: true, reload: /dynamically imported module|importing a module script|loading chunk|chunkloaderror|module script.*failed/i.test(message) }
+  }
+
+  componentDidUpdate(previous: Props) {
+    if (this.state.failed && previous.resetKey !== this.props.resetKey) this.setState(s => ({ failed: false, key: s.key + 1, reload: false }))
   }
 
   componentDidCatch(err: unknown) {
@@ -25,17 +30,20 @@ export default class CardErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.failed) {
       return (
-        <div className="my-2 flex items-center gap-3 rounded-xl border border-amber-500/25 bg-amber-500/[0.06] px-4 py-3 text-sm text-amber-200">
+        <div className="my-2">
+        <div role="alert" className="flex items-center gap-3 rounded-xl border border-amber-600/30 bg-panel/80 px-4 py-3 text-sm text-ink">
           <AlertTriangle size={16} className="shrink-0" />
           <span className="flex-1">
-            {this.props.label || 'This view'} couldn’t render here.
+            {this.props.previewHtml ? 'The preview controls couldn’t load. Your saved design is shown below.' : `${this.props.label || 'This view'} couldn’t load. Your saved work is still here.`}
           </span>
           <button
-            onClick={() => this.setState((s) => ({ failed: false, key: s.key + 1 }))}
+            onClick={() => this.state.reload ? window.location.reload() : this.setState((s) => ({ failed: false, key: s.key + 1 }))}
             className="rounded-lg bg-glass/10 px-2.5 py-1 text-xs text-ink hover:bg-glass/20"
           >
-            Retry
+            {this.state.reload ? 'Reload preview' : 'Retry'}
           </button>
+        </div>
+        {typeof this.props.previewHtml === 'string' && this.props.previewHtml && <iframe title="Saved design preview" srcDoc={this.props.previewHtml} sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads" className="mt-3 h-[70vh] w-full rounded-xl border border-glass/20 bg-white" />}
         </div>
       )
     }

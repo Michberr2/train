@@ -9,6 +9,7 @@ import { chatCompleteContinued, primaryProvider, fallbackProvider, emergencyProv
 import { identityForRequest, identityBlock } from './_db'
 import { normalizeSheets } from './_validate'
 import { reserveStudioQuota, studioLimitMessage } from './_limits'
+import { pickDesign, designPayload } from './_design'
 
 function env(name: string): string | undefined {
   const v = process.env[name]
@@ -21,7 +22,7 @@ const LLM_MODEL = env('NALU_SHEET_MODEL') || 'thinkingmachines/Inkling'
 const SYSTEM = `You are a world-class spreadsheet engineer — better than anyone at Excel.
 Build exactly the spreadsheet the user asks for, with realistic, correct, useful data.
 
-IDENTITY: If the spreadsheet is about "Nalu" — or about the assistant/company itself, or no company is named — the company is **Nalu** (brand "Nalu AI", website n4lu.ai). NEVER invent or substitute a different company name (e.g. never "Nexus", "Nexus AI", "Acme"). Only use a different company name if the USER explicitly names one. NEVER use emojis, emoticons, or decorative symbols (no ✅ ✓ ❌ → • ★ etc.) anywhere in the output — clean professional typography only.
+IDENTITY: Write about "Nalu" (brand "Nalu AI", n4lu.ai) ONLY when the user's request is explicitly about Nalu, this assistant, or this app itself. For EVERY OTHER spreadsheet, build it GENERICALLY around the exact subject the user gave and do NOT insert "Nalu" anywhere — a generic request must never be branded "Nalu". If a company / firm / author name is needed and the user did NOT provide one, refer to it generically ("the company") or use a clear placeholder like "[Company Name]" — do NOT invent a name (never "Nexus", "Nexus AI", "Acme") and do NOT substitute "Nalu". Only use a specific company name the USER explicitly named. NEVER use emojis, emoticons, or decorative symbols (no ✅ ✓ ❌ → • ★ etc.) anywhere in the output — clean professional typography only.
 
 Output ONLY valid minified JSON (no markdown fences, no prose) of this exact shape:
 {"title": string, "sheets": [{"name": string, "columns": [string], "rows": [[cell]]}]}
@@ -199,16 +200,37 @@ function expandSpec(spec: any): { title: string; sheets: Array<{ name: string; c
   return sheets.length ? { title: String(spec.title || 'Model'), sheets } : null
 }
 
+// Escape literal control chars inside string values — the #1 reason model JSON fails.
+function escapeCtrlInStrings(s: string): string {
+  let out = '', inStr = false, esc = false
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]
+    if (inStr) {
+      if (esc) { out += ch; esc = false; continue }
+      if (ch === '\\') { out += ch; esc = true; continue }
+      if (ch === '"') { out += ch; inStr = false; continue }
+      if (ch === '\n') { out += '\\n'; continue }
+      if (ch === '\r') { out += '\\r'; continue }
+      if (ch === '\t') { out += '\\t'; continue }
+      out += ch; continue
+    }
+    if (ch === '"') inStr = true
+    out += ch
+  }
+  return out
+}
 function extractJson(text: string): unknown | null {
   let t = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
   t = t.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
   const i = t.indexOf('{')
   if (i === -1) return null
   const j = t.lastIndexOf('}')
-  if (j > i) {
-    try { return JSON.parse(t.slice(i, j + 1)) } catch { /* repair */ }
+  const body = j > i ? t.slice(i, j + 1) : t.slice(i)
+  const candidates = [body, repairJson(body), escapeCtrlInStrings(body), escapeCtrlInStrings(repairJson(body)), repairJson(escapeCtrlInStrings(body))]
+  for (const c of candidates) {
+    try { const v = JSON.parse(c); if (v && typeof v === 'object') return v } catch { /* next */ }
   }
-  try { return JSON.parse(repairJson(t.slice(i))) } catch { return null }
+  return null
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -310,12 +332,12 @@ export default async function handler(req: any, res: any) {
     }
     // 4) Deterministic domain-aware starter — instant, never fails.
     if (!result) result = fallbackWorkbook(prompt)
-    res.status(200).json({ title: result.title, sheets: result.sheets, name: 'Nalu Sheets' })
+    res.status(200).json({ title: result.title, sheets: result.sheets, design: designPayload(pickDesign(prompt, 'sheet')), name: 'Nalu Sheets' })
     succeeded = true
   } catch {
     // Absolute last resort — still hand back a usable starter, never an error.
     const fb = fallbackWorkbook(prompt)
-    res.status(200).json({ title: fb.title, sheets: fb.sheets, name: 'Nalu Sheets' })
+    res.status(200).json({ title: fb.title, sheets: fb.sheets, design: designPayload(pickDesign(prompt, 'sheet')), name: 'Nalu Sheets' })
     succeeded = true
   } finally {
     if (!succeeded) await quota.release()

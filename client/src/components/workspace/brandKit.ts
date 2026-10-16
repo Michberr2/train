@@ -3,6 +3,8 @@
 // artifact comes out on-brand. Hex values are stored WITHOUT '#' (the pptxgenjs
 // / docx APIs want bare hex); toRgb() gives [r,g,b] tuples for jsPDF.
 import { useSyncExternalStore, useMemo } from 'react'
+import { BRAND_KEY } from '../../lib/brandStorage'
+import { isolatedLogoSvg } from './logoSvg'
 import type { DesignArtifact } from './types'
 
 export type BrandKit = {
@@ -15,12 +17,38 @@ export type BrandKit = {
   subtle: string // hex, no '#' — muted text on dark bg
   headingFont?: string
   bodyFont?: string
+  logo?: string // FULL logo / lockup — renderable in <img src>: data:image/svg+xml,… | data:image/png;base64,… | URL
+  logoMark?: string // compact MARK / icon (favicon-style) — same renderable forms
 }
 
-// One global Brand Kit for the whole app — stored in localStorage, so it persists
-// across EVERY chat and every session (not per-chat). The "routine" primary brand.
-// v2 — re-seeds the Four Seasons house palette over any stale v1 default.
-const KEY = 'nalu.brandkit.v2'
+// Largest logo we'll persist. localStorage is ~5MB and the whole chats payload
+// shares it, so an oversized data-URL logo must be dropped rather than saved.
+const MAX_LOGO = 180000
+
+// Turn an inline SVG string into a renderable data URL (so a logo mark generated as
+// SVG can live in <img src> in the Brand bar, chips, and — later — on decks/docs).
+// Returns '' if empty or too big to persist safely.
+export function svgToLogoUrl(svg: string): string {
+  let s = (svg || '').trim()
+  if (!s) return ''
+  // <img> loads a data URL as a STANDALONE document — an SVG without the xmlns is
+  // parsed as generic XML and never paints. Inject it if the root <svg> lacks one.
+  if (/^<svg\b/i.test(s) && !/\bxmlns=/i.test(s)) s = s.replace(/^<svg\b/i, '<svg xmlns="http://www.w3.org/2000/svg"')
+  const url = 'data:image/svg+xml,' + encodeURIComponent(isolatedLogoSvg(s))
+  return url.length > MAX_LOGO ? '' : url // gate the ENCODED length (what actually persists)
+}
+
+// Drop logo(s) too large to persist safely (keeps localStorage/sync healthy).
+function capLogo<T extends { logo?: string; logoMark?: string }>(b: T): T {
+  const out = { ...b }
+  if (out.logo && out.logo.length > MAX_LOGO) out.logo = undefined
+  if (out.logoMark && out.logoMark.length > MAX_LOGO) out.logoMark = undefined
+  return out
+}
+
+// Account-owned working copy; sync archives it on logout and restores only the
+// verified owner's selection. The old dotted key is quarantined during login.
+const KEY = BRAND_KEY
 
 // The Nalu house brand — quiet luxury (Four Seasons). This is the
 // always-present default so every doc / deck / sheet / design is premium out of
@@ -34,6 +62,8 @@ export const DEFAULT_BRAND: BrandKit = {
   text: '1F1F1F', // Four Seasons --color-text-primary (crisp near-black body)
   onDark: 'FFFFFF',
   subtle: 'E4B96F', // light antique gold for subtitles on dark
+  logo: '/nalu-logo.png', // the full Nalu wordmark/lockup
+  logoMark: '/wolf-icon.png', // the Nalu wolf mark (compact icon)
 }
 
 // Live subscription so the BrandBar / cards update the instant the brand changes
@@ -45,13 +75,34 @@ function emit() {
 function subscribe(cb: () => void): () => void {
   listeners.add(cb)
   const onStorage = (e: StorageEvent) => {
-    if (e.key === KEY) cb()
+    if (e.key === KEY || e.key === 'nalu-data-owner' || e.key === null) cb()
   }
   window.addEventListener('storage', onStorage)
+  window.addEventListener('nalu-hydrated', cb)
+  window.addEventListener('nalu-session-cleared', cb)
   return () => {
     listeners.delete(cb)
     window.removeEventListener('storage', onStorage)
+    window.removeEventListener('nalu-hydrated', cb)
+    window.removeEventListener('nalu-session-cleared', cb)
   }
+}
+
+/** True when the active brand differs from the Nalu house default (by color OR fonts) —
+ *  i.e. the user actually set their own brand. Studio artifacts use this so the design
+ *  LANGUAGE drives the look (variety) while a CUSTOM brand contributes its accent + fonts
+ *  + logo — detected by VALUE, not the brand's name (editing colors leaves name "Nalu"). */
+export function isCustomBrand(b: BrandKit | null): boolean {
+  if (!b) return false
+  const d = DEFAULT_BRAND
+  return (
+    hexClean(b.primary) !== hexClean(d.primary) ||
+    hexClean(b.accent) !== hexClean(d.accent) ||
+    hexClean(b.dark) !== hexClean(d.dark) ||
+    hexClean(b.text) !== hexClean(d.text) ||
+    !!(b.headingFont && b.headingFont.trim()) ||
+    !!(b.bodyFont && b.bodyFont.trim())
+  )
 }
 
 export function hexClean(h?: string, fallback = '000000'): string {
@@ -81,7 +132,7 @@ function lum(hex: string): number {
 export function getBrand(): BrandKit | null {
   try {
     const raw = localStorage.getItem(KEY)
-    return raw ? (JSON.parse(raw) as BrandKit) : null
+    return raw ? (JSON.parse(raw) as BrandKit) : DEFAULT_BRAND
   } catch {
     return null
   }
@@ -89,7 +140,7 @@ export function getBrand(): BrandKit | null {
 
 export function setBrand(b: BrandKit | null): void {
   try {
-    if (b) localStorage.setItem(KEY, JSON.stringify(b))
+    if (b) localStorage.setItem(KEY, JSON.stringify(capLogo(b)))
     else localStorage.removeItem(KEY)
   } catch {
     /* ignore */
@@ -109,10 +160,15 @@ export function clearBrand(): void {
   setBrand(DEFAULT_BRAND)
 }
 
-/** Seed the house brand if nothing is set yet (called on workspace mount). */
-export function ensureDefaultBrand(): void {
-  if (!getBrand()) setBrand(DEFAULT_BRAND)
-}
+/** The default is a display fallback, never an automatic write over a server
+ * selection that is still loading. Explicit edits/reset are synchronized. */
+export function ensureDefaultBrand(): void { emit() }
+
+// The baseline "Nalu" brand (wolf mark + full Nalu logo on the house palette) is shown
+// as a BUILT-IN chip in the Brand bar — NOT persisted to the synced palette library —
+// so it's always there to work off without ever resurrecting a chip the user deleted or
+// fighting cross-device sync. See BrandBar's baseline chip.
+export const NALU_BASELINE: BrandKit = { ...DEFAULT_BRAND, name: 'Nalu' }
 
 /** Live React subscription to the active Brand Kit. */
 export function useBrand(): BrandKit | null {
@@ -129,7 +185,7 @@ export function useBrand(): BrandKit | null {
   )
   return useMemo(() => {
     try {
-      return raw ? (JSON.parse(raw) as BrandKit) : null
+      return raw ? (JSON.parse(raw) as BrandKit) : DEFAULT_BRAND
     } catch {
       return null
     }
@@ -166,9 +222,24 @@ export function getPalettes(): SavedPalette[] {
     return []
   }
 }
+// Total serialized budget for the WHOLE palette list. localStorage (~5MB) is shared
+// with chats, so logos (which can be ~180KB each × 2 per palette × 30) must be bounded
+// in AGGREGATE — otherwise a full library overflows quota and takes unrelated nalu-*
+// writes (chat persistence) down with it. Newest palettes keep their logos; older ones
+// shed logos (colors/fonts always survive) until the whole list fits.
+const PALETTES_BUDGET = 1_200_000
+function budgetPalettes(list: SavedPalette[]): SavedPalette[] {
+  const out = list.slice(0, 30)
+  const size = () => JSON.stringify(out).length
+  for (let i = out.length - 1; i >= 0 && size() > PALETTES_BUDGET; i--) {
+    if (out[i].logo || out[i].logoMark) out[i] = { ...out[i], logo: undefined, logoMark: undefined }
+  }
+  while (out.length > 1 && size() > PALETTES_BUDGET) out.pop() // last resort — drop oldest entries
+  return out
+}
 function setPalettes(list: SavedPalette[]): void {
   try {
-    localStorage.setItem(PALETTES_KEY, JSON.stringify(list.slice(0, 30)))
+    localStorage.setItem(PALETTES_KEY, JSON.stringify(budgetPalettes(list)))
   } catch {
     /* ignore */
   }
@@ -199,7 +270,7 @@ function notTrashed(list: SavedPalette[]): SavedPalette[] {
 /** Save a palette (defaults to the active brand) into the library. */
 export function savePalette(b: BrandKit): SavedPalette {
   const id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-  const item: SavedPalette = { ...b, id, name: b.name || 'Palette' }
+  const item: SavedPalette = capLogo({ ...b, id, name: b.name || 'Palette' })
   unTrash(sigOf(b)) // an explicit re-save un-deletes this color combo
   // de-dup by the four core colors so saving twice doesn't pile up
   const rest = getPalettes().filter((p) => sigOf(p) !== sigOf(b))

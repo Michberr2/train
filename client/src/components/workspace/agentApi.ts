@@ -1,3 +1,4 @@
+import { requestChat } from './chatRequest'
 // Streaming chat client for the Nalu workspace. Talks to /api/chat (OpenRouter
 // under the hood), decodes its SSE events (`delta`, `tool_call_delta`, `finish`,
 // `done`, `error`), and supports the tool-calling agent loop.
@@ -5,6 +6,8 @@
 // A user message can carry text + images (OpenAI vision parts). /api/chat routes
 // any message containing an image part to the Nalu Vision model.
 import { getModelSettings } from '../../lib/naluSettings'
+import { buildChatMemory } from './crossChatMemory'
+import { readChatStream } from './chatStream'
 
 export type ContentPart =
   | { type: 'text'; text: string }
@@ -337,6 +340,8 @@ export interface TurnResult {
   reasoning: string
   toolCalls: ToolCall[]
   autoResearch: boolean
+  error?: string
+  finishReason?: string
 }
 
 export interface RepoContext {
@@ -356,77 +361,33 @@ export async function streamChat(
   think?: number, // 0 off · 1 think · 2 ultrathink · 3 packmind
   // Agent pipelines force a specific Nalu specialist (bypasses keyword routing).
   specialist?: string,
+  // Only the MAIN interactive chat turn opts into cross-chat memory — NOT helper
+  // calls (captions, titles) or agent-pipeline steps, which shouldn't carry it.
+  wantMemory?: boolean,
+  // Per-call overrides of the user's global model settings. AutoPilot pipeline
+  // steps can research current facts using just their task instruction; attached
+  // records and prior outputs stay out of public search queries.
+  overrides?: { webSearch?: boolean; researchPrompt?: string },
 ): Promise<TurnResult> {
   const { onDelta, onReasoning, onError, onRoute, signal } = handlers
   let res: Response
   try {
-    res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, model, ...(tools && tools.length ? { tools } : {}), ...(context || {}), ...(think && think > 0 ? { think: true, thinkLevel: think } : {}), ...(specialist ? { specialist } : {}), ...(() => { const s = getModelSettings(); return { reasoning: s.reasoning, maxTokens: s.maxTokens, webSearch: s.webSearch } })() }),
-      signal,
-    })
-  } catch (e) {
-    onError?.(e instanceof Error ? e.message : 'Network error')
-    return { text: '', reasoning: '', autoResearch: false, toolCalls: [] }
+    res = await requestChat(JSON.stringify({ messages, model, useMemory: !!wantMemory, ...(tools && tools.length ? { tools } : {}), ...(context || {}), ...(think && think > 0 ? { think: true, thinkLevel: think } : {}), ...(specialist ? { specialist } : {}), ...(() => { const s = getModelSettings(); return { reasoning: s.reasoning, maxTokens: s.maxTokens, webSearch: overrides?.webSearch ?? s.webSearch, ...(overrides?.researchPrompt !== undefined ? { researchPrompt: overrides.researchPrompt } : {}), ...(s.systemPrompt && s.systemPrompt.trim() ? { systemPrompt: s.systemPrompt } : {}) } })(), ...(wantMemory ? (() => { try { const mem = buildChatMemory(messages); return mem ? { memory: mem } : {} } catch { return {} } })() : {}) }), signal)
+  } catch {
+    const error = signal?.aborted ? undefined : 'Couldn’t reach Nalu — check your connection and try again.'
+    if (error) onError?.(error)
+    return { text: '', reasoning: '', autoResearch: false, toolCalls: [], error }
   }
   if (!res.ok || !res.body) {
-    onError?.(`Server ${res.status}`)
-    return { text: '', reasoning: '', autoResearch: false, toolCalls: [] }
+    // Human-friendly copy instead of a raw "Server 504"; the status still hints at cause.
+    const msg = res.status === 429
+      ? 'Nalu is receiving too many requests. Please try again shortly.'
+      : res.status >= 500
+        ? 'Nalu could not connect after retrying. Your request is saved; tap Retry to try again.'
+        : 'Something went wrong with that request. Please try again.'
+    onError?.(msg)
+    return { text: '', reasoning: '', autoResearch: false, toolCalls: [], error: msg }
   }
 
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder('utf-8')
-  let buf = ''
-  let event = ''
-  let text = ''
-  let reasoning = ''
-  let autoResearch = false
-  const calls: Record<number, ToolCall> = {}
-
-  for (;;) {
-    let chunk
-    try {
-      chunk = await reader.read()
-    } catch {
-      break
-    }
-    if (chunk.done) break
-    buf += decoder.decode(chunk.value, { stream: true })
-    let idx
-    while ((idx = buf.indexOf('\n')) !== -1) {
-      const line = buf.slice(0, idx).replace(/\r$/, '')
-      buf = buf.slice(idx + 1)
-      if (line.startsWith('event:')) {
-        event = line.slice(6).trim()
-      } else if (line.startsWith('data:')) {
-        const payload = line.slice(5).trim()
-        let data: { text?: string; message?: string; index?: number; id?: string; name?: string; kind?: string; arguments?: string; autoResearch?: boolean } = {}
-        try {
-          data = JSON.parse(payload)
-        } catch {
-          /* ignore */
-        }
-        if (event === 'route' && typeof data.name === 'string') {
-          if (data.autoResearch) autoResearch = true
-          onRoute?.(data.name, data.kind)
-        } else if (event === 'reasoning' && typeof data.text === 'string') {
-          reasoning += data.text
-          onReasoning?.(data.text)
-        } else if (event === 'delta' && typeof data.text === 'string') {
-          text += data.text
-          onDelta?.(data.text)
-        } else if (event === 'tool_call_delta') {
-          const i = data.index ?? 0
-          if (!calls[i]) calls[i] = { id: data.id || `call_${i}`, type: 'function', function: { name: '', arguments: '' } }
-          if (data.id) calls[i].id = data.id
-          if (data.name) calls[i].function.name += data.name
-          if (data.arguments) calls[i].function.arguments += data.arguments
-        } else if (event === 'error') {
-          onError?.(data.message || 'Error')
-        }
-      }
-    }
-  }
-  return { text, reasoning, autoResearch, toolCalls: Object.values(calls).filter((c) => c.function.name) }
+  return readChatStream(res.body, handlers)
 }

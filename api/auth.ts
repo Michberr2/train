@@ -1,8 +1,9 @@
 // Nalu auth — server-side accounts in Neon Postgres, shared across n4lu.ai/.com.
 // POST { action: 'signup'|'signin'|'me'|'signout', ... }
 import { cors } from './_cors'
-import { getClient, ensureSchema, hashPassword, newSalt, newToken, readToken, safeJson, sha256, newRecoveryCode, normalizeRecoveryCode } from './_db'
+import { getClient, ensureSchema, hashPassword, newSalt, newToken, readToken, safeJson, sha256, newRecoveryCode, normalizeRecoveryCode, userIdForToken, normalizePhone } from './_db'
 import { sendEmail, resetEmail } from './_email'
+import { cloudflareAuth } from './_cloudflareAuth'
 
 const MIN_PASSWORD = 8
 
@@ -27,6 +28,7 @@ export default async function handler(req: any, res: any) {
   }
   const body = (typeof req.body === 'string' ? safeJson(req.body) : req.body) || {}
   const action = String(body.action || '')
+  if (process.env.NALU_STORAGE_BACKEND === 'cloudflare') return cloudflareAuth(req, res, body)
 
   const client = getClient()
   try {
@@ -55,14 +57,14 @@ export default async function handler(req: any, res: any) {
       const token = newToken()
       await client.query('INSERT INTO nalu_sessions (token, user_id) VALUES ($1, $2)', [token, id])
       // recoveryCode is shown ONCE so they can reset their password without email.
-      return res.status(200).json({ ok: true, user: { id, displayName }, token, recoveryCode })
+      return res.status(200).json({ ok: true, user: { id, displayName, phone: null }, token, recoveryCode })
     }
 
     if (action === 'signin') {
       const id = String(body.email || '').trim().toLowerCase()
       const password = String(body.password || '')
       const invalid = { ok: false, error: 'Incorrect email/username or password.' }
-      const r = await client.query('SELECT display_name, salt, hash, recovery_hash FROM nalu_users WHERE id = $1', [id])
+      const r = await client.query('SELECT display_name, salt, hash, recovery_hash, phone FROM nalu_users WHERE id = $1', [id])
       const u = r.rows[0]
       if (!u) return res.status(401).json(invalid)
       if (hashPassword(password, u.salt) !== u.hash) return res.status(401).json(invalid)
@@ -75,18 +77,42 @@ export default async function handler(req: any, res: any) {
         recoveryCode = newRecoveryCode()
         await client.query('UPDATE nalu_users SET recovery_hash = $1 WHERE id = $2', [sha256(normalizeRecoveryCode(recoveryCode)), id])
       }
-      return res.status(200).json({ ok: true, user: { id, displayName: u.display_name }, token, ...(recoveryCode ? { recoveryCode } : {}) })
+      return res.status(200).json({ ok: true, user: { id, displayName: u.display_name, phone: u.phone ?? null }, token, ...(recoveryCode ? { recoveryCode } : {}) })
     }
 
     if (action === 'me') {
       const token = readToken(req)
       if (!token) return res.status(200).json({ user: null })
       const r = await client.query(
-        `SELECT u.id, u.display_name FROM nalu_sessions s JOIN nalu_users u ON u.id = s.user_id WHERE s.token = $1`,
+        `SELECT u.id, u.display_name, u.phone FROM nalu_sessions s JOIN nalu_users u ON u.id = s.user_id WHERE s.token = $1`,
         [token],
       )
       const u = r.rows[0]
-      return res.status(200).json({ user: u ? { id: u.id, displayName: u.display_name } : null })
+      return res.status(200).json({ user: u ? { id: u.id, displayName: u.display_name, phone: u.phone ?? null } : null })
+    }
+
+    // Update the signed-in user's profile (display name and/or phone number).
+    // Authed by Bearer token. Phone is normalized to E.164; send '' to clear it.
+    if (action === 'update-profile') {
+      const userId = await userIdForToken(client, readToken(req))
+      if (!userId) return res.status(401).json({ ok: false, error: 'not authenticated' })
+      const sets: string[] = []
+      const vals: unknown[] = []
+      if (typeof body.displayName === 'string' && body.displayName.trim()) {
+        vals.push(body.displayName.trim().slice(0, 80)); sets.push(`display_name = $${vals.length}`)
+      }
+      if (body.phone !== undefined) {
+        const raw = String(body.phone || '').trim()
+        const phone = raw ? normalizePhone(raw) : ''
+        if (raw && !phone) return res.status(400).json({ ok: false, error: 'That doesn’t look like a valid phone number. Include the country code, e.g. +1 415 555 1234.' })
+        vals.push(phone || null); sets.push(`phone = $${vals.length}`)
+      }
+      if (!sets.length) return res.status(400).json({ ok: false, error: 'nothing to update' })
+      vals.push(userId)
+      await client.query(`UPDATE nalu_users SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals)
+      const r = await client.query('SELECT id, display_name, phone FROM nalu_users WHERE id = $1', [userId])
+      const u = r.rows[0]
+      return res.status(200).json({ ok: true, user: { id: u.id, displayName: u.display_name, phone: u.phone ?? null } })
     }
 
     if (action === 'signout') {

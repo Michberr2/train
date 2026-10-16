@@ -1,6 +1,7 @@
-training/.venv
-training/flywheel.log
+training
 test-results
 photos
 ltx-server
 node_modules
+nalu-for-chrome
+tests/quality

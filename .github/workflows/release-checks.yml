@@ -1,0 +1,76 @@
+name: Release checks
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+    inputs:
+      preview_url:
+        description: Existing HTTPS deployment to verify (no publication)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/offline-release-checks.mjs
+
+  sibling-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: train
+      - uses: actions/checkout@v4
+        with:
+          repository: Michberr2/nalumobile
+          ref: ${{ vars.NALU_MOBILE_REVIEWED_REF || 'main' }}
+          path: nalumobile
+          token: ${{ secrets.NALU_REPO_READ_TOKEN || github.token }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: Michberr2/nalu-desktop
+          ref: ${{ vars.NALU_DESKTOP_REVIEWED_REF || 'main' }}
+          path: naludesktop
+          token: ${{ secrets.NALU_REPO_READ_TOKEN || github.token }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: train/package-lock.json
+      - run: npm ci
+        working-directory: train
+      - run: node scripts/check-nalu-sync.mjs
+        working-directory: train
+      - run: node --experimental-strip-types scripts/native-chat-contract-regressions.mjs
+        working-directory: train
+
+  preview:
+    if: github.event_name == 'workflow_dispatch' && inputs.preview_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [offline, sibling-contracts]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify the existing preview without changing it
+        env:
+          PREVIEW_URL: ${{ inputs.preview_url }}
+        run: node scripts/preview-release-checks.mjs "$PREVIEW_URL"

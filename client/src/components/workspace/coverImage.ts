@@ -12,17 +12,16 @@ const url = coverImageUrl
 
 async function fetchBlob(desc: string, w: number, h: number, timeoutMs: number): Promise<Blob | null> {
   if (!desc || !desc.trim()) return null
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const ctrl = new AbortController()
-    const t = setTimeout(() => ctrl.abort(), timeoutMs)
     const r = await fetch(url(desc, w, h), { signal: ctrl.signal })
-    clearTimeout(t)
     if (!r.ok) return null
     const blob = await r.blob()
     return blob.size > 1000 && blob.type.startsWith('image/') ? blob : null
   } catch {
     return null
-  }
+  } finally { clearTimeout(t) }
 }
 
 /** Data URL (data:image/...;base64,...) — for pptxgenjs addImage + jsPDF addImage. */

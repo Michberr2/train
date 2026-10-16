@@ -46,6 +46,7 @@ export default function AuthModal({
   // show it ONCE and hold the user until they've saved it.
   const [recoveryCode, setRecoveryCode] = useState<string | null>(null)
   const [pendingUser, setPendingUser] = useState<PublicUser | null>(null)
+  const [pendingToken, setPendingToken] = useState<string | null>(null)
 
   // Clear transient state whenever the modal opens or the user switches tabs.
   useEffect(() => {
@@ -58,6 +59,7 @@ export default function AuthModal({
     setResetSent(false)
     setRecoveryCode(null)
     setPendingUser(null)
+    setPendingToken(null)
   }, [open, mode])
 
   // Route a successful auth: if a recovery code came back, show it first; else go.
@@ -65,6 +67,7 @@ export default function AuthModal({
     if (recovery) {
       setRecoveryCode(recovery)
       setPendingUser(user)
+      setPendingToken(localAuth.getToken())
     } else {
       onAuthed(user)
     }
@@ -82,7 +85,8 @@ export default function AuthModal({
         if (!res.ok) { setError(res.error); return }
         finishAuth(res.user, res.recoveryCode)
       } else {
-        await localAuth.requestReset(id)
+        const res = await localAuth.requestReset(id)
+        if (!res.ok) { setError('Could not send the reset link. Please try again.'); return }
         setResetSent(true) // always: the server won't say whether the account exists
       }
     } catch {
@@ -200,7 +204,12 @@ export default function AuthModal({
                 </p>
                 <button
                   type="button"
-                  onClick={() => { const u = pendingUser; setRecoveryCode(null); setPendingUser(null); if (u) onAuthed(u) }}
+                  onClick={() => {
+                    const u = pendingUser
+                    setRecoveryCode(null); setPendingUser(null); setPendingToken(null)
+                    if (u && pendingToken && pendingToken === localAuth.getToken()) onAuthed(u)
+                    else setError('The account changed. Please sign in again.')
+                  }}
                   className="px-6 py-3 rounded-xl bg-primary text-surface font-medium hover:shadow-md transition-all duration-200 text-sm"
                 >
                   I've saved it — continue
@@ -269,7 +278,7 @@ export default function AuthModal({
                         />
                       </>
                     )}
-                    {error && <p className="text-red-500 text-sm">{error}</p>}
+                    {error && <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>}
                     <button
                       type="submit"
                       disabled={loading}
@@ -349,7 +358,7 @@ export default function AuthModal({
                 />
               )}
 
-              {error && <p className="text-red-500 text-sm">{error}</p>}
+              {error && <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>}
 
               <button
                 type="submit"

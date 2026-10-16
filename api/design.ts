@@ -1,3 +1,4 @@
+import { enforceLogoName, logoRequestText, LOGO_NAME_RULE } from './_logoFidelity'
 // Nalu Studio — Vercel Node serverless function (extends "Nalu Design").
 //
 // One endpoint, many artifact kinds. Switches on body.kind:
@@ -14,8 +15,14 @@
 import { cors } from './_cors'
 import { chatComplete, primaryProvider, fallbackProvider } from './_llm'
 import { research } from './web'
+import { groundResearch } from './_grounding'
+import { generateWebsite, WEBSITE_SYSTEM, WebsiteRuntimeUnavailableError } from './_websiteGeneration'
+import { cancellationSignal, throwIfCancelled, waitWithCancellation, withRequestCancellation } from './_requestCancellation'
 import { identityForRequest, identityBlock } from './_db'
 import { reserveStudioQuota, studioLimitMessage } from './_limits'
+import { generateMotion, motionBrandHint, motionSpec, motionSystem } from './_motionGeneration'
+import { generateMotionScene, motionSceneBrandHint, motionSceneSystem } from './_motionSceneGeneration'
+import { motionAssetRoute } from './_motionAssets'
 
 function env(name: string): string | undefined {
   const v = process.env[name]
@@ -24,6 +31,11 @@ function env(name: string): string | undefined {
 
 const LLM_KEY = env('TINKER_API_KEY') || ''
 const LLM_MODEL = env('NALU_DESIGN_MODEL') || 'thinkingmachines/Inkling'
+// The comparison favored Inkling's latency and completed-output quality;
+// Kimi provides another capable builder when generation or repair fails.
+const WEBSITE_MODEL = env('NALU_WEBSITE_MODEL') || LLM_MODEL
+const WEBSITE_FALLBACK_MODEL = env('NALU_WEBSITE_FALLBACK_MODEL') || 'moonshotai/Kimi-K2.6:peft:131072'
+const WEBSITE_EDIT_MODEL = env('NALU_WEBSITE_EDIT_MODEL') || LLM_MODEL
 // A SINGLE provider per call so timeoutMs is a TRUE hard cap. The default chain
 // fails over sequentially (primary times out at 215s → then fallback runs → 295s+
 // → 504). Tinker (primary) is reliable, so bound it hard; completeHtml repairs a
@@ -65,10 +77,11 @@ function deriveUrl(prompt: string, kind: string): string | null {
 }
 
 async function fetchText(url: string, ms: number): Promise<string> {
+  throwIfCancelled()
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), ms)
   try {
-    const r = await fetch(url, { headers: { 'User-Agent': BROWSER_UA, Accept: 'text/html,text/css,*/*' }, signal: ctrl.signal, redirect: 'follow' })
+    const r = await fetch(url, { headers: { 'User-Agent': BROWSER_UA, Accept: 'text/html,text/css,*/*' }, signal: cancellationSignal(ctrl.signal), redirect: 'follow' })
     return r.ok ? await r.text() : ''
   } catch {
     return ''
@@ -179,128 +192,7 @@ const LUXE_BASELINE = `NALU DESIGN BASELINE — quiet, timeless luxury (think Fo
 - Typography: PREFER an elegant high-contrast display serif — **Playfair Display** (or Cormorant Garamond / Fraunces) — for headlines at a refined LIGHT weight, paired with **Work Sans** (or Jost / Inter) for body. Load both from Google Fonts. Use UPPERCASE, widely letter-spaced (0.2–0.3em) small labels. Mix in occasional italic-serif emphasis.
 - Thin hairline rules, refined detailing, real specific copy — never lorem ipsum, never a stale year (use 2026 if needed).`
 
-// The world-class execution spec — distilled from research on Awwwards Site
-// of the Year winners (Lando Norris/OFF+BRAND, Messenger, Igloo Inc), the top
-// WebGL studios (Lusion, Active Theory, Unseen), the craft systems of
-// Apple/Linear/Stripe/Vercel, and the documented "AI slop" tells to ban.
-const WORLD_CLASS_SPEC = `WORLD-CLASS EXECUTION SPEC — every site must compete with Awwwards winners (judges weight Design 40% / Usability 30% / Creativity 20% / Content 10%; polish and hierarchy beat effect count):
-
-STRUCTURE & LAYOUT
-- Hero is 100svh, dominated by display type spanning 85-95% of viewport width. NEVER center-stack every section — compose on a 12-column grid with 4-6vw outer margins: asymmetric spans (heading cols 1-8, supporting copy cols 9-12; 7/5 or 8/4 media/text splits), and let at least one element bleed across a section boundary.
-- Alternate density: a full-bleed image/WebGL section, then a sparse editorial section with 20-30vh padding. Section padding 120-240px desktop and VARIED — identical padding on every section is the #1 template tell. Polarity-flip at least one band (light canvas → near-black band → light) as a pacing cue.
-- Include at least ONE of these award-site signatures: a pinned section (position:sticky headline/media while content scrolls past, driving a counter/text-swap/transform), a horizontal-scroll gallery (tall container, track translateX driven by scroll), or an infinite text marquee (6-10vw uppercase, content duplicated 2x, 20-40s linear loop).
-- Number sections in small mono uppercase meta ("01 — Work"). End with an OVERSIZED footer: a 10-16vw wordmark or CTA, roll-up contact links, small mono meta (year, city, time). No preloader — first paint must be instant.
-
-TYPOGRAPHY (max 2 Google Font families)
-- One distinctive DISPLAY voice + one quiet body face. Premium Google-Fonts picks — display: Bricolage Grotesque, Archivo (Expanded, 800-900), Unbounded, Newsreader, Cormorant Garamond, Libre Caslon Display, Anton; body: Work Sans, Source Sans 3, IBM Plex Sans, Inter (body ONLY, never as display). NEVER Inter/Roboto/Poppins/system-ui as the display face.
-- Hero display: font-size clamp(3.5rem, 10vw, 11rem), line-height 0.85-0.95, letter-spacing -0.02em to -0.04em, weight 400-650 (never blanket 700+ everywhere). Jump straight from giant display to 16-18px body — skip middling sizes. Labels/eyebrows: 11-12px uppercase mono, letter-spacing 0.08-0.14em. tabular-nums on all stats. text-wrap:balance on headings.
-- Body ink is tinted, never pure black-on-white (#171717 on #F7F5F1, or #E8E6E1 on #0E0E0E). Body max-width 60-72ch, line-height 1.5-1.6.
-
-COLOR & TEXTURE
-- Exactly 3 colors: a near-black (#0A0A0A-#141414) or warm off-white (#F4F1EA) ground, its opposite for type, plus ONE saturated accent (acid lime, electric blue, signal orange, oxblood — pick what fits the SUBJECT) at <10% of surface — CTAs, links, one highlighted word. BANNED: indigo/violet SaaS defaults (#6366F1/#8B5CF6), blue-to-purple gradients, gradient text, glowing purple orbs, colored left-border cards.
-- Texture beats flatness: a full-page SVG feTurbulence grain overlay at 3-5% opacity (pointer-events:none), hairline 1px dividers at 10-15% foreground opacity. No shadow-lg-on-everything: dark themes use layered surfaces + hairlines (no shadows); light themes use stacked subtle shadows with an inset hairline.
-- NO row of 3+ identical icon-cards. Use a bento grid with mixed spans, an editorial numbered list with hairline dividers, or alternating 7/5 media+text rows instead.
-
-MOTION CHOREOGRAPHY (one easing family site-wide: cubic-bezier(0.16,1,0.3,1))
-- Hero reveal: split the headline by LINE, each line in an overflow:hidden mask, translateY(110%)→0, 0.9-1.2s, 0.08-0.12s stagger — never fade the whole block.
-- Scroll reveals (IntersectionObserver, once, ~15% visibility): opacity 0→1 + translateY 48px→0 with 0.06-0.1s sibling stagger. Images reveal via clip-path inset(100% 0 0 0)→inset(0) or scale 1.12→1 inside an overflow-hidden frame, with 10-20% parallax inside the mask.
-- Micro-interactions 150-300ms ease-out on EVERY interactive element: link hovers use the roll-up duplicate pattern (two stacked copies in an overflow:hidden span, hover translateY -100%); buttons get a real hover shift. Animate ONLY transform/opacity. Respect prefers-reduced-motion.
-- Stats count up from 0 on first view (1-1.5s, tabular-nums).
-
-COPY & CONTENT
-- Headlines: short, concrete, specific — a real noun/number a competitor couldn't claim ("Bread proofed 48 hours." not "Elevate your mornings"). BAN: streamline, empower, seamless, unlock, elevate, world-class, "Build the future".
-- Every section carries genuinely written, subject-specific content — real menu items with prices, real names, real hours/addresses. Specificity IS the design.
-
-SELF-CHECK before finishing — fix any hit: (1) every section centered, (2) any row of 3+ identical cards, (3) uniform rounded-2xl + shadow everywhere, (4) generic font at default tracking for headings, (5) purple-blue gradient anywhere, (6) identical section padding throughout, (7) a hero under 80vh, (8) mobile menu visible on desktop.`
-
-const SYSTEM_HTML = `You are an award-winning front-end designer & engineer (Awwwards / FWA caliber). Output ONE complete, self-contained, downloadable .html file that FULLY implements the request.
-
-BUILD EXACTLY WHAT THE USER ASKED FOR — first identify the type, then build THAT:
-- Marketing / landing page → the rich multi-section layout in the "FOR A MARKETING / LANDING PAGE" block below.
-- Web app, SaaS tool, dashboard, admin panel, calculator, form, editor, quiz, game, or interactive component → a FUNCTIONAL UI with REAL WORKING interactivity (vanilla-JS state and event handlers) in the layout that type actually needs (app shell, sidebar, toolbar, canvas, data tables, inputs, controls) — NOT a hero-and-testimonials marketing page.
-- STORAGE — HARD RULE: the preview runs in a sandboxed iframe where localStorage/sessionStorage THROW SecurityError and one unguarded call at script top level kills ALL your JavaScript. NEVER access localStorage/sessionStorage/document.cookie directly — keep all state in plain JS variables/objects. If persistence would genuinely help, wrap every storage touch in its own try/catch — but in-memory state is always the right default.
-- Multi-page site → build EVERY page in this ONE file with client-side navigation (JS show/hide or hash routing) and a shared nav; every page fully built, not just a home page.
-Match the request's real purpose, content, and structure. Use the landing-page structure ONLY when the user actually wants a landing/marketing page; otherwise ignore it and build the thing they asked for, to the same quality bar.
-
-DEFAULT FOR A "WEBSITE" / "SITE" REQUEST (when they don't specifically say "landing page"): build a MULTI-PAGE site — a Home page PLUS 3–5 real, fully-written pages chosen to fit the subject (e.g. About, Services/Features, Work/Portfolio/Gallery, Pricing, Blog, Contact) — with a shared nav and WORKING client-side routing (hash routing or JS show/hide) so clicking a nav link actually switches the visible page and the back/forward buttons work. Every page must be complete and substantive (real copy, sections, images) — never a stub, placeholder, or "coming soon". Highlight the active nav link. This is a real, multi-page, fully-functional website.
-
-FULLY BAKED — NO SKELETONS, EVER (hard rule, regardless of how short the user's ask was): a one-line request gets the SAME finished, rich site as a detailed spec. Home = hero + 5-8 substantive sections. EVERY secondary page = its own intro header + at least 3 real sections of genuinely written content (real menu items with prices, real service descriptions, real team bios, real FAQ answers, plausible addresses/hours/testimonials with names) — never one heading with a sentence under it. If you would ship a section with under ~40 words of real copy, write more instead. A page that feels like a wireframe or template is a FAILED build.
-
-${WORLD_CLASS_SPEC}
-
-ART DIRECTION — commit HARD to one direction that fits THIS subject: name it to yourself first (brutalist editorial? sun-bleached analog? Swiss technical? quiet luxury? acid streetwear?), then execute it in every token — a bakery, a law firm, a skate brand and a SaaS should produce sites that look NOTHING alike. You statistically converge on centered heroes, safe fonts and template blue — make a different, subject-specific choice every time.
-
-COLORS — TOP PRIORITY: if the user names ANY colors, palette, theme, brand, or vibe (or a brand kit / palette is provided below), use THAT EXACTLY as the entire color scheme (still applying the spec's restraint rules). Never override the user's requested colors.
-
-Output ONLY the raw HTML — start with <!doctype html> and end with </html>. No markdown fences, no explanation.
-
-FOR A MARKETING / LANDING PAGE — build a complete, polished, rich site, every section fully designed:
-- A real multi-section page: sticky nav, the 100svh display-type hero over the WebGL scene, then 6–9 substantive sections (features/experiences, how-it-works, a gallery/showcase, a stats row, testimonials, pricing or offerings, FAQ, a closing CTA, and the oversized footer). Real, specific, evocative copy — never lorem ipsum, never sparse.
-- HERO: display type + the living WebGL photo scene per the WEBGL section, a small uppercase mono eyebrow, a one-line tagline, ONE clear CTA. The first impression must be stunning and TRUE TO THE SUBJECT (a fintech hero, a streetwear hero, and a luxury-resort hero should look nothing alike).
-- DENSITY: each section needs a clear eyebrow + headline + supporting copy and real content (bento grids, an image row, numbers, quotes) with the VARIED section padding from the spec. Never a thin one-liner section. The finished page should feel substantial and editorial, never empty.
-
-NAVIGATION — get this exactly right (these are common failures):
-- ONE responsive nav bar. On DESKTOP: a single horizontal row — brand left, links right (smooth-scroll anchors). On MOBILE: links collapse into a hamburger that toggles a menu.
-- The hamburger MUST be hidden on desktop, and the desktop links MUST be hidden on mobile — use a media query so EXACTLY ONE is visible at any width. NEVER show both, and never leave a vertical stack of links floating on desktop.
-- THE MOBILE MENU IS CLOSED ON LOAD — use this exact known-good skeleton (restyle freely):
-  <div id="mnav" hidden> …links… </div> with <button id="burger" onclick="mnav.hidden=!mnav.hidden"> — the hidden ATTRIBUTE (not a class the JS must add) guarantees it starts closed even if scripts fail, and #mnav is display:none on desktop via media query. A mobile menu open on desktop load is an automatic failure.
-- LEGIBILITY IS MANDATORY: the nav must have a SEMI-OPAQUE on-brand background — the design's OWN dark/primary color at ~80% opacity (e.g. rgba(r,g,b,0.82)) WITH backdrop-blur — it must NOT be fully transparent and must NOT default to navy unless that's the brand. Nav text/links must be a LIGHT color (near-white / soft gold) with strong contrast against that navy glass, readable over ANY hero image, with a clear hover state. Test: the links must be obviously readable on top of a bright photo.
-- The brand/logo in the nav must be a TEXT wordmark or INLINE SVG — NEVER an <img> tag for the logo (it can fail and show a broken-image icon). Likewise never use an <img> for icons; use inline SVG.
-
-FULLY RESPONSIVE — DESKTOP AND MOBILE ARE BOTH PRIMARY SUCCESS CRITERIA. The site must be flawless and beautiful on a 1440px desktop AND a 375px phone — this is non-negotiable, not an afterthought:
-- Include <meta name="viewport" content="width=device-width, initial-scale=1">. Build mobile-first, then layer up with min-width media queries (or Tailwind's sm:/md:/lg: breakpoints). EVERY section must have explicit mobile styles.
-- NO horizontal scroll ever (no fixed-width elements wider than the viewport). Multi-column grids/flex rows collapse to ONE column on phones. Use fluid type clamp() for ALL large headings so the hero text never overflows. Tap targets ≥44px. Images max-width:100%, height:auto.
-- The hamburger menu MUST appear and work on mobile (and be hidden on desktop); desktop links hidden on mobile — exactly one visible at any width. Section padding shrinks on small screens (e.g. py-24 desktop → py-12 mobile). The 4K hero stays object-fit:cover and its text recenters/shrinks to fit a phone.
-- Self-check before finishing: mentally render at 375px — is anything cut off, overflowing, overlapping, or too small to tap? Fix it. The phone experience must be as polished as the desktop one.
-
-IMAGES — every image MUST load AND match the subject (themed, not random). Mismatched stock photos are the #1 reason a page looks cheap; themed photography is what makes it look premium like a real brand:
-- THE HERO USES THE WEBGL SCENE, NOT A PHOTO (see the WEBGL section — never cover the canvas with an image). Only when the page genuinely skips WebGL (plain document-like page / user said no 3D) does the hero get a photo instead — then it MUST be 4K and razor-sharp: https://image.pollinations.ai/prompt/<URL-ENCODED-SPECIFIC-DESC>?width=3840&height=2160&nologo=true&model=flux&seed=<n> with width:100%, height:100%, object-fit:cover.
-- GALLERY / feature images (the other mood-setters): Pollinations at high res — https://image.pollinations.ai/prompt/<URL-ENCODED-SPECIFIC-DESC>?width=1920&height=1280&nologo=true&model=turbo&seed=<n> (model=turbo for speed). For ALL themed images write a SPECIFIC, evocative scene (e.g. "luxury oceanfront infinity pool at golden hour, modern villa, serene cinematic" or "sunlit minimalist bedroom with linen, coastal light"). Up to ~4 themed images.
-- Picsum is FORBIDDEN for anything content-bearing (gallery tiles, feature cards, team, menu items) — random stock photos of skyscrapers on a bakery site scream template. Picsum is ONLY for tiny incidental decoration (avatars) and onerror fallbacks; every visible content image must be a THEMED Pollinations scene.
-- EVERY <img> MUST be bullet-proof so a failure NEVER shows a broken icon: width + height (or aspect-ratio), object-fit:cover, loading="lazy", a brand-tone CSS background placeholder, AND an onerror that falls back to Picsum:  onerror="this.onerror=null;this.src='https://picsum.photos/seed/'+Math.floor(Math.random()*9999)+'/'+this.width+'/'+this.height'"
-- Total images ≤ 7. Keep first paint fast.
-
-ANIMATION & POLISH (tasteful, performant — never gaudy):
-- Scroll-reveal: use an IntersectionObserver in vanilla JS to add an "in" class that fades/translates sections in as they enter the viewport (define the transitions in CSS). Stagger children.
-- Smooth micro-interactions: hover lifts on cards/buttons, animated underlines, a subtle gradient or parallax in the hero, a sticky nav that condenses on scroll, smooth-scroll for anchor links.
-- Respect prefers-reduced-motion. Keep 60fps (transform/opacity only).
-
-WEBGL — REQUIRED AND IT MUST BE SEEN. Every Nalu landing/marketing/multi-page site ships with a real-time WebGL scene as its visual signature (skip ONLY for plain document-like pages or when the user says no 3D). The gold standard is SCROLL-DRIVEN WEBGL STORYTELLING (Lusion / Awwwards-SOTD style, e.g. everswap.com): the whole site feels like ONE continuous 3D world that the visitor travels through as they scroll. Build it like this:
-- ONE fixed full-viewport canvas behind the ENTIRE page: <canvas id="gl" style="position:fixed;inset:0;z-index:0;pointer-events:none"> as the FIRST element of <body>, and put the importmap + WebGL module script IMMEDIATELY after it (before all page content) — first-in-body means the scene always boots even if later markup has problems. ALL page content lays above it (a positioned wrapper with z-index:1). Sections use transparent or semi-translucent backgrounds so the scene stays visible while scrolling — NEVER bury the canvas under opaque section backgrounds or photos (the #1 failure).
-- SCROLL = CAMERA: map native scroll to the journey — const progress = scrollY / (document.documentElement.scrollHeight - innerHeight) — and LERP the camera along a path through the scene (position/rotation keyed to progress), so each page section is a "chapter" of the world: geometry drifts in/out, colors shift, the formation reorganizes as you scroll. Keep native scrolling (no hijack); ease everything (cam.position.lerp / value += (target-value)*0.05) so motion feels liquid.
-- STYLIZED / DUOTONE (NPR) LOOK: pick TWO brand colors (a light + a deep tone) and build the whole scene from them — flat-shaded MeshToonMaterial / MeshBasicMaterial geometry, vertex-colored particle fields, wireframes, THREE.Fog(deepColor) for depth fade. Illustrated and graphic like a shader-crafted world, NOT photoreal lighting.
-- THE SCENE IS BUILT FROM REAL IMAGERY — this is the hard rule that makes it read as a crafted site instead of a tech demo. Load a THEMED Pollinations photograph as a WebGL TEXTURE and make IT the scene: a full-bleed cinematic photo hero that visibly FLOWS — liquid/wave distortion rippling through the image, a ripple that follows the mouse, slow drift, subtle RGB split. The result looks like an actual living photograph, NOT abstract dots/wireframes. (Particles are allowed only as a LIGHT garnish over the imagery, never as the whole scene.)
-- FAIL-OPEN TO THE PHOTO — mandatory belt-and-suspenders: the hero element ALSO carries the SAME image as a CSS background (background:url(<same-pollinations-url>) center/cover, plus a dark scrim for text) BEHIND the transparent canvas, and the render loop STARTS ONLY inside the texture's onLoad callback. Until the texture is ready (or if WebGL fails entirely) the visitor sees the actual cinematic photo — NEVER a black or empty hero. When the texture loads, the living shader version takes over seamlessly.
-Implementation — use exactly this proven pattern (fullscreen photo quad + distortion fragment shader):
-<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"}}</script>
-<script type="module">
-try {
-  const THREE = await import('three');
-  const canvas = document.getElementById('gl');
-  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  const scene = new THREE.Scene();
-  const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-  const IMG = 'https://image.pollinations.ai/prompt/<URL-ENCODED-CINEMATIC-SCENE>?width=1920&height=1080&nologo=true&model=turbo&seed=7'; // SAME url as the hero CSS background
-  const u = { uTex: { value: null }, uTime: { value: 0 }, uMouse: { value: new THREE.Vector2(0.5, 0.5) }, uScroll: { value: 0 }, uRes: { value: new THREE.Vector2(1, 1) }, uImg: { value: new THREE.Vector2(1920, 1080) } };
-  const mat = new THREE.ShaderMaterial({ uniforms: u, transparent: true,
-    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-    fragmentShader: 'uniform sampler2D uTex; uniform float uTime; uniform vec2 uMouse; uniform float uScroll; uniform vec2 uRes; uniform vec2 uImg; varying vec2 vUv;\\nvoid main(){ vec2 s = uRes / uImg; float k = max(s.x, s.y); vec2 fit = uImg * k / uRes; vec2 uv = (vUv - 0.5) / fit + 0.5;\\n uv += 0.006 * vec2(sin(uv.y*9.0 + uTime*0.7), cos(uv.x*9.0 + uTime*0.6));\\n float d = distance(vUv, uMouse); uv += 0.02 * exp(-d*9.0) * vec2(sin(d*40.0 - uTime*3.0));\\n uv.y += uScroll * 0.06;\\n vec3 c; c.r = texture2D(uTex, uv + vec2(0.0015,0.0)).r; c.g = texture2D(uTex, uv).g; c.b = texture2D(uTex, uv - vec2(0.0015,0.0)).b;\\n gl_FragColor = vec4(c, 1.0); }' });
-  scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
-  addEventListener('pointermove', (e) => u.uMouse.value.set(e.clientX/innerWidth, 1 - e.clientY/innerHeight), { passive: true });
-  const fit = () => { renderer.setSize(innerWidth, innerHeight); u.uRes.value.set(innerWidth, innerHeight); }; addEventListener('resize', fit); fit();
-  const tick = (now) => { requestAnimationFrame(tick); u.uTime.value = now/1000; const m = Math.max(1, document.documentElement.scrollHeight - innerHeight); u.uScroll.value += (scrollY/m - u.uScroll.value) * 0.06; renderer.render(scene, cam); };
-  const loader = new THREE.TextureLoader(); loader.setCrossOrigin('anonymous');
-  loader.load(IMG, (t) => { t.colorSpace = THREE.SRGBColorSpace; u.uImg.value.set(t.image.width, t.image.height); u.uTex.value = t; requestAnimationFrame(tick); }); // loop starts ONLY when the photo is on the GPU
-} catch (e) { /* the CSS photo hero stays — the page still looks great */ }
-</script>
-Adapt the shader/scene freely (stronger flow for water/motion subjects, gentler for luxury) — but the IMAGE-AS-WEBGL character and the CSS-photo fail-open are both required. If the canvas is hero-only rather than fixed full-site, size it to the hero container instead of the window.
-Rules: the whole init lives in ONE try/catch'd module script; requestAnimationFrame loop; never block first paint; text legibility everywhere via translucent panels/scrims over the scene.
-
-TECH: everything inline (CSS in <style>, JS in <script>). You MAY use CDNs: Tailwind (https://cdn.tailwindcss.com), Google Fonts, and optionally a lightweight animation lib via CDN (AOS or GSAP) — but vanilla IntersectionObserver is preferred and dependency-free. Inline SVG for icons/logos. The file must work standalone when downloaded and opened. For apps, tools, dashboards, calculators, forms, and games, the JavaScript must ACTUALLY WORK — implement the real, functional logic and state (not a static mockup): buttons do things, inputs compute, state lives in JS variables (see the STORAGE rule).
-
-FINISH THE ENTIRE BUILD — you have a LARGE output budget, so build the FULL thing AND complete it: output all the way through the final </html>, with every part fully written, fully styled, every tag closed, and all interactivity wired up and working. Do NOT thin out, simplify, shorten, or skip parts to save room, and do NOT stop early — deliver the whole ambitious, finished result. An incomplete or sparse output is a failure. PACE YOURSELF: target roughly 700–1000 lines total — rich and substantial but FINISHED; reaching </html> with every section complete beats an endless page that gets cut off.
-Make it genuinely impressive, complete, editorial, and shippable — the calibre of an Awwwards site of the day.`
+const SYSTEM_HTML = WEBSITE_SYSTEM
 
 // Follow-up edits to an existing webpage: instead of regenerating from scratch
 // (losing everything the user liked), the model revises the CURRENT html.
@@ -428,17 +320,6 @@ function designSystemHint(prompt: string, kind: DesignKind, explicit?: string): 
   return `\n\nDESIGN SYSTEM — execute this faithfully and authentically (it OVERRIDES the default house style; honor any specific colors/brand the user named):\n${sys.spec}`
 }
 
-const SYSTEM_MOTION = `You are a motion designer & creative coder. Output ONE complete, self-contained, LOOPING animated HTML motion graphic (a "HyperFrame") that implements the request — e.g. an animated logo reveal, kinetic typography, an animated promo / hero / title card, a product teaser, an animated poster, or a looping ambient background.
-
-REQUIREMENTS:
-- ONE self-contained .html: inline <style> + optional <script>. NO external libraries and NO network <img> — draw everything with CSS, inline SVG, or <canvas>. Google Fonts via <link> are allowed for TYPE only. It must run offline.
-- It MUST start animating immediately on load and LOOP seamlessly and forever (CSS @keyframes ... infinite, or a requestAnimationFrame canvas/SVG loop). No clicks or hovers required.
-- Full-bleed 16:9 stage that fills the frame (100vw/100vh or a centered fixed-aspect stage / responsive canvas, dark or on-brand background). Premium composition: strong focal point, depth/layering, eased timing (cubic-bezier), staggered reveals, tasteful motion — not a single thing blinking.
-- Use the REAL, specific copy from the request (never lorem ipsum). Crisp, intentional typography.
-- 60fps: animate transform / opacity / filter only (GPU-friendly); never animate layout properties.
-
-Output ONLY the complete HTML document — no markdown fences, no <think>, no commentary — starting with <!doctype html>.`
-
 const SYSTEM_GAME = `You are a world-class game developer. Output ONE complete, self-contained .html file that is a GENUINELY FUN, POLISHED, fully PLAYABLE game implementing the user's request, on the PlayCanvas engine. It must actually run and be enjoyable on the FIRST try. No tech demos, no placeholders, no half-built mechanics.
 
 ENGINE — load ONLY this exact CDN (sets global \`pc\`):
@@ -499,18 +380,31 @@ Object rules (each object is one Fabric.js object):
 - Keep EVERY object fully inside the canvas bounds. Layer back-to-front (background shapes first, text last).
 - Use a cohesive, modern palette and tasteful spacing. Aim for ~8–20 objects. Output ONLY the JSON object.`
 
-const SYSTEM_LOGO = `You art-direct a logo like a Pentagram partner. Nalu's design engine RENDERS the vector art in code and a diffusion model paints the pictorial mark, so you do NOT draw SVG — you return the brand direction as compact JSON.
+const SYSTEM_LOGO = `You art-direct a logo like a Pentagram partner — but your FIRST duty is FIDELITY, not invention. Nalu's engine typesets the wordmark/monogram in code and a diffusion model paints ONLY the pictorial mark, so you do NOT draw SVG — you return the brand direction as compact JSON.
 
-- "name": the brand name EXACTLY as the user gives it — verbatim, unchanged. NEVER invent, translate, expand, or append words ("Acme" stays "Acme", never "Acme Get"). If the request gives no explicit name, choose ONE clean, real-sounding 1–2 word name (never a phrase or random words).
-- "initials": 1–2 uppercase letters for the monogram — two-word names → first letter of each; one-word names → just the first letter.
-- "serif": true if the brand should feel classic / elegant / luxury / editorial / heritage; false for modern / tech / clean / minimal / startup.
-- "colors": ["#primary","#accent"] — a refined, professional palette (deep, confident, timeless; no neon, no more than 2).
-- "colorNames": plain-English names for those exact colors, in order (e.g. ["deep midnight navy","antique gold"]) — a diffusion model reads these, so make them vivid and unambiguous.
-- "concept": a ≤6-word vibe label.
-- "symbol": THE key creative decision — describe ONE specific, ownable pictorial mark concept for this exact brand in 6-14 words (what a designer would sketch: the object(s), geometry, and arrangement). Think Apple's apple, Twitter's bird, Shell's shell: simple, memorable, meaningful to the business. E.g. for a coastal coffee brand: "a cresting wave curling into a coffee bean". Never generic ("abstract shape", "geometric design"); name real recognizable forms.
+THE GOLDEN RULE — FOLLOW, DON'T "IMPROVE": if the user describes what they want (a specific mark, object, shape, letter, color, style, or background), reproduce THAT exactly — every element they named, nothing added, nothing removed, nothing "elevated". A client who asks for "a red circle with a white star" gets a red circle with a white star, executed cleanly — NOT an origami falcon. You INVENT only the parts the user left unspecified. Invention fills gaps; it NEVER overrides a stated wish.
+
+STEP 1 — decide "literal":
+- "literal": true whenever the user named ANY concrete visual content for the mark — an object, animal, shape, letter treatment, scene, count, or arrangement ("a fox", "two overlapping triangles", "a mountain with a sun behind it", "a minimalist wolf head"). Then "symbol" = their described mark rewritten as ONE clean noun phrase listing EXACTLY the objects, shapes and arrangement they named — keep their adjectives (color, count, layout), ADD nothing (no extra objects, no "negative space", no "ownable", no mood words), DROP nothing. Example: "a simple red fox head" -> "a simple red fox head" (NOT "a fox head inside a hexagon with a leaf").
+- "literal": false ONLY when the user gave a name/industry/vibe but NO picture ("a logo for my coffee shop Marea"). THEN, and only then, invent ONE specific, ownable mark in 6-14 words — name real recognizable forms (Apple's apple, Shell's shell), never "abstract shape" or "geometric design".
+- If the user wants ONLY initials / a letter / a plain wordmark and NO pictorial icon ("just my initials", "text-only logo"), set "literal": true and "symbol": "" (empty). Nalu typesets the letters in code and skips the image model — do NOT invent an icon.
+
+STEP 2 — capture each field (never override a stated value):
+- "name": the brand name EXACTLY as given — verbatim, unchanged. NEVER invent, translate, expand, or append words ("Acme" stays "Acme"). If no name is given, return an empty name; initials also stay empty unless the user explicitly requested specific letters. Do not invent a name; create only the requested mark.
+- "initials": 1-2 uppercase letters (two words -> first of each; one word -> first letter). If the described mark contains specific LETTERS or TEXT ("a shield with the letters JB"), put those letters HERE and describe only the non-text shapes in "symbol".
+- "serif": true for classic/elegant/luxury/editorial/heritage; false for modern/tech/clean/minimal/startup. If the user named a type style, honor it.
+- "colors": ["#primary","#accent"] (max 2). If the user NAMED any colors, use THOSE EXACT colors in the order given (convert their words to hex) and NO others — one color named -> return just ["#primary"]. If the user named none, choose a refined, timeless pair (deep, confident; no neon).
+- "colorsLocked": true iff the user specified the color(s); false if you chose them.
+- "colorNames": vivid, unambiguous plain-English names for those exact colors, in order (a diffusion model reads these) — e.g. ["deep midnight navy","antique gold"].
+- "userStyle": the user's OWN rendering-style words, copied close to verbatim — "hand-drawn", "3D glossy", "neon", "flat line art", "pixel art", "watercolor", "vintage badge". "" if the user named no style. Do NOT translate or embellish; honor it whether "literal" is true or false.
+- "background": the mark's background if the user asked for one ("black", "transparent", "navy"); otherwise "white".
+- "concept": a <=6-word vibe label.
+- "symbol": per STEP 1 — the user's mark transcribed, your invented mark, or "" for wordmark-only.
+
+HARD RULE: when "literal" is true you are FORBIDDEN from substituting your own mark idea, adding objects/shapes the user didn't name, changing their colors, or "improving" their composition. Faithfulness beats cleverness.
 
 Output ONLY this minified JSON — no markdown, no <think>, no SVG, no prose:
-{"name":"Acme","initials":"A","serif":false,"colors":["#0F1B2D","#AF8C56"],"colorNames":["deep midnight navy","antique gold"],"concept":"modern geometric","symbol":"an origami falcon folded from three sharp triangles"}`
+{"name":"Marea","initials":"M","serif":false,"literal":false,"colorsLocked":false,"userStyle":"","background":"white","colors":["#0F1B2D","#AF8C56"],"colorNames":["deep midnight navy","antique gold"],"concept":"coastal calm","symbol":"a cresting wave curling into a coffee bean"}`
 
 const SYSTEM_SHOPPING = `You are an expert interior designer & personal shopper. Build a CURATED, real-world shopping list for the user's request (a room, a whole house, an outfit, a setup — anything they want to buy).
 
@@ -546,7 +440,7 @@ Output ONLY one minified JSON object — no markdown fences, no <think>, no pros
 
 {"brand":{"name":"","tagline":"","mission":"","vision":"","positioning":"","values":[{"label":"","description":""}],"voice":[{"label":"","description":""}]},"palette":[{"role":"primary","name":"","hex":"#RRGGBB","usage":""}],"typography":{"heading":{"family":"","usage":""},"body":{"family":"","usage":""},"scale":["Display","Heading 1","Heading 2","Heading 3","Body","Caption"]},"logo":{"direction":"","clearspace":"","minSize":""},"dos":[""],"donts":[""]}
 
-THE SUBJECT — get this right first: if the user NAMES a company or brand (e.g. "brand guidelines for Aurora"), THAT is the brand — use its exact name throughout every field and never rename or replace it with Nalu or anything else. ONLY when no company is named at all, the brand defaults to Nalu — a modern AI company at n4lu.ai ("Nalu" means "wave" in Hawaiian; oceanic, calm, intelligent, premium). Never invent an unrelated company name.
+THE SUBJECT — get this right first: if the user NAMES a company or brand (e.g. "brand guidelines for Aurora"), THAT is the brand — use its exact name throughout every field and never rename or replace it with "Nalu" or anything else. When NO company is named, choose a short, fitting brand name DERIVED FROM THE SUBJECT of the site (e.g. a meditation app → a calm one-word name; a bakery → a bakery-fitting name) — do NOT default to "Nalu" and do NOT use an unrelated name. Only brand a site "Nalu" if the user explicitly asks for Nalu / this app itself; a generic request must NEVER be branded "Nalu".
 
 CONTENT RULES:
 - Real, specific, confident copy — NEVER lorem ipsum or placeholder text. If you reference a year, use 2026 (never 2024).
@@ -602,19 +496,20 @@ async function fetchPollinations(url: string): Promise<string | null> {
   const base = url.replace(/model=flux/i, 'model=turbo').replace(/\bmodel=[a-z]+\b/i, 'model=turbo')
   const turbo = /model=/i.test(base) ? base : base + (base.includes('?') ? '&' : '?') + 'model=turbo'
   for (let attempt = 0; attempt < 6; attempt++) {
+    throwIfCancelled()
     const u = turbo
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 25000)
     try {
-      const ctrl = new AbortController()
-      const t = setTimeout(() => ctrl.abort(), 25000)
-      const r = await fetch(u, { headers: { 'User-Agent': DESIGN_UA }, signal: ctrl.signal })
-      clearTimeout(t)
+      const r = await fetch(u, { headers: { 'User-Agent': DESIGN_UA }, signal: cancellationSignal(ctrl.signal) })
       const ct = r.headers.get('content-type') || ''
       if (r.ok && ct.startsWith('image/')) {
         const buf = Buffer.from(await r.arrayBuffer())
         if (buf.length > 1500) return `data:${ct};base64,${buf.toString('base64')}`
       }
-    } catch { /* retry */ }
-    await new Promise((res) => setTimeout(res, 600 * (attempt + 1)))
+    } catch { throwIfCancelled() /* retry */ }
+    finally { clearTimeout(t) }
+    await waitWithCancellation(600 * (attempt + 1))
   }
   return null
 }
@@ -649,7 +544,7 @@ async function bakeImages(html: string, cap = 6): Promise<string> {
 function getSystemPrompt(kind: DesignKind): string {
   switch (kind) {
     case 'motion':
-      return SYSTEM_MOTION
+      return motionSystem(motionSpec(''), false)
     case 'game':
       return SYSTEM_GAME
     case 'board':
@@ -703,12 +598,14 @@ type BrandIn = {
   text?: string
   headingFont?: string
   bodyFont?: string
+  logo?: string // full lockup (data URL / inline SVG / URL)
+  logoMark?: string // compact mark
 }
 
 // Inject the user's active Brand Kit so generated designs/code match the brand.
 // Only color-bearing kinds (canvas/poster/webpage); palette/brand define their
 // own colors and blueprints are monochrome line art.
-function brandHint(raw: unknown, kind: DesignKind): string {
+export function brandHint(raw: unknown, kind: DesignKind, prompt = ''): string {
   if (kind !== 'canvas' && kind !== 'poster' && kind !== 'webpage' && kind !== 'brand' && kind !== 'logo') return ''
   if (!raw || typeof raw !== 'object') return ''
   const b = raw as BrandIn
@@ -719,14 +616,40 @@ function brandHint(raw: unknown, kind: DesignKind): string {
   const dark = hx(b.dark)
   const text = hx(b.text)
   if (!primary && !accent) return ''
+  // Every web workspace seeds this kit, even when the user never chose a
+  // brand. Do not mistake that implicit default for a request to put Nalu's
+  // navy/gold palette and logo onto every new website or app.
+  const explicitlyUsesBrand = /\b(?:for|about)\s+nalu\b|\bnalu(?:['’]s)?\s+(?:brand(?:ed|ing)?|palette|logo|colou?rs)\b|\b(?:use|match|apply)\b[^.!?\n]{0,60}\bnalu\b/i.test(prompt) || /\b(?:use|apply|match|follow|keep)\b[^.!?\n]{0,90}\b(?:my|our|saved|active|current|existing)\b[^.!?\n]{0,40}\b(?:brand|palette|logo)\b/i.test(prompt)
+  const stockLogo = (logo?: string) => !logo || logo === '/nalu-logo.png' || logo === '/wolf-icon.png'
+  const name = typeof b.name === 'string' ? b.name.trim().toLowerCase() : ''
+  const hasFont = (font: unknown) => typeof font === 'string' && !!font.trim()
+  const stockKit = (!name || name === 'nalu') && primary === '#14345A' && accent === '#AF8C56' && dark === '#0F1B2D' && text === '#1F1F1F'
+    && !hasFont(b.headingFont) && !hasFont(b.bodyFont) && stockLogo(b.logo) && stockLogo(b.logoMark)
+  if (kind === 'webpage' && stockKit && !explicitlyUsesBrand) return ''
   const fonts = [b.headingFont && `headings "${b.headingFont}"`, b.bodyFont && `body "${b.bodyFont}"`]
     .filter(Boolean)
     .join(', ')
+  // The user's saved brand LOGO (skip when generating a logo itself). Small SVGs are
+  // inlined verbatim (overriding the "text-wordmark only" rule — an inlined SVG can't
+  // 404); safe http/relative URLs are given as an <img>; large raster data URLs are
+  // skipped to avoid bloating the prompt (falls back to a text wordmark).
+  let logoNote = ''
+  if (kind !== 'logo' && (kind !== 'webpage' || explicitlyUsesBrand || !stockLogo(b.logo) || !stockLogo(b.logoMark))) {
+    const logoRaw = typeof b.logo === 'string' && b.logo ? b.logo : typeof b.logoMark === 'string' ? b.logoMark : ''
+    if (/^data:image\/svg\+xml/i.test(logoRaw)) {
+      try {
+        const svg = decodeURIComponent(logoRaw.replace(/^data:image\/svg\+xml,?/i, ''))
+        if (svg && svg.length < 6000) logoNote = `\n\nBRAND LOGO — inline THIS EXACT SVG as the nav/header logo (do NOT redraw or invent a different mark; this overrides the "text wordmark only" rule because an inlined SVG cannot fail):\n${svg}`
+      } catch { /* skip */ }
+    } else if (/^https?:\/\//i.test(logoRaw) || /^\//.test(logoRaw)) {
+      logoNote = `\n\nBRAND LOGO — place the brand's logo in the nav/header via <img src="${logoRaw}" alt="logo" style="height:32px"> (this URL is safe to use as an <img>).`
+    }
+  }
   return `\n\nACTIVE BRAND KIT — THIS IS THE PALETTE FOR THIS DESIGN. Use these exact colors as the actual color scheme and IGNORE/OVERRIDE any default "house" palette (e.g. the navy/gold) described in the instructions above — build the entire design around these instead. Only deviate if the user's request above explicitly names different colors, OR this is a site for a real named company whose real brand colors you researched.${
     primary ? ` Primary ${primary};` : ''
   }${accent ? ` accent ${accent};` : ''}${dark ? ` dark ${dark};` : ''}${text ? ` body text ${text};` : ''}${
     fonts ? ` typography: ${fonts}.` : ''
-  } Apply primary as the dominant brand color, accent for highlights/CTAs/hairlines, dark for deep sections, and keep strong contrast + legibility throughout.`
+  } Apply primary as the dominant brand color, accent for highlights/CTAs/hairlines, dark for deep sections, and keep strong contrast + legibility throughout.${logoNote}`
 }
 
 // ---------------------------------------------------------------------------
@@ -918,9 +841,9 @@ function buildJsonPayload(
       // New: the model returns only brand DIRECTION; the client renders the
       // actual vector logos in code. We just validate/normalize the fields.
       const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
-      const name = str(p.name) || 'Brand'
+      const name = str(p.name)
       let initials = str(p.initials).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 2)
-      if (!initials) {
+      if (!initials && name) {
         const w = name.split(/\s+/).filter(Boolean)
         initials = (w.length >= 2 ? w[0][0] + w[1][0] : name.slice(0, 1)).toUpperCase()
       }
@@ -938,6 +861,11 @@ function buildJsonPayload(
           : [],
         concept: str(p.concept),
         symbol: str(p.symbol).slice(0, 140),
+        // Faithful-logo signals: build exactly what the user described, add nothing.
+        literal: !!p.literal,
+        colorsLocked: !!p.colorsLocked,
+        userStyle: str(p.userStyle).slice(0, 40),
+        background: (str(p.background) || 'white').toLowerCase().slice(0, 24),
       }
     }
     case 'brand': {
@@ -1131,8 +1059,10 @@ function buildBrandBookHtml(p: Record<string, unknown>): string {
 
   // ---- data --------------------------------------------------------------
   const brand = obj(p.brand)
-  const name = str(brand.name, 'Nalu')
-  const tagline = str(brand.tagline, 'Ride the wave of intelligence.')
+  // Neutral fallbacks (NOT Nalu) — the model supplies a subject-derived brand; these
+  // only apply if it left the field blank, and must not inject "Nalu" into a generic site.
+  const name = str(brand.name) || str(p.title) || 'Brand'
+  const tagline = str(brand.tagline)
   const mission = str(brand.mission)
   const vision = str(brand.vision)
   const positioning = str(brand.positioning)
@@ -1869,143 +1799,6 @@ function clampBlueprint(payload: Record<string, unknown>): void {
 // style, palette, page list, copy angles, imagery plan — so a one-liner
 // yields the same calibre of site as a detailed spec. Best-effort.
 // ---------------------------------------------------------------------------
-const SYSTEM_EXPAND = `You are an award-winning creative director briefing a web designer. Expand the client's short ask into a specific, opinionated creative brief for a COMPLETE multi-page website. Be decisive — pick ONE direction that genuinely fits THIS business/subject (a bakery, a law firm, a skate brand, a SaaS all deserve different worlds — do NOT default to generic luxury).
-
-Return 12-20 tight lines covering:
-- Brand: name (invent a fitting one if none given), one-line positioning, tone of voice.
-- Art direction: the style movement, palette (4-5 specific hex colors that suit the subject), display+body Google Font pairing, imagery mood.
-- Pages: Home + 3-5 named pages, and for EACH page the sections it needs with the actual content angle (real menu categories, real service names, plausible prices, real neighborhood details — specific, never placeholder).
-- Signature moment: one memorable WebGL/three.js hero effect in the brand's colors (particle field, flowing waves, floating geometry) — Nalu sites always ship one.
-- Copy: the exact hero headline + tagline to use.
-
-Plain text lines only — no markdown headers, no JSON, no preamble.`
-
-async function expandBrief(prompt: string): Promise<string> {
-  try {
-    const brief = await chatComplete(
-      [
-        { role: 'system', content: SYSTEM_EXPAND },
-        { role: 'user', content: prompt },
-      ],
-      { model: LLM_MODEL, maxTokens: 900, timeoutMs: 35000, retryPrimary: false, temperature: 0.8 },
-    )
-    const t = brief.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
-    return t.length > 80 ? t : ''
-  } catch {
-    return ''
-  }
-}
-
-// ---------------------------------------------------------------------------
-// WebGL guarantee: every generated WEBSITE ships a visible real-time scene.
-// When the model designs its own (canvas + importmap) we keep it; when it
-// skips it, we INJECT a self-contained, brand-colored three.js particle field
-// as a full-site luminous overlay (pointer-events:none, blend-adaptive to
-// light/dark pages, mouse parallax) — deterministic, not prompt-dependent.
-// ---------------------------------------------------------------------------
-function extractBrandHexes(html: string): string[] {
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const m of html.matchAll(/#([0-9a-fA-F]{6})\b/g)) {
-    const h = m[1].toUpperCase()
-    const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16)
-    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-    const sat = Math.max(r, g, b) - Math.min(r, g, b)
-    if (lum > 0.93 || lum < 0.07 || sat < 24) continue // skip whites/blacks/grays
-    if (!seen.has(h)) { seen.add(h); out.push('#' + h) }
-    if (out.length >= 3) break
-  }
-  return out.length ? out : ['#AF8C56', '#5B9BFF', '#E4B96F']
-}
-function webglOverlaySnippet(colors: string[]): string {
-  const cols = JSON.stringify(colors.slice(0, 3))
-  return `
-<canvas id="nalu-gl" style="position:fixed;inset:0;width:100vw;height:100vh;z-index:2147482000;pointer-events:none;mix-blend-mode:screen;opacity:.55"></canvas>
-<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"}}</script>
-<script type="module">
-try {
-  // A page may already carry its own importmap (only the first one wins) —
-  // resolve 'three' through it, else fall back to a direct CDN URL import.
-  const THREE = await import('three').catch(() => import('https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js'));
-  const cv = document.getElementById('nalu-gl');
-  // adapt to the page: dark pages get luminous screen-blend particles, light
-  // pages get deep multiply-blend particles — always visible, never blocking.
-  const bg = getComputedStyle(document.body).backgroundColor.match(/\\d+/g) || [255,255,255];
-  const light = (0.299*bg[0] + 0.587*bg[1] + 0.114*bg[2]) / 255 > 0.55;
-  if (light) { cv.style.mixBlendMode = 'multiply'; cv.style.opacity = '.34'; }
-  const renderer = new THREE.WebGLRenderer({ canvas: cv, alpha: true, antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  const scene = new THREE.Scene();
-  const cam = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 100);
-  cam.position.z = 15;
-  // Duotone scroll-driven field: the camera travels THROUGH a deep particle
-  // world as the page scrolls (scroll-driven WebGL storytelling), colors
-  // blending between the two brand tones along the journey.
-  const N = 2200, DEPTH = 90, pos = new Float32Array(N*3), col = new Float32Array(N*3), ph = new Float32Array(N);
-  const palette = ${cols}.map(h => new THREE.Color(h));
-  const cA = palette[0], cB = palette[1] || palette[0];
-  for (let i = 0; i < N; i++) {
-    pos[i*3] = (Math.random()-0.5)*40; pos[i*3+1] = (Math.random()-0.5)*22; pos[i*3+2] = -Math.random()*DEPTH + 15;
-    const mix = Math.random();
-    const c = cA.clone().lerp(cB, mix).multiplyScalar(light ? 0.72 : 1);
-    col[i*3] = c.r; col[i*3+1] = c.g; col[i*3+2] = c.b;
-    ph[i] = Math.random()*Math.PI*2;
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.1, vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false }));
-  scene.add(pts);
-  let mx = 0, my = 0;
-  addEventListener('pointermove', (e) => { mx = (e.clientX/innerWidth - 0.5); my = (e.clientY/innerHeight - 0.5); }, { passive: true });
-  const fit = () => { renderer.setSize(innerWidth, innerHeight); cam.aspect = innerWidth/innerHeight; cam.updateProjectionMatrix(); };
-  addEventListener('resize', fit); fit();
-  let t = 0, last = 0, hidden = false, z = 15;
-  document.addEventListener('visibilitychange', () => { hidden = document.hidden; });
-  const P = geo.attributes.position;
-  const tick = (now) => {
-    requestAnimationFrame(tick);
-    if (hidden) return;
-    const dt = Math.min(0.05, (now - last)/1000 || 0.016); last = now; t += dt;
-    // scroll = journey: ease the camera through the depth of the field
-    const max = Math.max(1, document.documentElement.scrollHeight - innerHeight);
-    const target = 15 - (scrollY / max) * (DEPTH * 0.75);
-    z += (target - z) * 0.06; cam.position.z = z;
-    for (let i = 0; i < N; i++) {
-      P.array[i*3+1] += Math.sin(t*0.7 + ph[i] + P.array[i*3]*0.25) * 0.004;
-      P.array[i*3] += Math.cos(t*0.5 + ph[i]) * 0.002;
-    }
-    P.needsUpdate = true;
-    pts.rotation.y += (mx*0.3 - pts.rotation.y) * 0.03;
-    pts.rotation.x += (my*0.2 - pts.rotation.x) * 0.03;
-    cam.rotation.z += ((scrollY/max)*0.15 - cam.rotation.z) * 0.02;
-    renderer.render(scene, cam);
-  };
-  requestAnimationFrame(tick);
-} catch (e) { /* transparent canvas is harmless — leave the page untouched */ }
-</script>`
-}
-/** Guarantee a visible WebGL scene on a website: keep the model's own scene
- *  when it is trustworthy (complete build, real canvas markup), else inject
- *  the Nalu overlay before </body>. `force` (truncated build) always injects —
- *  a cut-off script never boots its canvas. */
-function ensureWebgl(html: string, force = false): string {
-  if (!force && /<canvas/i.test(html) && /importmap|three\.module|WebGLRenderer/i.test(html)) return html
-  const snippet = webglOverlaySnippet(extractBrandHexes(html))
-  // Inject at the TOP of <body> — appending before </body> can land inside an
-  // UNCLOSED hidden container on a truncated build (display:none ancestor →
-  // invisible canvas). Top-of-body is never inside anything.
-  const m = html.match(/<body[^>]*>/i)
-  if (m) return html.replace(m[0], m[0] + snippet)
-  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, snippet + '\n</body>')
-  return html + snippet
-}
-
-// CONTENT-VISIBILITY FAILSAFE — the #1 "blank site" cause: a scroll-reveal
-// script that died (truncation, a JS error) leaves every section at opacity:0
-// so a fully-written page renders EMPTY. This watchdog force-reveals anything
-// still invisible after ~700ms in the viewport; a working reveal script fires
-// first, so real animations are untouched.
 const REVEAL_FAILSAFE = `
 <script>(function(){var seen=new WeakMap();function sweep(){var vh=innerHeight;var els=document.querySelectorAll('section,header,main,article,h1,h2,h3,p,li,img,a,div');for(var i=0;i<els.length;i++){var el=els[i];var r=el.getBoundingClientRect();if(r.top<vh&&r.bottom>0&&r.width>0){var o=parseFloat(getComputedStyle(el).opacity);if(o<0.05){var t=seen.get(el);if(!t){seen.set(el,Date.now())}else if(Date.now()-t>700){el.style.opacity='1';el.style.transform='none'}}}}}setInterval(sweep,350);addEventListener('load',sweep)})()</script>`
 function ensureVisibleContent(html: string): string {
@@ -2028,44 +1821,58 @@ async function callModel(system: string, user: string, maxTokens: number, temper
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default async function handler(req: any, res: any) {
+  return withRequestCancellation(req, res, () => handleDesign(req, res))
+}
+
+async function handleDesign(req: any, res: any) {
+  const signal = cancellationSignal()
+  const send = (status: number, payload: unknown) => { throwIfCancelled(signal); return res.status(status).json(payload) }
+  const requestStarted = Date.now()
   if (cors(req, res)) return
   if (req.method !== 'POST') {
-    res.status(405).json({ error: 'POST only' })
+    send(405, { error: 'POST only' })
     return
   }
   if (!LLM_KEY) {
-    res.status(500).json({ error: 'Nalu engine is not configured.' })
+    send(500, { error: 'Nalu engine is not configured.' })
     return
   }
   let body: Record<string, unknown> = {}
   try {
     body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {}
   } catch {
-    res.status(400).json({ error: 'invalid JSON' })
+    send(400, { error: 'invalid JSON' })
     return
   }
   const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
   if (!prompt) {
-    res.status(400).json({ error: 'prompt required' })
+    send(400, { error: 'prompt required' })
     return
   }
   const kind = normalizeKind(body.kind)
+  const logoBrief = kind === 'logo' ? logoRequestText(body, prompt) : ''
+  const prevLogo = kind === 'logo' && body.prevLogo && typeof body.prevLogo === 'object' && !Array.isArray(body.prevLogo) ? body.prevLogo as Record<string, unknown> : null
+  const logoReference = kind === 'logo' && typeof body.logoReference === 'string' ? body.logoReference.trim().slice(0, 12000) : ''
+  const logoContext = kind === 'logo' ?
+    (logoReference ? `\n\nREFERENCE IMAGE DESCRIPTION (match the requested visual content and style):\n${logoReference}` : '') +
+    (prevLogo ? `\n\nCURRENT LOGO TO EDIT (keep its existing name, subject and other fields unless the request changes them):\n${JSON.stringify(Object.fromEntries(Object.entries(prevLogo).filter(([key]) => !['imgCache', 'options', 'mark', 'lockup'].includes(key)))).slice(0, 9000)}` : '') : ''
   // Follow-up edit to an existing page: revise prevHtml instead of regenerating.
   const prevHtml =
-    HTML_KINDS.has(kind) && typeof body.prevHtml === 'string' && body.prevHtml.length > 200
-      ? body.prevHtml.slice(0, 180000)
+    HTML_KINDS.has(kind) && typeof body.prevHtml === 'string' && body.prevHtml.trim()
+      ? kind === 'webpage' ? body.prevHtml : body.prevHtml.slice(0, 180000)
       : ''
-  const system = prevHtml ? SYSTEM_HTML_EDIT : getSystemPrompt(kind)
+  const motion = kind === 'motion' ? motionSpec(prompt, prevHtml) : null
+  const motionAssets = motion && !prevHtml ? motionAssetRoute(prompt, body.brand) : undefined
+  if (motionAssets?.error) { send(422, { error: motionAssets.error }); return }
+  const motionHtml = !!prevHtml || motionAssets?.html === true
+  const system = kind === 'logo' ? SYSTEM_LOGO + '\n\n' + LOGO_NAME_RULE : motion ? motionHtml ? motionSystem(motion, !!prevHtml) : motionSceneSystem(motion) : prevHtml ? SYSTEM_HTML_EDIT : getSystemPrompt(kind)
   // Vision analysis of an attached photo (board kind) — ground truth for the model.
   const analysis = typeof body.analysis === 'string' ? body.analysis.trim().slice(0, 12000) : ''
   // Web-ground real brands (brand book / site / logo for a named company) so the
   // output uses the ACTUAL brand, not a guess. Best-effort; '' if not applicable.
-  const grounding = prevHtml ? '' : await researchSite(prompt, kind)
-  // Creative-director expansion: a short/generic website ask becomes a rich,
-  // subject-appropriate brief (specific pages, palette, copy) — so a one-liner
-  // builds like a detailed spec. Skipped for detailed prompts and edits.
-  const brief = kind === 'webpage' && !prevHtml && prompt.length < 200 ? await expandBrief(prompt) : ''
-
+  const evidence = kind === 'webpage' ? await groundResearch(prompt) : null
+  throwIfCancelled(signal)
+  const grounding = kind === 'webpage' ? evidence?.text || '' : prevHtml || kind === 'logo' ? '' : await researchSite(prompt, kind)
   // LIVE SOCIAL TREND RESEARCH — for a post/carousel, detect the platform and
   // research what is TRENDING and working on it RIGHT NOW, then feed that in so
   // the post rides current aesthetics/formats (not last-year's playbook).
@@ -2087,26 +1894,50 @@ export default async function handler(req: any, res: any) {
     kind === 'blueprint' && typeof body.prevBlueprint === 'string' && body.prevBlueprint.length > 50
       ? body.prevBlueprint.slice(0, 60000)
       : ''
-  const whoLine = identityBlock(await identityForRequest(req).catch(() => null))
+  throwIfCancelled(signal)
+  const whoLine = kind === 'logo' ? '' : identityBlock(await identityForRequest(req).catch(() => null))
   const user =
     (whoLine ? whoLine + '\n\n----\n' : '') +
     (grounding ? grounding + '\n\n----\n\nThe request:\n' : '') +
-    prompt +
+    (kind === 'logo' ? logoBrief + logoContext : prompt) +
     (prevBlueprint ? `\n\n----\nCURRENT BLUEPRINT JSON (apply the change above to THIS plan — keep everything not mentioned exactly as it is; output the complete updated JSON in the same schema):\n${prevBlueprint}` : '') +
     (analysis ? `\n\n----\nVISUAL ANALYSIS OF THE ATTACHED PHOTO (ground truth — build the board from this):\n${analysis}` : '') +
-    (brief ? `\n\n----\nCREATIVE BRIEF (a creative director expanded the ask above — execute this direction fully; the user's own words still win any conflict):\n${brief}` : '') +
     trendBrief +
-    (prevHtml ? `\n\n----\nCURRENT PAGE (revise this exact document per the request above; output the complete updated file):\n${prevHtml}` : '') +
-    brandHint(body.brand, kind) +
+    (prevHtml && kind !== 'webpage' ? `\n\n----\nCURRENT PAGE (revise this exact document per the request above; output the complete updated file):\n${prevHtml}` : '') +
+    (motion ? prevHtml ? motionBrandHint(body.brand) : motionAssets?.html ? motionAssets.hint : motionSceneBrandHint(body.brand) : kind === 'logo' && !/\b(use|match|keep|apply)\b[^.?!]*\b(my|our|saved|existing|current)\b[^.?!]*\b(brand|palette|colou?rs)\b/i.test(logoBrief) ? '' : brandHint(body.brand, kind, prompt)) +
     designSystemHint(prompt, kind, typeof body.system === 'string' ? body.system : undefined)
   const maxTokens = maxTokensFor(kind)
+  throwIfCancelled(signal)
   const quota = await reserveStudioQuota(req, 'design')
   if (!quota.ok) {
-    res.status(429).json({ error: studioLimitMessage('design', quota) })
+    send(429, { error: studioLimitMessage('design', quota) })
     return
   }
   let succeeded = false
   try {
+    throwIfCancelled(signal)
+    if (motion) {
+      const generate = motionHtml ? generateMotion : generateMotionScene
+      const result = await generate({ model: LLM_MODEL, system, user, spec: motion, deadlineMs: requestStarted + 275000 })
+      if (!result) {
+        send(502, { error: 'Could not finish a complete, playable motion graphic. Please retry.' })
+        return
+      }
+      succeeded = true
+      send(200, { kind: 'motion', ...result, name: 'Nalu Motion' })
+      return
+    }
+    if (kind === 'webpage') {
+      const repairIssues = Array.isArray(body.previewIssues) ? body.previewIssues.filter((issue): issue is string => typeof issue === 'string').slice(0, 6) : undefined
+      const result = await generateWebsite({ model: prevHtml ? WEBSITE_EDIT_MODEL : WEBSITE_MODEL, plannerModel: LLM_MODEL, fallbackModel: prevHtml ? LLM_MODEL : WEBSITE_FALLBACK_MODEL, user, prompt, previous: prevHtml, repairIssues, deadlineMs: requestStarted + 275000, signal })
+      if (!result) {
+        send(502, { error: 'The website did not pass its build checks. Please retry; your existing design is preserved.' })
+        return
+      }
+      succeeded = true
+      send(200, { html: result.html, name: 'Nalu Design', sources: evidence?.sources || [], researchStatus: evidence?.status, checkedAt: evidence?.checkedAt, quality: { ...result.review, repaired: result.repaired } })
+      return
+    }
     if (HTML_KINDS.has(kind)) {
       // ONE generously-budgeted attempt (a full site needs ~150-200s of writing),
       // then a smaller fallback attempt — both sized so the function always
@@ -2116,6 +1947,7 @@ export default async function handler(req: any, res: any) {
       let best = ''
       let lastErr: unknown = null
       for (let attempt = 0; attempt < 2 && !best; attempt++) {
+        throwIfCancelled(signal)
         let html = ''
         try {
           const budget = attempt === 0
@@ -2139,8 +1971,8 @@ export default async function handler(req: any, res: any) {
         if (html.length > best.length) best = html // keep the longest partial
       }
       if (!best) {
-        if (lastErr) { res.status(502).json({ error: `Design upstream error: ${(lastErr as Error).message}` }); return }
-        res.status(502).json({ error: 'Could not build the design. Try rephrasing.' })
+        if (lastErr) { send(502, { error: `Design upstream error: ${(lastErr as Error).message}` }); return }
+        send(502, { error: 'Could not build the design. Try rephrasing.' })
         return
       }
       // AUTO-FINISH: a build cut off by the token ceiling gets ONE continuation
@@ -2164,58 +1996,19 @@ export default async function handler(req: any, res: any) {
           /* keep the partial — completeHtml repairs it below */
         }
       }
-      // ANTI-SKELETON ENFORCEMENT: a website must arrive fully baked AND
-      // complete. If the page is still truncated (continuation failed) OR reads
-      // thin (little real copy), ONE rescue pass completes + expands it —
-      // checked, not just prompted.
-      if (kind === 'webpage' && best && elapsed() < 165000) {
-        const words = best
-          .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-          .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-          .replace(/<[^>]+>/g, ' ')
-          .split(/\s+/)
-          .filter(Boolean).length
-        if (words < 450 || isTruncatedHtml(best)) {
-          try {
-            const richer = cleanHtml(
-              await chatComplete(
-                [
-                  { role: 'system', content: SYSTEM_HTML_EDIT },
-                  {
-                    role: 'user',
-                    content: `This site is UNFINISHED (${words} words of real copy${isTruncatedHtml(best) ? ', build cut off mid-generation' : ''} — a skeleton). Deliver the FULLY BAKED version: complete every cut-off or unfinished part, expand every thin section with complete, genuinely written content (real items, prices, descriptions, bios, FAQ answers), keep the design/structure/interactivity that already exists, and output the COMPLETE page through </html>.\n\n----\nCURRENT PAGE:\n${completeHtml(best).slice(0, 150000)}`,
-                  },
-                ],
-                { model: LLM_MODEL, maxTokens: Math.min(maxTokens, 15000), timeoutMs: 55000, retryPrimary: false, temperature: 0.7, providers: ONE_PRIMARY() },
-              ),
-            )
-            if (richer && /<html|<!doctype/i.test(richer) && richer.length > best.length * 0.8) best = richer
-          } catch {
-            /* keep the original */
-          }
-        }
-      }
       // Flag a repaired (mid-generation cutoff) page so the client can offer
       // "Finish build" — an unfinished build can always still be finished.
       const truncated = isTruncatedHtml(best)
       let html = completeHtml(best)
-      // WEBGL GUARANTEE — every website ships a visible real-time scene: the
-      // model's own hero scene when it built one COMPLETELY, else the injected
-      // Nalu brand-colored particle overlay (deterministic, not prompt-luck).
-      if (kind === 'webpage') html = ensureWebgl(html, truncated)
       // NEVER a blank page: force-reveal content a broken reveal script left hidden.
-      if (kind === 'webpage' || kind === 'board') html = ensureVisibleContent(html)
+      if (kind === 'board') html = ensureVisibleContent(html)
       // Carousels/posters: bake Pollinations images into data URLs so they ALWAYS
       // show and export cleanly via html2canvas (no gray boxes, no CORS taint).
       if (kind === 'carousel' || kind === 'poster') html = await bakeImages(html, 6)
       // webpage stays exactly { html, name } for backward compatibility; poster
       // adds kind so the client can route, html shape is identical.
       succeeded = true
-      if (kind === 'webpage') {
-        res.status(200).json({ html, name: 'Nalu Design', ...(truncated ? { truncated: true } : {}) })
-      } else {
-        res.status(200).json({ kind, html, name: 'Nalu Design', ...(truncated ? { truncated: true } : {}) })
-      }
+      send(200, { kind, html, name: 'Nalu Design', ...(truncated ? { truncated: true } : {}) })
       return
     }
 
@@ -2226,6 +2019,7 @@ export default async function handler(req: any, res: any) {
     let content = ''
     let jsonOut: Record<string, unknown> | null = null
     for (let attempt = 0; attempt < 5 && !jsonOut; attempt++) {
+      throwIfCancelled(signal)
       try {
         content = await callModel(system, user, maxTokens, attempt === 0 ? 0.3 : 0.5, true)
       } catch { continue }
@@ -2236,36 +2030,22 @@ export default async function handler(req: any, res: any) {
     // brand: the model returns structured CONTENT; we render the fixed book.
     if (kind === 'brand') {
       if (!jsonOut) {
-        res.status(502).json({ error: 'Could not build the brand book. Try rephrasing.' })
+        send(502, { error: 'Could not build the brand book. Try rephrasing.' })
         return
       }
       const html = buildBrandBookHtml(jsonOut)
       succeeded = true
-      res.status(200).json({ kind: 'brand', html, name: 'Nalu Studio' })
+      send(200, { kind: 'brand', html, name: 'Nalu Studio' })
       return
     }
 
     // JSON kinds: canvas | palette | blueprint | logo | shopping.
     let payload = jsonOut
-    // Logos must NEVER fail: if the model couldn't produce valid JSON after the
-    // retries, synthesize a clean, valid brand direction from the prompt so a logo
-    // ALWAYS renders (the client draws the marks + generates the images).
-    if (!payload && kind === 'logo') {
-      const raw = String(prompt || '').trim()
-      const m = raw.match(/(?:for|called|named|brand[:\s]+)\s+([A-Za-z][\w&.'-]*(?:\s+[A-Za-z][\w&.'-]*){0,2})/i)
-      let nm = (m ? m[1] : raw.split(/[\s,.]+/).filter(Boolean).slice(0, 2).join(' ') || 'Brand').replace(/[^\w\s&.'-]/g, '').trim() || 'Brand'
-      nm = nm.replace(/\b(a|an|the|logo|for|my|brand|company|startup)\b/gi, '').replace(/\s+/g, ' ').trim() || 'Brand'
-      const words = nm.split(/\s+/).filter(Boolean)
-      const initials = (words.length >= 2 ? words[0][0] + words[1][0] : nm.slice(0, 1)).toUpperCase()
-      payload = {
-        kind: 'logo', name: nm, initials,
-        serif: /luxury|elegant|law|estate|heritage|classic|boutique|editorial|fashion/i.test(raw),
-        colors: ['#0F1B2D', '#AF8C56'], colorNames: ['deep midnight navy', 'antique gold'],
-        concept: 'refined geometric', symbol: `an abstract geometric emblem evoking "${nm}"`,
-      }
-    }
+    // Do not fabricate a brand direction after failed generation. The user's
+    // request remains saved and can be retried without unrelated initials/art.
+    if (payload && kind === 'logo') payload = enforceLogoName(payload, logoBrief + (prevLogo ? `\nExisting logo name: ${typeof prevLogo.name === 'string' ? prevLogo.name : ''}\nExisting initials: ${typeof prevLogo.initials === 'string' ? prevLogo.initials : ''}` : ''))
     if (!payload) {
-      res.status(502).json({ error: 'Could not build the design. Try rephrasing.' })
+      send(502, { error: 'Could not build the design. Try rephrasing.' })
       return
     }
     // Blueprints get a real drafting check: geometry violations (overlapping
@@ -2313,10 +2093,12 @@ export default async function handler(req: any, res: any) {
       for (const sl of pc.slides) if (sl.img && !sl.img.startsWith("data:image")) sl.img = ""
     }
     succeeded = true
-    res.status(200).json(payload)
+    send(200, payload)
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : 'design error' })
+    throwIfCancelled(signal)
+    if (err instanceof WebsiteRuntimeUnavailableError) { send(503, { error: err.message, quality: { runtime: err.review } }); return }
+    send(500, { error: err instanceof Error ? err.message : 'design error' })
   } finally {
-    if (!succeeded) await quota.release()
+    if (!succeeded || signal?.aborted) await quota.release()
   }
 }

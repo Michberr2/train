@@ -3,8 +3,10 @@ import { Palette, Sparkles, Ruler, Download, Copy, Check, FileJson, FileCode2, I
 import CardErrorBoundary from './CardErrorBoundary'
 
 const Blueprint3D = lazy(() => import('./Blueprint3D'))
-import { setBrand, deriveBrand, fromColors, savePalette } from './brandKit'
+import { setBrand, deriveBrand, fromColors, savePalette, getBrand, DEFAULT_BRAND, svgToLogoUrl } from './brandKit'
 import { planRoomFromItems } from './furnishPlan'
+import { generateVideo } from '../../lib/videoEngine'
+import { prepareLogoSvg, logoImageUrl, isolatedLogoSvg } from './logoSvg'
 import type { DesignArtifact } from './types'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,6 +91,12 @@ export type LogoArt = {
   // The art-directed pictorial mark concept ("a cresting wave curling into a
   // coffee bean") — drives the AI logo image prompts.
   symbol?: string
+  // Faithful-logo signals from the server: when the user DESCRIBED the mark, we
+  // render exactly that (no imposed house style / embellishments).
+  literal?: boolean // user described the mark → transcribe, don't reinterpret
+  colorsLocked?: boolean // user named the color(s) → use only those
+  userStyle?: string // the user's own render-style words ("hand-drawn","3D glossy"), else ''
+  background?: string // mark background the user asked for ("white"|"transparent"|"black"…)
   // Generated logo images (url → dataUrl) persisted with the artifact so every
   // logo is cached in the DB and browsable anytime, on any device.
   imgCache?: Record<string, string>
@@ -422,7 +430,7 @@ export function PaletteCard({ art }: { art: PaletteArt }) {
   const exportCss = () => downloadText(cssVarsFromPalette(colors), `${base}.css`, 'text/css')
   const exportTw = () => downloadText(tailwindColorsFromPalette(colors), `${base}.tailwind.json`, 'application/json')
   const exportJson = () =>
-    downloadText(JSON.stringify({ name, description: art.description, colors }, null, 2), `${base}.json`, 'application/json')
+    downloadText(JSON.stringify({ ...art, name, colors }, null, 2), `${base}.json`, 'application/json')
   const exportPng = async () => {
     const blob = await paintPalettePng(name, colors)
     if (blob) downloadBlob(blob, `${base}.png`)
@@ -555,176 +563,13 @@ export function BrandCard({ art }: { art: BrandArt }) {
   const headFamily = heading.family ? `'${heading.family}', Inter, system-ui, sans-serif` : 'Inter, system-ui, sans-serif'
   const bodyFamily = body.family ? `'${body.family}', Inter, system-ui, sans-serif` : 'Inter, system-ui, sans-serif'
 
-  // ---- PDF export (jsPDF vector — crisp/selectable, no raster) -------------
   const exportPdf = async () => {
-    const { jsPDF } = await import('jspdf')
-    const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
-    const W = pdf.internal.pageSize.getWidth()
-    const M = 48
-    let y = M
-
-    pdf.setFillColor(11, 14, 22)
-    pdf.rect(0, 0, W, pdf.internal.pageSize.getHeight(), 'F')
-
-    pdf.setTextColor(255)
-    pdf.setFont('helvetica', 'bold')
-    pdf.setFontSize(30)
-    pdf.text(name, M, (y += 14))
-    if (brand.tagline) {
-      pdf.setTextColor(159, 179, 255)
-      pdf.setFont('helvetica', 'normal')
-      pdf.setFontSize(13)
-      pdf.text(pdf.splitTextToSize(brand.tagline, W - M * 2), M, (y += 24))
-    }
-    if (brand.mission) {
-      pdf.setTextColor(200)
-      pdf.setFontSize(11)
-      const lines = pdf.splitTextToSize(brand.mission, W - M * 2)
-      pdf.text(lines, M, (y += 26))
-      y += lines.length * 14
-    }
-    if (brand.voice && brand.voice.length) {
-      pdf.setTextColor(150, 160, 180)
-      pdf.setFontSize(10)
-      pdf.text('Voice: ' + brand.voice.join('  ·  '), M, (y += 22))
-    }
-
-    // Palette
-    if (palette.length) {
-      y += 28
-      pdf.setTextColor(255)
-      pdf.setFont('helvetica', 'bold')
-      pdf.setFontSize(15)
-      pdf.text('Color Palette', M, y)
-      y += 14
-      const sw = (W - M * 2) / palette.length
-      palette.forEach((c, i) => {
-        const { r, g, b } = hexToRgb(c.hex)
-        pdf.setFillColor(r, g, b)
-        pdf.rect(M + i * sw, y, sw - 4, 48, 'F')
-        const ft = bestText(c.hex) === '#ffffff' ? 255 : 0
-        pdf.setTextColor(ft)
-        pdf.setFont('helvetica', 'bold')
-        pdf.setFontSize(8)
-        pdf.text(('#' + normHex(c.hex)).toUpperCase(), M + i * sw + 5, y + 42)
-      })
-      y += 48
-      palette.forEach((c, i) => {
-        pdf.setTextColor(170)
-        pdf.setFont('helvetica', 'normal')
-        pdf.setFontSize(7)
-        pdf.text(pdf.splitTextToSize(c.role || c.name || '', sw - 6), M + i * sw, y + 10)
-      })
-      y += 18
-    }
-
-    // Typography
-    y += 24
-    pdf.setTextColor(255)
-    pdf.setFont('helvetica', 'bold')
-    pdf.setFontSize(15)
-    pdf.text('Typography', M, y)
-    y += 18
-    pdf.setFontSize(11)
-    pdf.text(`Heading — ${heading.family || 'Inter'} (${(heading.weights || []).join(', ') || '700'})`, M, y)
-    y += 16
-    pdf.setFont('helvetica', 'normal')
-    pdf.text(`Body — ${body.family || 'Inter'} (${(body.weights || []).join(', ') || '400'})`, M, y)
-    if (typo.scale && typo.scale.length) {
-      y += 16
-      pdf.setTextColor(150)
-      pdf.setFontSize(9)
-      pdf.text('Scale: ' + typo.scale.join(' · ') + ' px', M, y)
-    }
-
-    // Do / Don't
-    const printList = (heading2: string, items: string[], color: [number, number, number]) => {
-      y += 26
-      pdf.setTextColor(color[0], color[1], color[2])
-      pdf.setFont('helvetica', 'bold')
-      pdf.setFontSize(13)
-      pdf.text(heading2, M, y)
-      pdf.setTextColor(210)
-      pdf.setFont('helvetica', 'normal')
-      pdf.setFontSize(10)
-      for (const it of items) {
-        y += 16
-        const lines = pdf.splitTextToSize('•  ' + it, W - M * 2)
-        pdf.text(lines, M, y)
-        y += (lines.length - 1) * 13
-      }
-    }
-    if (dos.length) printList("Do", dos, [110, 231, 183])
-    if (donts.length) printList("Don't", donts, [252, 165, 165])
-
-    pdf.save(`${base}.pdf`)
+    const { buildBrandPdf } = await import('./brandExport')
+    downloadBlob(await buildBrandPdf(art), `${base}.pdf`)
   }
-
-  // ---- DOCX export (editable handoff) -------------------------------------
   const exportDocx = async () => {
-    const {
-      Document,
-      Packer,
-      Paragraph,
-      HeadingLevel,
-      TextRun,
-      Table,
-      TableRow,
-      TableCell,
-      WidthType,
-    } = await import('docx')
-    const children: (InstanceType<typeof Paragraph> | InstanceType<typeof Table>)[] = []
-    children.push(new Paragraph({ heading: HeadingLevel.TITLE, children: [new TextRun({ text: name })] }))
-    if (brand.tagline) children.push(new Paragraph({ children: [new TextRun({ text: brand.tagline, italics: true })] }))
-    if (brand.mission) children.push(new Paragraph({ children: [new TextRun(brand.mission)] }))
-    if (brand.voice && brand.voice.length)
-      children.push(new Paragraph({ children: [new TextRun({ text: 'Voice: ' + brand.voice.join(', '), bold: true })] }))
-
-    if (palette.length) {
-      children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun('Color Palette')], spacing: { before: 240 } }))
-      children.push(
-        new Table({
-          width: { size: 100, type: WidthType.PERCENTAGE },
-          rows: [
-            new TableRow({
-              children: ['Role', 'Name', 'Hex'].map(
-                (h) => new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: h, bold: true })] })] }),
-              ),
-            }),
-            ...palette.map(
-              (c) =>
-                new TableRow({
-                  children: [
-                    new TableCell({ children: [new Paragraph(c.role || '')] }),
-                    new TableCell({ children: [new Paragraph(c.name || '')] }),
-                    new TableCell({
-                      shading: { fill: normHex(c.hex), color: 'auto', type: 'clear' },
-                      children: [new Paragraph({ children: [new TextRun({ text: '#' + normHex(c.hex), color: bestText(c.hex).replace('#', '') })] })],
-                    }),
-                  ],
-                }),
-            ),
-          ],
-        }),
-      )
-    }
-
-    children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun('Typography')], spacing: { before: 240 } }))
-    children.push(new Paragraph({ children: [new TextRun({ text: `Heading: ${heading.family || 'Inter'} (${(heading.weights || []).join(', ') || '700'})`, bold: true })] }))
-    children.push(new Paragraph({ children: [new TextRun(`Body: ${body.family || 'Inter'} (${(body.weights || []).join(', ') || '400'})`)] }))
-
-    if (dos.length) {
-      children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun('Do')], spacing: { before: 240 } }))
-      for (const d of dos) children.push(new Paragraph({ bullet: { level: 0 }, children: [new TextRun(d)] }))
-    }
-    if (donts.length) {
-      children.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun("Don't")], spacing: { before: 240 } }))
-      for (const d of donts) children.push(new Paragraph({ bullet: { level: 0 }, children: [new TextRun(d)] }))
-    }
-
-    const doc = new Document({ sections: [{ children }] })
-    const blob = await Packer.toBlob(doc)
-    downloadBlob(blob, `${base}.docx`)
+    const { buildBrandDocx } = await import('./brandExport')
+    downloadBlob(await buildBrandDocx(art), `${base}.docx`)
   }
 
   return (
@@ -866,27 +711,8 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 // ===== LogoCard ===============================================================
 
-const cleanSvg = (s?: string): string =>
-  (s || '').replace(/<script[\s\S]*?<\/script>/gi, '').replace(/ on\w+="[^"]*"/gi, '')
-
 function svgToPng(svg: string, size: number, bg: string | null, cb: (url: string) => void) {
-  // The model's SVGs carry ONLY a viewBox (no xmlns, no width/height). As-is they
-  // either fail to load in an <img> (no xmlns) or rasterize to a blank/0-size
-  // canvas (no intrinsic dimensions). So we derive the aspect ratio from the
-  // viewBox and rewrite the root <svg> with xmlns + explicit pixel dimensions.
-  const vb = (svg.match(/viewBox\s*=\s*["']([-\d.\s,]+)["']/) || [])[1]
-  const p = vb ? vb.trim().split(/[\s,]+/).map(Number) : []
-  const vbw = p.length === 4 && p[2] > 0 ? p[2] : 100
-  const vbh = p.length === 4 && p[3] > 0 ? p[3] : 100
-  const ratio = vbw / vbh
-  const cw = ratio >= 1 ? size : Math.max(1, Math.round(size * ratio))
-  const ch = ratio >= 1 ? Math.max(1, Math.round(size / ratio)) : size
-  let doc = svg.replace(/<svg\b([^>]*)>/i, (_m, attrs: string) => {
-    let a = attrs.replace(/\swidth\s*=\s*["'][^"']*["']/i, '').replace(/\sheight\s*=\s*["'][^"']*["']/i, '')
-    if (!/xmlns\s*=/.test(a)) a = ` xmlns="http://www.w3.org/2000/svg"${a}`
-    return `<svg${a} width="${cw}" height="${ch}">`
-  })
-  if (!/^\s*<svg/i.test(doc)) doc = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${vbw} ${vbh}" width="${cw}" height="${ch}">${doc}</svg>`
+  const { svg: doc, width: cw, height: ch } = prepareLogoSvg(svg, size)
   const blob = new Blob([doc], { type: 'image/svg+xml;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const img = new Image()
@@ -1007,14 +833,49 @@ function hexToColorName(hex: string): string {
   }
   return best
 }
-function logoImgUrl(symbol: string, styleKey: string, colorDesc: string, seed: number): string {
-  const style = LOGO_STYLES.find((s) => s.key === styleKey) || LOGO_STYLES[0]
-  // Icon-only: NO text/letters (diffusion garbles type — the wordmark is typeset
-  // in code). The art-directed `symbol` concept is what makes each brand's mark
-  // distinctive instead of generic clip-art.
-  const prompt = `professional vector logo mark, ${style.archetype}: ${symbol}, ${style.desc}, flat 2D vector illustration, ${colorDesc}, one single centered icon on a solid white background, generous margin around the icon, crisp edges, iconic and memorable, dribbble behance award-winning logo design, NO text, NO letters, NO words, NO typography, no mockup, no watermark, no photo, no 3D render, no shadow`
+// Background clause from the user's requested background (default white).
+function bgClause(background?: string): string {
+  const b = (background || 'white').toLowerCase().trim()
+  if (b === 'transparent') return 'on a transparent background'
+  if (!b || b === 'white') return 'on a solid white background'
+  return `on a solid ${b} background`
+}
+// The always-on text bans (the wordmark is typeset in code, so the mark carries no
+// letters). Render-effect bans are DROPPED when the user's style asks for that very
+// effect — banning "3D" while the user asked for "3D glossy" fights their request.
+function negativesFor(userStyle?: string): string {
+  const s = (userStyle || '').toLowerCase()
+  let n = 'no text, no letters, no words, no typography, no mockup, no watermark'
+  if (!/photo|realistic|photoreal/.test(s)) n += ', no photo'
+  if (!/3d|three-?dimensional|isometric|clay|glossy|emboss|extrude|chrome/.test(s)) n += ', no 3D render'
+  if (!/shadow|emboss|deboss|3d|glossy|chrome|watercolor|paint|brush/.test(s)) n += ', no drop shadow'
+  if (!/gradient|neon|glow|duotone|holograph|chrome|glossy|watercolor|paint|brush|airbrush|metallic/.test(s)) n += ', no gradient'
+  return n
+}
+// Build the diffusion prompt. FAITHFUL (literal) mode leads with the user's exact
+// described mark + their own style words and adds NO house adjectives or award-bait
+// — that imposed styling was the "random stuff". Non-literal (user gave no picture)
+// keeps the polished preset look.
+function logoImgUrl(o: {
+  symbol: string; colorDesc: string; seed: number
+  literal: boolean; userStyle?: string; background?: string; presetKey?: string
+}): string {
+  const bg = bgClause(o.background)
+  const negatives = negativesFor(o.userStyle)
+  const us = (o.userStyle || '').trim()
+  let prompt: string
+  if (o.literal) {
+    // The user described it — reproduce THAT, nothing else.
+    const styleClause = us ? `${us} logo mark` : 'flat 2D vector logo mark'
+    prompt = `${o.symbol}, ${styleClause}, ${o.colorDesc}, single centered icon ${bg}, generous margin, clean crisp edges, ${negatives}`
+  } else {
+    // No picture given — apply today's polished house style; a userStyle (rare
+    // here) still overrides the preset's look.
+    const preset = LOGO_STYLES.find((s) => s.key === o.presetKey) || LOGO_STYLES[0]
+    prompt = `professional vector logo mark, ${preset.archetype}: ${o.symbol}, ${us || preset.desc}, flat 2D vector illustration, ${o.colorDesc}, one single centered icon ${bg}, generous margin, crisp edges, iconic and memorable, dribbble behance award-winning logo design, ${negatives}`
+  }
   // flux for crisp, high-quality marks; the server proxy retries + falls back.
-  return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=768&height=768&nologo=true&model=flux&seed=${seed}`
+  return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=768&height=768&nologo=true&model=flux&seed=${o.seed}`
 }
 // Once generated, a logo image is CACHED — revisiting a chat or the Studio
 // gallery must never re-run the diffusion model. In-memory for the session +
@@ -1096,6 +957,7 @@ const downloadDataUrl = (data: string, filename: string) => {
 // Composite the generated mark + a code-typeset wordmark onto one clean canvas —
 // crisp typography (diffusion models garble letters) under a crisp icon.
 function downloadLogoLockup(markDataUrl: string, name: string, serif: boolean, filename: string) {
+  if (!name.trim()) return downloadDataUrl(markDataUrl, filename)
   const img = new Image()
   img.onload = () => {
     const W = 1200
@@ -1126,25 +988,71 @@ function seedFor(key: string): number {
   for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619) }
   return Math.abs(h % 999983) + 1
 }
-function LogoImages({ name, brand, accent, symbol, colorNames, serif, saved, onCache }: { name: string; brand: string; accent?: string; symbol?: string; colorNames?: string[]; serif?: boolean; saved?: Record<string, string>; onCache?: (url: string, dataUrl: string) => void }) {
-  const [style, setStyle] = useState('minimal')
+function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, colorsLocked, userStyle, background, saved, onCache }: { name: string; brand: string; accent?: string; symbol?: string; colorNames?: string[]; serif?: boolean; literal?: boolean; colorsLocked?: boolean; userStyle?: string; background?: string; saved?: Record<string, string>; onCache?: (url: string, dataUrl: string) => void }) {
+  const [savedChoice, setSavedChoice] = useState<number | null>(null)
+  const [saveError, setSaveError] = useState('')
+  const saveImage = async (data: string, index: number) => {
+    setSaveError('')
+    try {
+      // Brand storage has a size cap; save a compact real mark, not a discarded
+      // full-resolution data URL or an unrelated generated monogram.
+      const img = new Image(); img.crossOrigin = 'anonymous'; img.src = data; await img.decode()
+      const canvas = document.createElement('canvas'), ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('Canvas unavailable')
+      let logo = ''
+      for (const size of [384, 256, 128, 64]) {
+        const scale = size / Math.max(img.naturalWidth, img.naturalHeight)
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * scale)); canvas.height = Math.max(1, Math.round(img.naturalHeight * scale))
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height); logo = canvas.toDataURL('image/png')
+        if (logo.length <= 175000) break
+      }
+      if (logo.length > 175000) throw new Error('Image too large')
+      const next = { ...(getBrand() || DEFAULT_BRAND), name: name || 'Logo', logo, logoMark: logo }
+      setBrand(next); savePalette(next); setSavedChoice(index)
+    } catch { setSaveError('Could not save this mark. You can still download it.') }
+  }
+  // `explore` = the user opted IN to reinterpreting a faithful mark in other house
+  // styles. `preset` = which of the 8 styles (only used when NOT faithful).
+  const [explore, setExplore] = useState(false)
+  const [preset, setPreset] = useState<string | null>(null)
   const [round, setRound] = useState(0)
   // Seed the cache from the artifact's saved images (persisted in the DB) so every
   // logo you ever made shows INSTANTLY on revisit — browse them all, anytime.
   useMemo(() => { if (saved) for (const [u, d] of Object.entries(saved)) if (u && d) logoMemCache.set(u, d) }, [saved])
-  // The art-directed mark concept — the difference between a distinctive logo
-  // and clip-art. Falls back to a subject-neutral geometric monogram motif.
-  const concept = (symbol || '').trim() || `an abstract geometric emblem evoking "${name}"`
+  // FAITHFUL = the user described the mark or named a style, and hasn't opted to
+  // explore other looks → reproduce exactly what they asked for. Otherwise apply a
+  // polished house style. Default preset is luxury/modern (not the old forced 'minimal').
+  const faithful = (!!literal || !!(userStyle || '').trim()) && !explore
+  const presetKey = preset ?? (serif ? 'luxury' : 'modern')
+  // The mark concept. When literal we use the user's exact symbol; when inventing we
+  // fall back to a subject-neutral monogram motif. (The wordmark-only case — empty
+  // symbol + literal — never reaches here: the call site doesn't render LogoImages then.)
+  const concept = (symbol || '').trim() || (literal ? '' : `an abstract geometric emblem evoking "${name}"`)
   const colorDesc = (() => {
     const primaryName = colorNames?.[0] || hexToColorName(brand)
     const accentName = colorNames?.[1] || (accent ? hexToColorName(accent) : '')
+    // colorsLocked → the user named the exact color(s); forbid the model adding more.
+    if (colorsLocked)
+      return accentName ? `colored only ${primaryName} and ${accentName}, no other colors`
+        : `colored only ${primaryName}, no other colors`
     return accentName
       ? `two-color palette: ${primaryName} as the dominant color with ${accentName} accents`
-      : `monochrome ${primaryName} on white`
+      : `monochrome ${primaryName}`
   })()
+  // ONE seed-key builder used by BOTH the visible grid AND the background preload,
+  // so a preset's prefetched URL is byte-identical to what the grid later requests
+  // (a mismatch silently defeats the "switching styles is instant" cache-warm).
+  const seedKey = (styleSeg: string, r: number, n: number) => `${name}|${styleSeg}|${userStyle || ''}|${r}|${n}`
   const urls = useMemo(
-    () => [0, 1, 2].map((n) => logoImgUrl(concept, style, colorDesc, seedFor(`${name}|${style}|${round}|${n}`))),
-    [name, concept, colorDesc, round, style],
+    () => [0, 1, 2].map((n) => logoImgUrl({
+      symbol: concept, colorDesc,
+      seed: seedFor(seedKey(faithful ? 'faithful' : presetKey, round, n)),
+      literal: faithful, // faithful (described mark OR a named style) → faithful template, no house-style/award-bait
+      userStyle: faithful ? (userStyle || '') : '', // the symbol always stays the user's
+      background: background || 'white',
+      presetKey: faithful ? undefined : presetKey,
+    })),
+    [name, concept, colorDesc, round, faithful, presetKey, userStyle, background, literal], // eslint-disable-line react-hooks/exhaustive-deps
   )
   const urlKey = urls.join('|')
   // Seed each slot from what's ALREADY cached (saved-in-DB imgCache first, then the
@@ -1178,10 +1086,11 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, saved, onC
   }, [urlKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Pre-load EVERY style's logos in the background (round 0) so switching styles is
-  // instant — they're all fetched + cached + persisted before you get to them.
+  // instant. FAITHFUL logos have no style presets to switch to — nothing to prefetch.
   useEffect(() => {
+    if (faithful) return // one faithful look; no presets to warm up
     let alive = true
-    const all = LOGO_STYLES.flatMap((s) => [0, 1, 2].map((n) => logoImgUrl(concept, s.key, colorDesc, seedFor(`${name}|${s.key}|0|${n}`))))
+    const all = LOGO_STYLES.flatMap((s) => [0, 1, 2].map((n) => logoImgUrl({ symbol: concept, colorDesc, seed: seedFor(seedKey(s.key, 0, n)), literal: false, userStyle: '', background: background || 'white', presetKey: s.key })))
     const queue = all.filter((u) => !logoCacheGet(u)) // skip already-cached
     let running = 0, idx = 0
     const pump = () => {
@@ -1192,7 +1101,7 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, saved, onC
     }
     const t = setTimeout(pump, 4000) // wait for the visible style to finish first
     return () => { alive = false; clearTimeout(t) }
-  }, [name, concept, colorDesc]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [name, concept, colorDesc, faithful, background]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const allSettled = slots.length > 0 && slots.every((s) => s.st !== 'loading')
   const doneCount = slots.filter((s) => s.st === 'done').length
@@ -1210,15 +1119,31 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, saved, onC
     <div className="border-t border-glass/[0.08] px-4 py-3">
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
         <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-dim">AI logo images</span>
-        {LOGO_STYLES.map((s) => (
-          <button
-            key={s.key}
-            onClick={() => setStyle(s.key)}
-            className={`rounded px-1.5 py-0.5 text-[10px] ${style === s.key ? 'bg-amber-500/25 text-amber-100' : 'bg-glass/10 text-dim hover:bg-glass/20'}`}
-          >
-            {s.label}
-          </button>
-        ))}
+        {faithful ? (
+          // FAITHFUL: no imposed styles — we render exactly what was described. Show
+          // a read-only chip + a quiet opt-in to explore other looks.
+          <>
+            <span className="rounded px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-100">As described{(userStyle || '').trim() ? ` · ${userStyle}` : ''}</span>
+            {(!!literal || !!(userStyle || '').trim()) && (
+              <button onClick={() => setExplore(true)} className="rounded px-1.5 py-0.5 text-[10px] text-dim hover:bg-glass/10 hover:text-ink">Try other styles ▾</button>
+            )}
+          </>
+        ) : (
+          <>
+            {(!!literal || !!(userStyle || '').trim()) && (
+              <button onClick={() => { setExplore(false); setPreset(null) }} className="rounded px-1.5 py-0.5 text-[10px] text-dim hover:bg-glass/10 hover:text-ink">← As described</button>
+            )}
+            {LOGO_STYLES.map((s) => (
+              <button
+                key={s.key}
+                onClick={() => setPreset(s.key)}
+                className={`rounded px-1.5 py-0.5 text-[10px] ${presetKey === s.key ? 'bg-amber-500/25 text-amber-100' : 'bg-glass/10 text-dim hover:bg-glass/20'}`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </>
+        )}
         <button onClick={() => setRound((r) => r + 1)} className="ml-auto rounded px-1.5 py-0.5 text-[10px] text-dim hover:bg-glass/10 hover:text-ink">
           Regenerate
         </button>
@@ -1230,18 +1155,18 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, saved, onC
                 {s.st === 'done' ? (
                   <>
                     <div className="flex h-full w-full flex-col items-center justify-center">
-                      <img src={s.data} alt={`${name} logo`} className="h-[78%] w-full object-contain" />
-                      <div
+                      <img src={s.data} alt={name ? `${name} logo` : "Logo mark"} className={`${name ? "h-[78%]" : "h-full"} w-full object-contain`} />
+                      {name && <div
                         className="max-w-[92%] truncate px-1 text-center text-black"
                         style={{ fontFamily: serif ? 'Georgia, serif' : 'Inter, sans-serif', fontWeight: serif ? 500 : 600, fontSize: '13px', letterSpacing: serif ? '0.02em' : '0.14em' }}
                       >
                         {serif ? name : name.toUpperCase()}
-                      </div>
+                      </div>}
                     </div>
-                    <button onClick={() => downloadLogoLockup(s.data, name, !!serif, `${slug(name, 'nalu-logo')}-${style}-${i + 1}.png`)}
-                      className="absolute bottom-1.5 right-1.5 rounded-md bg-black/55 px-2 py-1 text-[10px] font-medium text-ink opacity-0 backdrop-blur transition-opacity group-hover:opacity-100">
-                      Download
-                    </button>
+                    <div className="absolute inset-x-1.5 bottom-1.5 flex flex-wrap justify-end gap-1">
+                      <button onClick={() => saveImage(s.data, i)} className="rounded-md bg-black/65 px-2 py-1 text-[10px] font-medium text-white">{savedChoice === i ? 'Saved' : 'Save to Brand'}</button>
+                      <button onClick={() => downloadLogoLockup(s.data, name, !!serif, `${slug(name, 'nalu-logo')}-${faithful ? 'logo' : presetKey}-${i + 1}.png`)} className="rounded-md bg-black/65 px-2 py-1 text-[10px] font-medium text-white">Download</button>
+                    </div>
                   </>
                 ) : s.st === 'loading' ? (
                   <div className="absolute inset-0 flex items-center justify-center bg-white">
@@ -1256,8 +1181,11 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, saved, onC
             ))}
       </div>
       <div className="mt-1.5 text-[10px] text-dim">
+        {saveError && <p role="status">{saveError}</p>}
         {revealed
-          ? 'Designed logos rendered by Nalu — pick a style or Regenerate for new options; uses your brand color.'
+          ? (faithful
+              ? 'Built to your description — Regenerate for fresh takes, or “Try other styles” to explore.'
+              : 'Designed logos rendered by Nalu — pick a style or Regenerate for new options; uses your brand color.')
           : `Designing your logos… ${doneCount}/3 ready`}
       </div>
     </div>
@@ -1279,16 +1207,18 @@ export function LogoCard({ art, onUpdate }: { art: LogoArt; onUpdate?: (art: Log
   }, [onUpdate, art])
   // Prefer code-generated options (reliably clean). Legacy artifacts that carry
   // freehand LLM SVG options still render via the same path.
+  const pictorialOnly = !!art.symbol?.trim() && !art.options?.length && !art.mark && !art.lockup
   const options: LogoOption[] =
     art.options && art.options.length
       ? art.options
-      : art.initials || art.name
-        ? genLogoOptions(art.name || 'Brand', art.initials || initialsFrom(art.name || 'Brand'), !!art.serif)
+      : !pictorialOnly && (art.initials || art.name)
+        ? genLogoOptions(art.name || art.initials || '', art.initials || initialsFrom(art.name || ''), !!art.serif)
         : [{ concept: art.concept, mark: art.mark, lockup: art.lockup }]
   const [sel, setSel] = useState(0)
+  const [savedBrand, setSavedBrand] = useState(false)
   const opt = options[Math.min(sel, options.length - 1)]
-  const lockup = cleanSvg(opt.lockup || opt.mark)
-  const mark = cleanSvg(opt.mark || opt.lockup)
+  const lockup = opt.lockup || opt.mark || ''
+  const mark = opt.mark || opt.lockup || ''
   const name = art.name || 'Logo'
   const base = slug(name, 'nalu-logo') + (options.length > 1 ? `-${sel + 1}` : '')
   const colors = (art.colors || []).filter((c) => /^#?[0-9a-fA-F]{3,8}$/.test(c)).slice(0, 6)
@@ -1304,6 +1234,20 @@ export function LogoCard({ art, onUpdate }: { art: LogoArt; onUpdate?: (art: Log
       a.click()
       a.remove()
     })
+
+  // Tie THIS logo to the Brand bar: set it (full lockup + compact mark) on the active
+  // brand's color scheme + fonts, and save it as a reusable brand-book chip.
+  const saveToBrand = () => {
+    const fullUrl = svgToLogoUrl(colorize(lockup, brand))
+    if (!fullUrl) return
+    const cur = getBrand() || DEFAULT_BRAND
+    const nm = !cur.name || cur.name.toLowerCase() === 'nalu' ? name : cur.name
+    const next = { ...cur, name: nm, logo: fullUrl, logoMark: svgToLogoUrl(colorize(mark, brand)) || fullUrl }
+    setBrand(next)
+    savePalette(next)
+    setSavedBrand(true)
+    setTimeout(() => setSavedBrand(false), 1600)
+  }
 
   const SvgBox = ({
     svg,
@@ -1325,10 +1269,7 @@ export function LogoCard({ art, onUpdate }: { art: LogoArt; onUpdate?: (art: Log
       {/* The wrapper must have a DEFINITE size or a viewBox-only SVG collapses to
           nothing. h-full/w-full off the fixed-height box + preserveAspectRatio
           (default "meet") contains + centers the art. */}
-      <div
-        className="h-full w-full [&>svg]:h-full [&>svg]:w-full"
-        dangerouslySetInnerHTML={{ __html: svg }}
-      />
+      <img className="h-full w-full object-contain" src={logoImageUrl(svg, color)} alt={`${name} logo`} />
     </div>
   )
 
@@ -1339,8 +1280,11 @@ export function LogoCard({ art, onUpdate }: { art: LogoArt; onUpdate?: (art: Log
       title={name}
       subtitle={opt.concept || 'Logo — designed in black & white first'}
       actions={
-        <>
-          <ActionBtn onClick={() => downloadText(lockup, `${base}.svg`, 'image/svg+xml')}>
+        lockup ? <>
+          <ActionBtn onClick={saveToBrand} tint="bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25">
+            {savedBrand ? <Check size={13} /> : <Star size={13} />} {savedBrand ? 'Saved to Brand' : 'Save to Brand'}
+          </ActionBtn>
+          <ActionBtn onClick={() => downloadText(isolatedLogoSvg(lockup), `${base}.svg`, 'image/svg+xml')}>
             <FileCode2 size={13} /> SVG
           </ActionBtn>
           <ActionBtn onClick={() => exportPng(mark, 'mark-black', '#000000', '#FFFFFF')}>
@@ -1349,9 +1293,10 @@ export function LogoCard({ art, onUpdate }: { art: LogoArt; onUpdate?: (art: Log
           <ActionBtn onClick={() => exportPng(lockup, 'logo', brand, '#FFFFFF')} primary tint="bg-amber-500/20 text-amber-200 hover:bg-amber-500/30">
             <ImageIcon size={13} /> PNG
           </ActionBtn>
-        </>
+        </> : undefined
       }
     >
+      {lockup && <>
       {/* Concept options — a real designer presents a few directions. */}
       {options.length > 1 && (
         <div className="flex gap-2 border-b border-glass/[0.08] px-4 py-3">
@@ -1364,7 +1309,7 @@ export function LogoCard({ art, onUpdate }: { art: LogoArt; onUpdate?: (art: Log
               }`}
               title={`Concept ${i + 1}`}
             >
-              <div className="[&>svg]:h-10 [&>svg]:w-10" dangerouslySetInnerHTML={{ __html: cleanSvg(o.mark || o.lockup) }} />
+              <img className="h-10 w-10 object-contain" src={logoImageUrl(o.mark || o.lockup || '')} alt={`Concept ${i + 1} logo`} />
             </button>
           ))}
         </div>
@@ -1396,22 +1341,32 @@ export function LogoCard({ art, onUpdate }: { art: LogoArt; onUpdate?: (art: Log
           <SvgBox svg={mark} color="#FFFFFF" bg="#0B0B0B" border="border-glass/10" h="h-24" />
           <SvgBox svg={mark} color={brand} bg="#F4F1EA" border="border-black/10" h="h-24" />
           <div className="flex h-24 flex-col items-center justify-center gap-1.5 rounded-xl border border-black/10 bg-white">
-            <div className="text-black [&>svg]:h-8 [&>svg]:w-8" dangerouslySetInnerHTML={{ __html: mark }} />
-            <div className="text-black [&>svg]:h-4 [&>svg]:w-4" dangerouslySetInnerHTML={{ __html: mark }} />
+            <img className="h-8 w-8 object-contain" src={logoImageUrl(mark)} alt={`${name} mark at 32 pixels`} />
+            <img className="h-4 w-4 object-contain" src={logoImageUrl(mark)} alt={`${name} mark at 16 pixels`} />
           </div>
         </div>
       </div>
 
-      <LogoImages
-        name={name}
-        brand={brand}
-        accent={colors[1] ? (colors[1].startsWith('#') ? colors[1] : '#' + colors[1]) : undefined}
-        symbol={art.symbol}
-        colorNames={art.colorNames}
-        serif={!!art.serif}
-        saved={art.imgCache}
-        onCache={cacheImg}
-      />
+      </>}
+
+      {/* Wordmark-only request (literal + no pictorial symbol) → the code-typeset
+          marks above ARE the logo; skip the diffusion image grid entirely. */}
+      {!(art.literal && !(art.symbol || '').trim()) && (
+        <LogoImages
+          name={art.name?.trim() || ''}
+          brand={brand}
+          accent={colors[1] ? (colors[1].startsWith('#') ? colors[1] : '#' + colors[1]) : undefined}
+          symbol={art.symbol}
+          colorNames={art.colorNames}
+          serif={!!art.serif}
+          literal={art.literal}
+          colorsLocked={art.colorsLocked}
+          userStyle={art.userStyle}
+          background={art.background}
+          saved={art.imgCache}
+          onCache={cacheImg}
+        />
+      )}
 
       {colors.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 border-t border-glass/[0.08] px-4 py-3">
@@ -1448,9 +1403,10 @@ export function BlueprintCard({ art }: { art: BlueprintArt }) {
   const [walkMode, setWalkMode] = useState(false) // 3D opened straight into walk-through
   // Multi-floor: a set of sheets (Site Plan, Ground Floor, …). Falls back to a
   // single legacy drawing. The selected floor drives the SVG and the 3D model.
-  const floors: BPFloor[] = art.floors && art.floors.length
+  const floors: BPFloor[] = useMemo(() => art.floors && art.floors.length
     ? art.floors
-    : [{ name: 'Plan', viewBox: art.viewBox || { w: 40, h: 28 }, shapes: art.shapes, dimensions: art.dimensions, annotations: art.annotations }]
+    : [{ name: 'Plan', viewBox: art.viewBox || { w: 40, h: 28 }, shapes: art.shapes, dimensions: art.dimensions, annotations: art.annotations }],
+  [art.floors, art.viewBox, art.shapes, art.dimensions, art.annotations])
   const [floorIdx, setFloorIdx] = useState(0)
   const floor = floors[Math.min(floorIdx, floors.length - 1)]
   const vb = floor.viewBox || { w: 40, h: 28 }
@@ -1460,9 +1416,14 @@ export function BlueprintCard({ art }: { art: BlueprintArt }) {
   const isSiteFloor = (f: BPFloor) =>
     /site|plot|\blot\b|landscap|grounds/.test((f.name || '').toLowerCase()) ||
     (f.shapes || []).some((s) => s.type === 'tree' || (s.type === 'ellipse' && /pool/.test((s as { label?: string }).label?.toLowerCase() || '')))
-  const buildingFloors = floors.filter((f) => !isSiteFloor(f))
   const curIsSite = isSiteFloor(floor)
-  const threeFloors: BPFloor[] = curIsSite ? [floor] : buildingFloors.length ? buildingFloors : floors
+  // Blueprint3D rebuilds its renderer when floors change. Keep that input
+  // stable across account-save, theme and other unrelated parent renders.
+  const threeFloors: BPFloor[] = useMemo(() => {
+    if (curIsSite) return [floor]
+    const buildingFloors = floors.filter((f) => !isSiteFloor(f))
+    return buildingFloors.length ? buildingFloors : floors
+  }, [floors, floor, curIsSite])
   const step = art.grid?.step ?? 2
   const showGrid = art.grid?.show ?? true
   const units = art.units || ''
@@ -1816,14 +1777,9 @@ export function ShoppingCard({ art }: { art: ShoppingArt }) {
   const makeVideo = async () => {
     setVideo({ state: 'loading' })
     try {
-      const r = await fetch('/api/video', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: roomVideoPrompt(art) }),
-      })
-      const data = (await r.json().catch(() => ({}))) as { url?: string; error?: string }
-      if (r.ok && data.url) setVideo({ state: 'done', url: data.url })
-      else setVideo({ state: 'error', msg: data.error || `Video error ${r.status}` })
+      // $0-first: local MiniMax-H3 → in-browser engine → free cloud pool.
+      const out = await generateVideo({ prompt: roomVideoPrompt(art) })
+      setVideo({ state: 'done', url: out.url })
     } catch (e) {
       setVideo({ state: 'error', msg: e instanceof Error ? e.message : 'Video request failed' })
     }

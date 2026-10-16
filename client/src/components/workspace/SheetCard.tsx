@@ -1,19 +1,11 @@
-import { useMemo, useState } from 'react'
-import { jsPDF } from 'jspdf'
-import autoTable from 'jspdf-autotable'
+import { useMemo, useRef, useState } from 'react'
 import { FileSpreadsheet, Download } from 'lucide-react'
-import { getBrand, toRgb, type BrandKit } from './brandKit'
+import { useBrand, toRgb, type BrandKit } from './brandKit'
+import { rasterizeLogo, type RasterLogo } from './logoRaster'
 import { buildEvaluator, type Cell } from './formulaEval'
+import { normalizeWorkbook, type SheetDoc } from './sheetModel'
 
-export type SheetData = {
-  name?: string
-  columns?: string[]
-  rows?: (string | number)[][]
-}
-export type SheetDoc = {
-  title?: string
-  sheets?: SheetData[]
-}
+export type { SheetData, SheetDoc } from './sheetModel'
 
 // Infer a sensible number format from a column header (currency / percent / count)
 // so exports look like a finished model, not raw data — and provide a matching
@@ -29,27 +21,22 @@ function colFormat(header: string): { numFmt?: string; display: (v: Cell) => str
   return { display: (v) => (typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(v ?? '')) }
 }
 
-// Excel sheet names: ≤31 chars, no \ / ? * [ ] :, and unique (exceljs THROWS on a
-// duplicate, which is exactly what silently broke multi-tab exports).
-function safeSheetName(name: string, used: Set<string>, i: number): string {
-  let n = (name || `Sheet${i + 1}`).replace(/[\\/?*[\]:]/g, ' ').trim().slice(0, 31) || `Sheet${i + 1}`
-  if (used.has(n.toLowerCase())) {
-    const stem = n.slice(0, 27)
-    let k = 2
-    while (used.has(`${stem} (${k})`.toLowerCase())) k++
-    n = `${stem} (${k})`
-  }
-  used.add(n.toLowerCase())
-  return n
-}
-
 // Build a real .xlsx workbook with exceljs — live formulas WITH their computed
 // result (so Numbers/Sheets/preview show values before recalc), per-column number
 // formatting, and the active brand applied. Lazy-imported.
 /** Build the styled .xlsx as a Blob (shared with the Agents output nodes). */
 export async function buildWorkbookBlob(doc: SheetDoc, brand: BrandKit | null): Promise<Blob> {
+  doc = normalizeWorkbook(doc)
   const ExcelJS = (await import('exceljs')).default
   const wb = new ExcelJS.Workbook()
+  wb.calcProperties.fullCalcOnLoad = true
+  // Brand logo → floating image top-right of the first sheet. Floating (not a cell
+  // value) so it never shifts rows or breaks the formula references.
+  let logo: RasterLogo | null = null
+  const logoSrc = brand?.logo || brand?.logoMark
+  if (logoSrc) {
+    try { logo = await rasterizeLogo(logoSrc, { height: 96, bgDark: false }) } catch { /* optional */ }
+  }
   const headArgb = 'FF' + (brand?.primary || '0F1B2D')
   const headFont = brand?.headingFont || 'Georgia'
   const bodyFont = brand?.bodyFont || 'Calibri'
@@ -57,9 +44,8 @@ export async function buildWorkbookBlob(doc: SheetDoc, brand: BrandKit | null): 
   // Never let a bad formula crash the export — fall back to the raw cell value.
   const ev = (() => { try { return buildEvaluator(sheets) } catch { return { value: (): Cell => '' } } })()
   const evVal = (si: number, ri: number, ci: number): Cell => { try { return ev.value(si, ri, ci) as Cell } catch { return '' } }
-  const used = new Set<string>()
   sheets.forEach((s, si) => {
-    const ws = wb.addWorksheet(safeSheetName(s.name || `Sheet${si + 1}`, used, si))
+    const ws = wb.addWorksheet(s.name || `Sheet${si + 1}`)
     const cols = s.columns || []
     const fmts = cols.map((c) => colFormat(c))
     if (cols.length) {
@@ -76,7 +62,7 @@ export async function buildWorkbookBlob(doc: SheetDoc, brand: BrandKit | null): 
         r.map((c, ci) => {
           if (typeof c === 'string' && c.startsWith('=')) {
             const result = evVal(si, ri, ci)
-            return typeof result === 'number' ? { formula: c.slice(1), result } : { formula: c.slice(1) }
+            return (typeof result === 'number' || typeof result === 'string') && result !== c ? { formula: c.slice(1), result } : { formula: c.slice(1) }
           }
           return c
         }),
@@ -88,10 +74,22 @@ export async function buildWorkbookBlob(doc: SheetDoc, brand: BrandKit | null): 
       })
     })
     cols.forEach((_, c) => {
-      const lens = [String(cols[c] || '').length, ...(s.rows || []).map((r) => String(r[c] ?? '').length)]
-      ws.getColumn(c + 1).width = Math.min(42, Math.max(10, ...lens) + 2)
+      const width = (s.rows || []).reduce((max, row) => Math.max(max, Math.min(40, String(row[c] ?? '').length)), Math.max(10, String(cols[c] || '').length))
+      ws.getColumn(c + 1).width = Math.min(42, width + 2)
     })
     if (cols.length) ws.views = [{ state: 'frozen', ySplit: 1 }]
+    // Logo floats over empty space just past the last column of the FIRST sheet.
+    if (logo && si === 0) {
+      try {
+        const imgId = wb.addImage({ base64: logo.base64, extension: 'png' })
+        const dispH = 34
+        const dispW = Math.round((dispH * logo.w) / logo.h)
+        const anchorCol = Math.max(cols.length, 1) + 0.3
+        ws.addImage(imgId, { tl: { col: anchorCol, row: 0.15 }, ext: { width: dispW, height: dispH }, editAs: 'oneCell' })
+      } catch {
+        /* logo optional */
+      }
+    }
   })
   const buf = await wb.xlsx.writeBuffer()
   return new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
@@ -110,18 +108,15 @@ async function downloadWorkbook(doc: SheetDoc, fileName: string, brand: BrandKit
 }
 
 export default function SheetCard({ data }: { data: SheetDoc }) {
-  // harden against imperfect model JSON: rows must be arrays of scalars
-  const sheets = (Array.isArray(data.sheets) ? data.sheets : [])
-    .filter((s) => s && typeof s === 'object')
-    .map((s) => ({
-      ...s,
-      columns: Array.isArray(s.columns) ? s.columns.map((c) => (typeof c === 'string' ? c : String(c ?? ''))) : [],
-      rows: (Array.isArray(s.rows) ? s.rows : []).map((r) => (Array.isArray(r) ? r : r && typeof r === 'object' ? (Object.values(r) as Cell[]) : ([r] as Cell[])).map((c) => (c == null || typeof c === 'string' || typeof c === 'number' || typeof c === 'boolean' ? c : String(c))) as Cell[]),
-    }))
+  const normalized = useMemo(() => normalizeWorkbook(data), [data])
+  const sheets = normalized.sheets!
   const [active, setActive] = useState(0)
-  const sheet = sheets[Math.min(active, sheets.length - 1)] as SheetData | undefined
-  const title = (data.title || 'nalu-spreadsheet').replace(/[\\/:*?"<>|]+/g, '').trim() || 'nalu-spreadsheet'
-  const brand = getBrand()
+  const [busy, setBusy] = useState<'xlsx' | 'pdf' | null>(null)
+  const [error, setError] = useState('')
+  const exportLock = useRef(false)
+  const sheet = sheets[Math.min(active, sheets.length - 1)]
+  const title = (normalized.title || 'nalu-spreadsheet').replace(/[\\/:*?"<>|]+/g, '').trim() || 'nalu-spreadsheet'
+  const brand = useBrand()
   const headBg = '#' + (brand?.primary || '0F1B2D')
 
   // Evaluate formulas so the preview + PDF show real values, not "=SUM(...)".
@@ -136,13 +131,20 @@ export default function SheetCard({ data }: { data: SheetDoc }) {
   }
   const fmts = useMemo(() => (sheet?.columns || []).map((c) => colFormat(c)), [sheet])
 
-  const downloadXlsx = () =>
-    downloadWorkbook(data, `${title}.xlsx`, brand).catch((e) =>
-      alert(`Excel export failed: ${e instanceof Error ? e.message : 'unknown error'}`),
-    )
+  const runExport = async (kind: 'xlsx' | 'pdf', work: () => Promise<void>) => {
+    if (exportLock.current) return
+    exportLock.current = true
+    setBusy(kind)
+    setError('')
+    try { await work() }
+    catch (e) { setError(`Export failed: ${e instanceof Error ? e.message : 'Please try again.'}`) }
+    finally { exportLock.current = false; setBusy(null) }
+  }
 
-  const downloadPdf = () => {
-    try {
+  const downloadXlsx = () => runExport('xlsx', () => downloadWorkbook(normalized, `${title}.xlsx`, brand))
+
+  const downloadPdf = () => runExport('pdf', async () => {
+      const [{ jsPDF }, { default: autoTable }] = await Promise.all([import('jspdf'), import('jspdf-autotable')])
       const [hr, hg, hb] = toRgb(brand?.primary || '0F1B2D')
       const [ar, ag, ab] = toRgb(brand?.accent || 'AF8C56')
       const pdf = new jsPDF({ orientation: 'landscape' })
@@ -172,10 +174,7 @@ export default function SheetCard({ data }: { data: SheetDoc }) {
         })
       })
       pdf.save(`${title}.pdf`)
-    } catch (e) {
-      alert(`PDF export failed: ${e instanceof Error ? e.message : 'unknown error'}`)
-    }
-  }
+  })
 
   // The FULL workbook renders in the chat — every tab, every row, formulas
   // evaluated — in a flat minimal frame (hairlines, quiet meta row).
@@ -189,10 +188,11 @@ export default function SheetCard({ data }: { data: SheetDoc }) {
             {sheets.length} tab{sheets.length === 1 ? '' : 's'}{sheet?.rows ? ` · ${sheet.rows.length} rows` : ''}
           </span>
         </span>
-        <button onClick={downloadXlsx} className="shrink-0 text-xs font-medium text-gold underline-offset-4 hover:underline">Excel</button>
+        <button onClick={() => void downloadXlsx()} disabled={busy !== null} className="shrink-0 text-xs font-medium text-gold underline-offset-4 hover:underline disabled:opacity-50">{busy === 'xlsx' ? 'Exporting…' : 'Excel'}</button>
         <span className="text-xs text-dim">·</span>
-        <button onClick={downloadPdf} className="shrink-0 text-xs font-medium text-gold underline-offset-4 hover:underline">PDF</button>
+        <button onClick={() => void downloadPdf()} disabled={busy !== null} className="shrink-0 text-xs font-medium text-gold underline-offset-4 hover:underline disabled:opacity-50">{busy === 'pdf' ? 'Exporting…' : 'PDF'}</button>
       </div>
+      {error && <p role="alert" className="px-1 pb-2 text-xs text-red-400">{error}</p>}
 
       {sheets.length > 1 && (
         <div className="flex flex-wrap gap-3 border-b border-glass/[0.08] px-1 pb-1.5">

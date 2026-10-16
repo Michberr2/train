@@ -1,3 +1,13 @@
+import './workspace-avatar.css'
+import avatarArtwork from '../avatar/nalu-avatar.png'
+import avatarWordmark from '../avatar/wordmark.png'
+import WorkspaceIntro from './WorkspaceIntro'
+import Scenery from '../Scenery'
+import NaluAvatar from '../avatar/NaluAvatar'
+import { fallbackStudioIntent, parseStudioIntent, shouldClassifyStudio, studioKind as normalizeStudioKind, type StudioIntent } from '../../../../shared/studioIntent'
+import { buildChatMemory } from './crossChatMemory'
+import { mergeChatMessages } from '../../../../shared/chatMessages'
+import { mergeChatTitle } from '../../../../shared/chatTitle'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Plus,
@@ -11,8 +21,7 @@ import {
   Square,
   MessageSquare,
   Trash2,
-  FolderGit2,
-  FolderInput,
+  Pencil,
   Bot,
   type LucideIcon,
 } from 'lucide-react'
@@ -31,8 +40,6 @@ import {
   Film,
   ExternalLink,
   Download,
-  ChevronLeft,
-  ChevronRight,
   ChevronUp,
   ChevronDown,
   Shield,
@@ -41,19 +48,28 @@ import {
   Wand2,
   Brain,
   Image as ImageIcon,
+  Copy,
+  Check,
+  RotateCw,
 } from 'lucide-react'
-import { streamChat, recoverToolCalls, findJsonObjects, isToolCallShape, type WireMessage } from './agentApi'
+import { streamChat, recoverToolCalls, type WireMessage } from './agentApi'
 import { getModelSettings } from '../../lib/naluSettings'
+import { generateVideo } from '../../lib/videoEngine'
 import { lazy, Suspense } from 'react'
 import Markdown from './Markdown'
 import { useTheme } from '../ThemeProvider'
 import MediaLoader, { WolfWord } from './MediaLoader'
 import CardErrorBoundary from './CardErrorBoundary'
 import { extractAttachment, type Attachment } from './extractText'
+import { saveChatAttachment, loadChatAttachment } from './chatAttachments'
+import { openArtifactBlob } from './artifactIsolation'
+import MessageAttachments from './MessageAttachments'
+import { designReferenceBrief, designReferenceInstructions, designHtmlForEdit, prepareDesignResponse } from './designReferences'
 import type { SheetDoc } from './SheetCard'
-import { normalizeDoc } from './DocCard'
+import { normalizeDoc } from './docModel'
 import type { DocDoc, DocBlock } from './DocCard'
 import type { Deck } from './SlidesCard'
+import { cleanDeck, cleanSheet } from './textClean'
 import type { DesignArtifact, DesignKind } from './types'
 import { getBrand, ensureDefaultBrand, setBrand, deriveBrand } from './brandKit'
 import BrandBar from './BrandBar'
@@ -63,6 +79,7 @@ const CADCard = lazy(() => import('./CADCard'))
 const SlidesCard = lazy(() => import('./SlidesCard'))
 const SheetCard = lazy(() => import('./SheetCard'))
 const DocCard = lazy(() => import('./DocCard'))
+const EmailCard = lazy(() => import('./EmailCard'))
 // Nalu Studio kind→card switch (canvas/palette/brand/blueprint + DesignCard for
 // webpage/poster). Lazy so fabric/jspdf/docx never touch the main bundle.
 const DesignArtifactCard = lazy(() => import('./DesignArtifactCard'))
@@ -77,45 +94,52 @@ import {
   commitFiles,
   type ActiveRepo,
 } from './github'
-import StudioPanel, { TOOLS as STUDIO_TOOLS } from './StudioPanel'
+import StudioPanel, { TOOLS as STUDIO_TOOLS, type Creation } from './StudioPanel'
 import MapPanel from './MapPanel'
-import ProjectsPanel from './ProjectsPanel'
+import MemoryPanel from './MemoryPanel'
+import PlaygroundControls from './PlaygroundControls'
 import SkillsPanel from './SkillsPanel'
 import AutomationsPanel from './AutomationsPanel'
 import SettingsPanel from './SettingsPanel'
-import { pushChatsFull } from '../../lib/sync'
+import { pushChatsFull, sessionWasCleared, getSyncState, retrySync } from '../../lib/sync'
+import { idbGetChats, idbSetChats } from '../../lib/chatStore'
+import { getToken } from '../../lib/localAuth'
 
 // ---- model ---------------------------------------------------------------
 
 interface Msg {
+  id?: string
+  updatedAt?: number
   role: 'user' | 'assistant'
   content: string
   reasoning?: string // chain-of-thought (plain English) when Deep think is on
   sheet?: SheetDoc
   doc?: DocDoc
+  email?: EmailDoc
   video?: string
   cad?: string
   design?: DesignArtifact
   deck?: Deck
   attachments?: Attachment[] // files attached to this (user) message
-  loading?: 'image' | 'sheet' | 'doc' | 'video' | 'cad' | 'design' | 'slides'
+  loading?: 'image' | 'sheet' | 'doc' | 'video' | 'cad' | 'design' | 'slides' | 'email'
+  // Interactive multiple-choice clarifying questions shown before a Studio build,
+  // so the user answers in a tap and the output comes out 10x. Answered → resumed.
+  clarify?: { questions: ClarifyQ[]; answered?: boolean; build?: { kind: string; prompt: string; mode?: StudioIntent['mode']; additionalKinds?: StudioIntent['additionalKinds'] } }
 }
+export type ClarifyQ = { q: string; options: string[]; multi?: boolean }
+export interface EmailDoc { to: string; subject: string; body: string }
 interface Chat {
   id: string
   title: string
+  titleUpdatedAt?: number
   messages: Msg[]
   createdAt: number
   notes?: string // freeform notes the AI references for this chat
   attachments?: Attachment[] // files attached to this chat (referenceable)
   projectId?: string // the project this chat belongs to (undefined = unfiled)
 }
-interface Project {
-  id: string
-  name: string
-  createdAt: number
-}
 
-type View = 'chat' | 'studio' | 'map' | 'agents' | 'projects' | 'skills' | 'automations' | 'settings'
+type View = 'chat' | 'studio' | 'map' | 'memory' | 'agents' | 'skills' | 'automations' | 'settings'
 
 const CHATS_KEY = 'nalu-chats'
 const ACTIVE_KEY = 'nalu-active-chat'
@@ -123,7 +147,6 @@ const MODEL_KEY = 'nalu-model'
 // Tombstones: ids the user explicitly deleted. Append-only + synced, so a
 // deletion is PERMANENT and never resurrected by a stale copy on any device.
 const DELETED_CHATS_KEY = 'nalu-deleted-chats'
-const DELETED_PROJECTS_KEY = 'nalu-deleted-projects'
 function addTombstone(key: string, id: string): void {
   try {
     const cur = JSON.parse(localStorage.getItem(key) || '[]')
@@ -182,49 +205,32 @@ function personalGreeting(name?: string, chatTitles?: string[]): string {
   return options[Math.floor(Math.random() * options.length)]
 }
 
-// Split text into segments, marking the trigger words for highlighting.
-function thinkSegments(text: string): { t: string; word?: string }[] {
-  const out: { t: string; word?: string }[] = []
-  let last = 0
-  text.replace(THINK_WORDS, (m, _w, idx: number) => {
-    if (idx > last) out.push({ t: text.slice(last, idx) })
-    out.push({ t: m, word: m.toLowerCase() })
-    last = idx + m.length
-    return m
-  })
-  if (last < text.length) out.push({ t: text.slice(last) })
-  return out
-}
+// Memory is a WEB-ONLY surface (n4lu.ai / n4lu.com). It's absent from Nalu Mobile
+// (a separate Expo app) by construction; this guard also hides it if the web bundle
+// is ever loaded inside the desktop app's webview.
+const IS_WEB_APP = typeof navigator !== 'undefined' && !/electron/i.test(navigator.userAgent || '')
 
 const NAV_ITEMS: { view: View; label: string; icon: LucideIcon }[] = [
   { view: 'chat', label: 'Chats', icon: MessageSquare },
   { view: 'studio', label: 'Studio', icon: Palette },
   { view: 'map', label: 'Map', icon: MapPin },
+  ...(IS_WEB_APP ? [{ view: 'memory' as View, label: 'Memory', icon: Brain }] : []),
   { view: 'agents', label: 'AutoPilot', icon: Bot },
+  { view: 'skills', label: 'Skills', icon: Wand2 },
 ]
 
 const VIEW_TITLES: Record<Exclude<View, 'chat'>, string> = {
   studio: 'Studio',
   map: 'Map',
+  memory: 'Memory',
   agents: 'AutoPilot',
-  projects: 'Projects',
   skills: 'Skills',
   automations: 'Automations',
   settings: 'Settings',
 }
 
-const PROJECTS_KEY = 'nalu-chat-projects'
 function uid(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36)
-}
-function loadProjects(): Project[] {
-  try {
-    const raw = localStorage.getItem(PROJECTS_KEY)
-    const arr = raw ? JSON.parse(raw) : []
-    return Array.isArray(arr) ? arr : []
-  } catch {
-    return []
-  }
 }
 function loadChats(): Chat[] {
   try {
@@ -274,10 +280,10 @@ function dbSerialize(chats: Chat[]): string {
   const base = (dropMedia: boolean) =>
     chats.map((c) => ({
       ...c,
-      attachments: lightenAttachments(c.attachments, dropMedia ? 0 : 4000),
+      attachments: c.attachments?.map(a => ({ ...a, text: a.text?.slice(0, 4000), dataUrl: a.storage || !a.isImage ? undefined : a.dataUrl })),
       messages: c.messages.map((m) => ({
         ...m,
-        attachments: lightenAttachments(m.attachments, dropMedia ? 0 : 2000),
+        attachments: m.attachments?.map(a => ({ ...a, text: a.text?.slice(0, 2000), dataUrl: a.storage || !a.isImage ? undefined : a.dataUrl })),
         // video/image are large base64 — drop only when over the size budget
         video: dropMedia && isDataUrl(m.video) ? undefined : m.video,
       })),
@@ -287,12 +293,41 @@ function dbSerialize(chats: Chat[]): string {
   return out
 }
 
-function persistChats(chats: Chat[]): void {
+// Flips true once the IndexedDB restore has read the existing full history (module-level
+// so it survives remounts). Until then, persistChats must NOT write IDB, or a mount-time
+// persist of a slim/empty first-paint copy could clobber the durable full history.
+let idbReady = false
+
+// Union one chat that exists on BOTH sides (local `a` + stored `b`) at the MESSAGE level:
+// take the longer message list as the base, then restore any artifact/text field it's
+// missing from the other side — so a slimmed first-paint copy is healed by the full
+// IndexedDB copy (and a brand-new local message is never lost). Mirrors the server merge.
+function unionChatMessages(a: Chat, b: Chat): Chat {
+  const am = Array.isArray(a.messages) ? a.messages : []
+  const bm = Array.isArray(b.messages) ? b.messages : []
+  const [base, other] = am.length >= bm.length ? [a, b] : [b, a]
+  const messages = mergeChatMessages(a.messages, b.messages) as unknown as Msg[]
+  // Heal MESSAGES from the longer list (base), but scalar metadata (title/notes/projectId)
+  // follows the LIVE copy `a` — a rename or re-file must never revert just because the
+  // stored copy happened to carry more messages.
+  return { ...other, ...base, messages, ...mergeChatTitle(a, b), notes: a.notes, projectId: a.projectId }
+}
+
+function persistChats(chats: Chat[], token: string | null): void {
+  if (sessionWasCleared() || token !== getToken()) return
   // 1) SERVER: always the complete, artifact-preserving payload.
   try { pushChatsFull(dbSerialize(chats)) } catch { /* sync best-effort */ }
 
-  // 2) BROWSER localStorage: tier down to fit the ~5MB quota (docs still live
-  //    on the server via step 1, so the browser copy can be slimmer).
+  // 2) INDEXEDDB: the COMPLETE local history (every doc/deck/image), no tier-down.
+  //    IndexedDB's quota is hundreds of MB+ (vs localStorage's ~5MB), so a big history
+  //    never overflows and is never silently slimmed — this is the durable local store.
+  //    Gated on idbReady: never write until the async restore has read the existing IDB
+  //    copy, so an early mount-time persist can't clobber the full history with a slim one.
+  if (idbReady) { try { void idbSetChats(JSON.stringify(chats)) } catch { /* best-effort */ } }
+
+  // 3) BROWSER localStorage: a fast FIRST-PAINT copy only, tiered down to fit the ~5MB
+  //    quota (the full copy lives in IndexedDB via step 2 + the server via step 1, so
+  //    this one can be as slim as a skeleton without any data loss).
   const tiers: Array<() => string> = [
     () => JSON.stringify(chats),
     // Drop attachment originals (base64) — usually the bulk of the weight.
@@ -323,7 +358,7 @@ function persistChats(chats: Chat[]): void {
       JSON.stringify(
         chats.map((c) => ({
           id: c.id,
-          title: c.title,
+          title: c.title, titleUpdatedAt: c.titleUpdatedAt,
           createdAt: c.createdAt,
           projectId: c.projectId,
           notes: typeof c.notes === 'string' ? c.notes.slice(0, 4000) : c.notes,
@@ -331,7 +366,7 @@ function persistChats(chats: Chat[]): void {
         })),
       ),
     // Skeleton — guarantees the chat LIST (and every deletion) survives.
-    () => JSON.stringify(chats.map((c) => ({ id: c.id, title: c.title, createdAt: c.createdAt, projectId: c.projectId, messages: [] }))),
+    () => JSON.stringify(chats.map((c) => ({ id: c.id, title: c.title, titleUpdatedAt: c.titleUpdatedAt, createdAt: c.createdAt, projectId: c.projectId, messages: [] }))),
   ]
   for (const build of tiers) {
     try {
@@ -351,138 +386,58 @@ interface Props {
   onLogout: () => void
 }
 
-// A leading question word ("what is a business plan", "explain the report") is an
-// explanation ask, not a build request — keep those in normal chat.
-const QUESTION_LEAD = /^\s*(what(?:'s| is| are)?|explain|tell me|how (?:do|does|can|to)|why|define|who\b|when\b|where\b|can you (?:explain|tell)|difference between)/i
-
-// Detect "make me an image" style asks → route to the image endpoint.
-const IMAGE_INTENT =
-  /\b(generate|create|make|draw|render|paint|sketch|produce|whip up)\b[^.?!]*\b(images?|pictures?|photos?|photographs?|illustrations?|artwork|drawings?|wallpapers?|portraits?|paintings?|avatars?|headshots?|backgrounds?)\b|\b(image|picture|photo|illustration|drawing|painting|portrait|render) of\b|^\/(image|img|draw)\b/i
-function isImagePrompt(text: string): boolean {
-  return IMAGE_INTENT.test(text)
+// A pitch/investor deck → also earns a companion "Investor Meeting Playbook" doc.
+// INVESTOR-pitch signal on the raw prompt. Deliberately tight — every token here is
+// investor-specific, so it does NOT fire for "a fashion runway show", "raising healthy
+// kids", "home valuation", or "a sales pitch deck for our product". Terse-but-genuine
+// pitches are still caught by deckLooksPitch() on the BUILT deck (belt-and-suspenders).
+const PITCH_INTENT =
+  /\b(pitch\s*deck|investors?|fundrais\w*|raise\s+(?:a\s+|our\s+|\$?\d|money|capital|funds?|a?\s*round)|pre-?seed|seed round|series\s*[a-e]\b|\bvc\b|venture\s+capital|cap ?table|angel\s+(?:investors?|round)|demo ?day|term ?sheet|use of funds)\b/i
+// A BUILT deck "reads as a pitch" when its slide titles carry the investor arc or it
+// shows money charts — so the companion playbook attaches even when the PROMPT was terse
+// (e.g. "a deck for Acme"). Belt-and-suspenders with PITCH_INTENT on the raw prompt.
+function deckLooksPitch(deck?: Deck): boolean {
+  const slides = deck?.slides || []
+  if (!slides.length) return false
+  const titles = slides.map((s) => (s && s.title) || '').join(' \n ').toLowerCase()
+  const arcHits = (titles.match(/\b(problem|solution|market|tam|sam|som|traction|the ask|use of funds|valuation|raise|fundrais\w*|competition|unit economics|\barr\b|\bmrr\b|\bcac\b|\bltv\b|business model|runway|investors?)\b/g) || []).length
+  const moneyCharts = slides.filter((s) => s && s.chart && /[$%]/.test(s.chart.unit || '')).length
+  return arcHits >= 2 || moneyCharts >= 2
 }
+// Build the playbook prompt from the finished deck so the doc is grounded in the
+// deck's real narrative + numbers (speaker script per slide, Q&A, objections, close).
+function deckPlaybookPrompt(deck: { title?: string; subtitle?: string; slides?: unknown[] }): string {
+  const compact = (deck.slides || []).map((s, i) => {
+    const sl = s as { title?: string; notes?: string; bullets?: string[]; stat?: { value?: string; label?: string }; kpis?: { value?: string; label?: string }[]; columns?: { heading?: string; items?: string[] }[]; chart?: { title?: string; takeaway?: string }; quote?: { text?: string }; table?: { headers?: string[]; rows?: string[][] } }
+    const parts: string[] = [`Slide ${i + 1}: ${sl.title || ''}`]
+    if (sl.stat?.value) parts.push(`  Stat: ${sl.stat.value} ${sl.stat.label || ''}`)
+    if (sl.kpis?.length) parts.push(`  KPIs: ${sl.kpis.map((k) => `${k.value} ${k.label}`).join('; ')}`)
+    if (sl.columns?.length) parts.push(`  Columns: ${sl.columns.map((c) => `${c.heading}: ${(c.items || []).join(', ')}`).join(' | ')}`)
+    if (sl.chart?.takeaway) parts.push(`  Chart takeaway: ${sl.chart.takeaway}`)
+    if (sl.quote?.text) parts.push(`  Quote: ${sl.quote.text}`)
+    if (sl.table?.rows?.length) parts.push(`  Table: ${(sl.table.headers || []).join(' | ')} :: ${sl.table.rows.slice(0, 4).map((r) => r.join(' / ')).join(' ; ')}`)
+    if (sl.bullets?.length) parts.push(`  Points: ${sl.bullets.join('; ')}`)
+    if (sl.notes) parts.push(`  Notes: ${sl.notes}`)
+    return parts.join('\n')
+  }).join('\n\n')
+  return `Create an "Investor Meeting Playbook" document that goes WITH the pitch deck below, so the founder can nail the meeting. It is the founder's cheat sheet, not a summary of the deck. Ground EVERYTHING in the deck's real narrative and numbers; never invent a figure the deck doesn't give (write "[confirm]" instead).
 
-// Detect "build me a spreadsheet / excel" style asks → spreadsheet builder.
-const SHEET_INTENT =
-  /\b(spread ?sheets?|excels?|xlsx?|\.xls|google ?sheets?|pivot tables?|work ?books?|balance sheets?|cap tables?|time ?sheets?)\b|^\/(sheet|excel|xls)\b|\b(make|build|create|generate|do|put together|whip up|prepare|need|want|give me)\b[^.?!]*\b(spread ?sheets?|sheets?|tables?|trackers?|budgets?|rosters?|schedules?|inventory|ledgers?|gantt|workbooks?|financial models?|calculators?|p ?& ?l|income statements?)\b/i
-function isSheetPrompt(text: string): boolean {
-  if (QUESTION_LEAD.test(text)) return false
-  if (MEDIA_OF.test(text)) return false
-  return SHEET_INTENT.test(text)
+Structure it with these sections, in this order:
+1. The 30-Second Pitch - a tight, memorable elevator pitch to open with or to answer "so what do you do?".
+2. The Narrative Arc - the story in 4-6 beats (problem, why now, solution, traction, the ask) so the pitch flows as one argument.
+3. Slide-by-Slide Speaker Script - for EACH slide (by its title), 2-4 sentences of exactly what to SAY: the ONE point to land, the key number to say out loud, and a one-line transition to the next slide. Confident, specific, no filler.
+4. Numbers to Know Cold - the metrics an investor will drill on (market-size basis, CAC/LTV/payback, ARR and growth, burn and runway, the ask and use of funds), each with a one-line defense.
+5. Tough Questions and Strong Answers - 8-10 hard investor questions (competition, defensibility, why-now, unit economics, team, go-to-market risk, and the "why will this fail?" question), each with a crisp, honest, confident answer that uses the deck's facts.
+6. Objection Handling - the 3-4 likeliest objections and how to reframe each.
+7. The Close - how to state the ask and the specific next step to request.
+
+Make it genuinely useful and specific. Use clean headings and short paragraphs / bullets.
+
+THE PITCH DECK:
+Title: ${deck.title || ''}${deck.subtitle ? `\nSubtitle: ${deck.subtitle}` : ''}
+
+${compact}`
 }
-
-// Detect "write me a business plan / doc / report" → route to the doc builder.
-// "video of X" / "animate X" is a VIDEO ask no matter what nouns X contains
-// ("video of a floor plan" was routing to the document builder).
-const MEDIA_OF =
-  /\b(generate|create|make|produce|render|do|whip up|film|shoot)\b[^.?!]*\b(videos?|animations?|clips?|movies?|reels?|gifs?)\b|\b(videos?|animations?|clips?|movies?|reels?|gifs?)\s+(of|showing|about|that|where|with|using|from|for)\b|^\/video\b|\banimate\b|\b(generate|create|make)\b[^.?!]*\b(image|photo|picture)s?\b/i
-
-// Long-form works: books, scientific articles, theses, big legal instruments,
-// anything with an explicit large page/chapter count. These run the chaptered
-// outline→sections pipeline (no length cap) instead of the one-shot doc call.
-const LONGFORM_INTENT =
-  /\b(books?|novels?|novellas?|manuscripts?|memoirs?|textbooks?|monographs?|dissertations?|thesis|theses|scientific (articles?|papers?|reviews?)|research (articles?|papers?)|journal articles?|literature reviews?|systematic reviews?|comprehensive (guide|manual|treatise)|treatises?)\b|\b(\d{2,3})[- ]?(page|pages|chapter|chapters)\b|\b(long[- ]form|full[- ]length)\b/i
-function isLongDocPrompt(text: string): boolean {
-  if (QUESTION_LEAD.test(text)) return false
-  if (MEDIA_OF.test(text)) return false
-  return LONGFORM_INTENT.test(text) && (isDocPrompt(text) || /\b(write|draft|create|make|produce|generate)\b/i.test(text))
-}
-
-// Studio memory: follow-up edit verbs — a request like "make the roof bigger"
-// revises the LAST matching artifact in this chat instead of starting over.
-const STUDIO_EDIT_VERB =
-  /\b(make|change|turn|add|remove|delete|update|fix|swap|adjust|edit|revise|recolou?r|resize|move|replace|rename|redo|restyle|rewrite|shorten|lengthen|expand|animate|center|align|darker|lighter|bigger|smaller|instead|actually|tweak)\b/i
-
-const DOC_INTENT =
-  /\b(business plans?|marketing plans?|project plans?|word documents?|word docs?|google docs?|\.docx|reports?|proposals?|white ?papers?|cover letters?|résumés?|resumes?|\bcvs?\b|memos?|press releases?|essays?|write-?ups?|one ?pagers?|documents?)\b|^\/(doc|word)\b|\b(write|draft|create|build|make|generate|do|put together|prepare|whip up|need|want|give me)\b[^.?!]*\b(plans?|reports?|proposals?|essays?|letters?|documents?|docs?|memos?|briefs?|white ?papers?|whitepapers?|pdfs?|articles?|write-?ups?|one ?pagers?)\b/i
-function isDocPrompt(text: string): boolean {
-  if (QUESTION_LEAD.test(text)) return false
-  if (MEDIA_OF.test(text)) return false
-  return DOC_INTENT.test(text)
-}
-
-// Detect "make me a video" style asks → route to the video endpoint.
-const VIDEO_INTENT =
-  /\b(generate|create|make|produce|render|do|whip up)\b[^.?!]*\b(videos?|animations?|clips?|movies?|reels?|gifs?)\b|\banimate\b|\bvideo of\b|^\/video\b/i
-function isVideoPrompt(text: string): boolean {
-  if (QUESTION_LEAD.test(text)) return false
-  return VIDEO_INTENT.test(text)
-}
-
-// CAD / 3D-model / AutoCAD intent → inline Nalu CAD viewer.
-const CAD_INTENT =
-  /\b(auto ?cad|open ?scad|\bcad\b|cad (?:model|part|design|file)|3d models?|3d-?print(?:ed|able)?|3d print|stl files?|\.stl\b|parametric (?:part|model|design))\b|^\/cad\b|\b(design|model|make|build|create|3d ?print)\b[^.?!]*\b(brackets?|gears?|flanges?|enclosures?|housings?|mounts?|bolts?|nuts?|screws?|gadgets?|widgets?|knobs?|hooks?|stands?|holders?|adapters?|spacers?|cases?|clips?|parts?|fixtures?|jigs?|vases?|containers?)\b/i
-function isCadPrompt(text: string): boolean {
-  if (QUESTION_LEAD.test(text)) return false
-  if (MEDIA_OF.test(text)) return false
-  return CAD_INTENT.test(text)
-}
-
-// Web/UI design intent → inline Nalu Design (live HTML artifact).
-const DESIGN_INTENT =
-  /\b(web ?sites?|web ?pages?|landing pages?|web ?apps?|html pages?|web design|user interface|dashboard ui|web components?|infographics?|posters?|home ?pages?)\b|^\/design\b|\b(design|build|create|make|code|develop)\b[^.?!]*\b(web ?site|landing page|web ?page|web ?app|\bui\b|interface|dashboard|html|web component|hero section|pricing page|home ?page|\bsite\b)\b/i
-function isDesignPrompt(text: string): boolean {
-  if (QUESTION_LEAD.test(text)) return false
-  return DESIGN_INTENT.test(text)
-}
-
-// ---- Nalu Studio sub-type routing (most-specific first) --------------------
-// Every creative ask resolves to one DesignKind sent to /api/design as
-// {prompt, kind}; the server trusts the client's kind (no guessing).
-const PALETTE_INTENT =
-  /\b(colou?r ?palettes?|colou?r ?schemes?|swatch(?:es)?|colou?r ?themes?|colou?r ?combos?|colou?r ?combinations?|\bpalettes?\b|hex(?: codes?)?)\b|^\/palette\b/i
-const BRAND_INTENT =
-  /\b(brand(?:ing)? guidelines?|brand identit(?:y|ies)|brand kits?|style ?guides?|visual identit(?:y|ies)|brand books?|brand guides?)\b|^\/brand\b/i
-const BLUEPRINT_INTENT =
-  /\b(blue ?prints?|floor ?plans?|floorplans?|house plans?|site plans?|building plans?|technical drawings?|schematics?|annotated (?:diagram|drawing)|elevations?|wireframe diagram)\b|^\/blueprint\b/i
-// House / interior-design / walkthrough asks → a blueprint (which carries the
-// 3D model + first-person walkthrough + furnish tools). Catches "make a
-// walkthrough of a mansion", "design my house", "3d home tour", etc. The
-// negative lookahead keeps web/app/logo asks ("design a home page") out.
-const WALKTHROUGH_INTENT =
-  /\b(walk\s?through|walk-through|house\s?tour|home\s?tour|3d\s?(?:house|home|tour|walk))\b|\b(design|build|make|create|model|render|lay\s?out)\b(?![^.?!]*\b(website|web ?app|web ?page|home ?page|landing page|app|logo|poster|deck|slide)\b)[^.?!]{0,40}\b(house|home|mansion|villa|apartment|condo|bungalow|cottage|floor ?plan|bedroom|kitchen|bathroom|living room)\b|^\/(walkthrough|house|home|tour)\b/i
-const LOGO_INTENT =
-  /\b(logos?|logotypes?|word ?marks?|brand ?marks?|logo ?marks?|app ?icons?|monograms?|emblems?|logo design|favicons?|lockups?)\b|^\/logo\b/i
-const SHOP_INTENT =
-  /\b(shop(?:ping)?(?: for| list)?|buy|purchase|where (?:can|do) i (?:get|buy)|add to cart|furnish(?:ing)? (?:list|my)|outfit (?:my|the)|things i (?:need|should buy))\b[^.?!]*\b(room|house|home|apartment|bedroom|kitchen|living|bathroom|office|desk|setup|outfit|nursery|patio|furniture|items?)\b|^\/shop\b/i
-const CANVAS_INTENT =
-  /\b(editable|vector|figma|canvas|social (?:post|graphic)|instagram (?:post|story)|flyer|poster art|graphic)\b[^.?!]*\b(design|make|create|graphic|post|canvas)\b|\beditable (?:design|graphic|canvas)\b|\bfigma-?like\b|^\/canvas\b/i
-// Motion graphics → an animated, looping self-contained HTML "HyperFrame".
-const CAROUSEL_INTENT =
-  /\b(carousel|slide ?show|swipe ?post|multi.?slide|instagram (post|carousel)|ig (post|carousel)|linkedin (post|carousel)|social (media )?(post|carousel)|tiktok slides?|photo ?dump)\b/i
-const MOTION_INTENT =
-  /\b(motion graphic|animated|animation|kinetic typography|title card|logo (?:reveal|animation|intro)|promo (?:video|animation)|loop(?:ing)? (?:animation|background|graphic)|intro animation|lower third|hyperframe|gif-?style)\b|^\/(motion|animate)\b/i
-// Playable games → a self-contained PlayCanvas HTML game (Nalu Game Studio).
-const GAME_INTENT =
-  /\b(make|build|create|generate|code|design|develop|program|write)\b[^.?!]*\b(video ?game|game|platformer|shoot-?(?:er|em-?up)|arcade game|endless runner|tower defense|rpg|maze game|pong|snake game|flappy|breakout|tetris|racing game|driving game|first-?person|fps game)\b|\b(playable (?:game|demo)|mini-?games?|2d game|3d game|browser game|game where you)\b|^\/game\b/i
-
-/** Resolve a creative ask to a DesignKind, or null to fall through to the agent
- *  loop. Order: logo → palette → brand → blueprint → canvas → poster/webpage. */
-function designKind(text: string): DesignKind | null {
-  // A plain "what is a logo / explain palettes" question stays in chat.
-  if (QUESTION_LEAD.test(text)) return null
-  // Specific, high-confidence creative kinds win first.
-  if (SHOP_INTENT.test(text)) return 'shopping'
-  // Game before motion so "make an animated platformer game" builds a game.
-  if (GAME_INTENT.test(text)) return 'game'
-  // Carousel before generic design so "instagram carousel post" is slides, not a site.
-  if (CAROUSEL_INTENT.test(text)) return 'carousel'
-  // Motion before logo so "animated logo reveal" is a motion graphic, not a logo.
-  if (MOTION_INTENT.test(text)) return 'motion'
-  if (LOGO_INTENT.test(text)) return 'logo'
-  if (PALETTE_INTENT.test(text)) return 'palette'
-  if (BRAND_INTENT.test(text)) return 'brand'
-  if (BLUEPRINT_INTENT.test(text)) return 'blueprint'
-  // An EXPLICIT document / spreadsheet / deck ask always beats the greedy
-  // house/room walkthrough matcher and the generic webpage fallback below — so
-  // "excel budget for my house" or "powerpoint about my mansion" route correctly.
-  if (isSheetPrompt(text) || isSlidesPrompt(text) || isDocPrompt(text)) return null
-  if (WALKTHROUGH_INTENT.test(text)) return 'blueprint'
-  if (CANVAS_INTENT.test(text)) return 'canvas'
-  if (isDesignPrompt(text)) return /\b(poster|infographic)\b/i.test(text) ? 'poster' : 'webpage'
-  return null
-}
-
 // Download any media URL (video/image, incl. cross-origin) to the user's disk.
 async function downloadMedia(url: string, fallbackName: string) {
   try {
@@ -581,22 +536,13 @@ const KIND_LABEL: Record<string, string> = {
   game: 'Game', board: 'Breakdown board', carousel: 'Carousel',
 }
 export function detectIntent(text: string, hasImages = false): string | null {
-  const t = text.trim()
-  if (t.length < 4) return null
-  if (hasImages && BREAKDOWN_INTENT.test(t)) return 'Breakdown board'
-  if (isVideoPrompt(t)) return 'Video' // video asks outrank every other artifact
-  if (isLongDocPrompt(t) && !isSheetPrompt(t)) return 'Long-form document'
-  if (isDocPrompt(t) && !isSheetPrompt(t)) return 'Document'
-  if (isSlidesPrompt(t)) return 'PowerPoint'
-  if (isCadPrompt(t)) return '3D model'
-  const k = designKind(t)
-  if (k) {
-    if (k === 'blueprint' && WALKTHROUGH_INTENT.test(t) && !BLUEPRINT_INTENT.test(t)) return '3D walkthrough'
-    return KIND_LABEL[k] || 'Design'
+  const kind = fallbackStudioIntent(text).kind
+  if (hasImages && kind !== 'chat' && BREAKDOWN_INTENT.test(text)) return 'Breakdown board'
+  const labels: Partial<Record<StudioIntent['kind'], string>> = {
+    website: 'Website', document: 'Document', book: 'Long-form document', spreadsheet: 'Spreadsheet',
+    slides: 'PowerPoint', cad: '3D model', video: 'Video', image: 'Image', email: 'Email',
   }
-  if (isSheetPrompt(t)) return 'Spreadsheet'
-  if (isImagePrompt(t)) return 'Image'
-  return null
+  return kind === 'chat' ? null : labels[kind] || KIND_LABEL[kind] || null
 }
 
 // What the vision model is asked for before a breakdown board is designed —
@@ -688,16 +634,6 @@ function normalizeArtifact(kind: DesignKind, raw: unknown): DesignArtifact {
   return { ...(obj as object), kind: k } as DesignArtifact
 }
 
-// Presentation intent → inline Nalu Slides (PowerPoint / PDF).
-const SLIDES_INTENT =
-  /\b(pitch decks?|slide ?decks?|presentations?|power ?points?|pptx?|slide ?shows?|slides?|keynotes?|google slides|decks?)\b|^\/(slides|deck|ppt)\b|\b(make|build|create|design|generate|do|put together|whip up|prepare)\b[^.?!]*\b(decks?|presentations?|slides?|pitch|slideshow)\b/i
-function isSlidesPrompt(text: string): boolean {
-  if (QUESTION_LEAD.test(text)) return false
-  if (MEDIA_OF.test(text)) return false
-  return SLIDES_INTENT.test(text)
-}
-
-
 // Subtle, model-specific background photo (kept dark via a heavy overlay so the
 // page never goes light when the active Nalu specialist changes).
 function bgFor(name: string): string {
@@ -709,73 +645,17 @@ function bgFor(name: string): string {
   return '/bg/tech.png'
 }
 
-// Every tool the agent can call — used to strip ANY tool-call syntax from what
-// the user sees, in whatever format the model emits it.
-const ALL_TOOL_SPECS = [...WEB_TOOLS, ...TOOLS]
-const TOOL_NAME_RE = new RegExp(
-  `\\b(${ALL_TOOL_SPECS.map((t) => t.function.name).join('|')})\\b`,
-  'i',
-)
-
-// Guarantee the user NEVER sees tool-call code, in ANY format the model invents
-// (<invoke> XML, JSON fenced/bare, Python/function-call). The answer is
-// always clean prose — tools run separately. We reuse recoverToolCalls' stripper,
-// then aggressively nuke any leftover markup.
+// Tool execution is driven by the response's explicit tool-call signal. Answer
+// content may be code, JSON, a quotation or a public product comparison; preserve
+// it literally instead of deleting text that happens to resemble tool syntax.
 function cleanForDisplay(s: string): string {
-  if (!s) return s
-  // Shield ```chart blocks (real inline-chart data, incl. still-streaming ones)
-  // from the tool-call strippers — their JSON ({"name": …}) looks exactly like
-  // a dropped tool call to the heuristics below.
-  const chartGuards: string[] = []
-  const shielded = s.replace(/```chart\b[\s\S]*?(?:```|$)/gi, (m) => {
-    chartGuards.push(m)
-    return `\u0000CHART${chartGuards.length - 1}\u0000`
-  })
-  // Primary: the full recovery stripper removes all recognized tool-call forms.
-  let out = recoverToolCalls(shielded, ALL_TOOL_SPECS).cleaned
-  // Belt-and-suspenders for partial/streaming/garbled output:
-  out = out
-    .replace(/<\/?think>/gi, '')
-    // any invoke/parameter/function_calls XML (closed, unclosed, or orphan tags)
-    .replace(/<\s*(?:antml:)?(?:invoke|function_calls?)\b[\s\S]*?(?:<\s*\/\s*(?:antml:)?(?:invoke|function_calls?)\s*>|$)/gi, '')
-    .replace(/<\s*\/?\s*(?:antml:)?(?:invoke|parameter|function_calls?|tool_call)\b[^>]*>/gi, '')
-    // a fenced code block is hidden ONLY if it's a tool call (names a tool or has
-    // a function/params key) — real code the user asked for is preserved
-    .replace(/```[\w]*\s*([\s\S]*?)```/g, (m, body: string) =>
-      TOOL_NAME_RE.test(body) || /["'](?:function|tool|tool_name|recipient_name|params)["']\s*:/.test(body) ? '' : m,
-    )
-  // bare tool-call JSON objects dropped mid-text
-  for (const raw of findJsonObjects(out)) {
-    try {
-      if (isToolCallShape(JSON.parse(raw))) out = out.split(raw).join('')
-    } catch {
-      /* not JSON — leave it */
-    }
-  }
-  // a trailing, still-streaming unclosed tool call (fence, object, or invoke)
-  out = out
-    .replace(/```[\w]*\s*[\s\S]*$/i, (m: string) => (TOOL_NAME_RE.test(m) || /["'](?:function|tool|params|query|url|path)["']/.test(m) ? '' : m))
-    .replace(/\{\s*["'](?:function|tool|name|recipient_name|query|url|path)["']\s*:[\s\S]*$/i, '')
-    .replace(new RegExp(`(?:tool_call|invoke)?\\s*${TOOL_NAME_RE.source}\\s*[({][\\s\\S]*$`, 'i'), (m: string) => (TOOL_NAME_RE.test(m) ? '' : m))
-  out = out.replace(/\u0000CHART(\d+)\u0000/g, (_, i: string) => chartGuards[+i] || '')
-  return scrubModelNames(out).replace(/\n{3,}/g, '\n\n').trim()
+  return s.trim()
 }
 
-// Final safety net: Nalu is always "Nalu". If a backing model ever names its own
-// family in an answer (even split across streamed tokens, which the per-delta
-// server scrub can miss), catch it here on the fully-assembled text. Narrow to
-// obscure model families so a real answer ABOUT NVIDIA/Google/etc. is never touched.
-function scrubModelNames(s: string): string {
-  if (!s || !/[dgnqz]/i.test(s)) return s
-  return s
-    .replace(/\bglm[-\s.]?[\w.]*/gi, 'Nalu')
-    .replace(/\b(deep\s?seek[-\w.]*|qwen[-\w.]*|nemotron[-\w.]*|zhipu(?:\s?ai)?|thinking\s?machines|zai-org|deepinfra)\b/gi, 'Nalu')
-}
-
-// Deep-think split: while the model is reasoning, the chain-of-thought (plain
-// English) sits on the LEFT, the answer on the RIGHT, divided by a light-grey
-// line. When the turn finishes the thoughts slide out and the answer goes
-// full-width, leaving a "View thinking" button to reopen the left pane.
+// Thinking is a COLLAPSIBLE block ABOVE the answer (not a side-by-side split, which
+// squeezed the answer into half the width). The answer is ALWAYS full-width and clean.
+// While the model reasons/searches, the block is open with a live "Thinking…" pulse;
+// when the turn finishes it auto-collapses to a "View thinking" button you can reopen.
 function AssistantThink({
   reasoning,
   isLive,
@@ -788,7 +668,7 @@ function AssistantThink({
   const [open, setOpen] = useState(true)
   const wasLive = useRef(isLive)
   useEffect(() => {
-    if (wasLive.current && !isLive) setOpen(false) // finished → slide thoughts out
+    if (wasLive.current && !isLive) setOpen(false) // finished → collapse the thoughts
     if (!wasLive.current && isLive) setOpen(true) // a new turn started → reopen
     wasLive.current = isLive
   }, [isLive])
@@ -796,57 +676,84 @@ function AssistantThink({
   if (!reasoning) return <>{children}</>
 
   return (
-    <div className="flex items-stretch">
-      {/* Left: thoughts in plain English. Slides out when thinking finishes. */}
-      <div
-        aria-hidden={!open}
-        className={`min-w-0 shrink-0 overflow-hidden transition-all duration-300 ease-out ${
-          open ? 'mr-3 w-[42%] border-r border-glass/[0.2] pr-3 opacity-100' : 'w-0 opacity-0'
-        }`}
+    <div className="min-w-0">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="mb-2 inline-flex items-center gap-1.5 rounded-lg border border-glass/[0.14] bg-glass/[0.05] px-2.5 py-1 text-xs text-dim transition-colors hover:bg-glass/10 hover:text-ink"
       >
-        <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-dim">
-          <Brain size={12} /> Thinking
-          <button
-            onClick={() => setOpen(false)}
-            className="ml-auto rounded p-0.5 text-dim hover:bg-glass/10 hover:text-ink"
-            title="Hide thinking"
-          >
-            <ChevronLeft size={13} />
-          </button>
-        </div>
-        <div className={`whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[13px] leading-relaxed text-dim ${isLive ? 'streaming-caret' : ''}`}>
+        <Brain size={12} className={isLive ? 'animate-pulse text-accent' : ''} />
+        {isLive ? 'Thinking…' : 'View thinking'}
+        {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+      </button>
+      {open && (
+        <div
+          className={`mb-3 border-l-2 border-glass/[0.18] pl-3 text-[13px] leading-relaxed text-dim whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${isLive ? 'streaming-caret' : ''}`}
+        >
           {cleanForDisplay(reasoning)}
         </div>
-      </div>
-      {/* Right: the answer. Goes full-width once thoughts slide out. */}
-      <div className="min-w-0 flex-1">
-        {!open && (
-          <button
-            onClick={() => setOpen(true)}
-            className="mb-2 inline-flex items-center gap-1.5 rounded-lg border border-glass/[0.14] bg-glass/[0.05] px-2.5 py-1 text-xs text-dim transition-colors hover:bg-glass/10 hover:text-ink"
-          >
-            <Brain size={12} /> View thinking
-          </button>
-        )}
-        {children}
-      </div>
+      )}
+      {/* the answer — always full width, never squeezed */}
+      <div className="min-w-0">{children}</div>
     </div>
   )
 }
 
 export default function Workspace({ user, onLogout }: Props) {
+  const sessionToken = useRef(getToken()).current
   // Restore the last view on refresh (Studio/Map/AutoPilot/Chats) — back to your
   // last touch point. Skip 'settings' so a refresh never dumps you into settings.
   const [view, setView] = useState<View>(() => {
-    const v = localStorage.getItem('nalu-view') as View | null
-    return v && v !== 'settings' ? v : 'chat'
+    const v = localStorage.getItem('nalu-view')
+    return v && v !== 'settings' && (v === 'chat' || Object.prototype.hasOwnProperty.call(VIEW_TITLES, v)) ? v as View : 'chat'
   })
+  const [navOpen, setNavOpen] = useState(false) // the nav dropdown open/closed
   const [model] = useState<string>(() => loadModel())
   const [chats, setChats] = useState<Chat[]>(() => loadChats())
-  const [projects, setProjects] = useState<Project[]>(() => loadProjects())
-  // Active project: undefined = "All chats". New chats are filed under it.
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
-  const [newProjectName, setNewProjectName] = useState<string | null>(null) // inline create
+  const [saveState, setSaveState] = useState(getSyncState)
+  useEffect(() => {
+    const update = () => setSaveState(getSyncState())
+    window.addEventListener('nalu-sync-status', update)
+    return () => window.removeEventListener('nalu-sync-status', update)
+  }, [])
+  // Restore the COMPLETE history from IndexedDB (the durable, quota-free local store).
+  // localStorage may only hold a slimmed/skeleton first-paint copy, so this heals the full
+  // docs/decks/images back into view. UNION by id + per-message (richer wins) — never drops
+  // a chat the user just created, and honors deletions so a deleted chat can't resurrect.
+  // Runs on mount AND whenever the server hydrate finishes (it writes the full copy to IDB
+  // first), so even a browser too small to hold the history in localStorage shows every file.
+  const restoreFromIdb = useCallback(() => {
+    idbGetChats().then((json) => {
+      if (sessionToken !== getToken() || sessionWasCleared()) return
+      try {
+        const p = json ? JSON.parse(json) : []
+        const idbChats: Chat[] = Array.isArray(p) ? p : []
+        if (idbChats.length) {
+          let dead: Set<string>
+          try { dead = new Set(JSON.parse(localStorage.getItem(DELETED_CHATS_KEY) || '[]') as string[]) } catch { dead = new Set() }
+          setChats((cur) => {
+            const byId = new Map<string, Chat>()
+            for (const c of idbChats) if (c && c.id && !dead.has(c.id)) byId.set(c.id, c)
+            for (const c of cur) {
+              if (!c || !c.id || dead.has(c.id)) continue // tombstone BOTH sides — never resurrect a deleted chat
+              const ex = byId.get(c.id)
+              byId.set(c.id, ex ? unionChatMessages(c, ex) : c)
+            }
+            return [...byId.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+          })
+        }
+      } catch { /* corrupt IDB copy — ignore, server/localStorage still cover it */ }
+      idbReady = true // the existing full copy has been read — safe to persist to IDB now
+    })
+  }, [])
+  useEffect(() => { restoreFromIdb() }, [restoreFromIdb])
+  useEffect(() => {
+    const onHydrated = () => {
+      setChats((cur) => (cur.length ? cur : loadChats()))
+      restoreFromIdb() // hydrate wrote the full server copy to IDB — pull it into view
+    }
+    window.addEventListener('nalu-hydrated', onHydrated)
+    return () => window.removeEventListener('nalu-hydrated', onHydrated)
+  }, [restoreFromIdb])
   const [activeId, setActiveId] = useState<string | null>(
     () => localStorage.getItem(ACTIVE_KEY) || null,
   )
@@ -864,6 +771,8 @@ export default function Workspace({ user, onLogout }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const greeting = useMemo(() => personalGreeting(user?.displayName, chats.map((c) => c.title)), [activeId, user?.displayName])
   const [streaming, setStreaming] = useState(false)
+  const [studioTurn, setStudioTurn] = useState<{ chatId: string; messageId: string } | null>(null)
+  const [copiedMsg, setCopiedMsg] = useState<number | null>(null) // index of the msg just copied
   const { isDark, toggleTheme } = useTheme()
   // Light mode = black logo; dark mode = white (inverted) logo.
   const logoClass = `brightness-0 ${isDark ? 'invert' : ''}`
@@ -871,19 +780,36 @@ export default function Workspace({ user, onLogout }: Props) {
   const [query, setQuery] = useState('')
   const [chatsExpanded, setChatsExpanded] = useState(false) // preview latest few; "Show all" reveals the rest
   // Sidebar is a push-column on desktop but an off-canvas overlay on phones, so
-  // it defaults open on desktop and closed on mobile (chat gets the full width).
-  // Start collapsed so the chat gets the full, clean width on open; the user
-  // can flip it open with the panel toggle whenever they want.
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  // it defaults open on desktop (nav — including AutoPilot — is visible on load)
+  // and closed on mobile (chat gets the full width; sidebar opens as an overlay).
+  // Initialise from the width directly so there's no collapsed→open flash.
+  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 768)
   const closeSidebarOnMobile = useCallback(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) setSidebarOpen(false)
   }, [])
   const abortRef = useRef<AbortController | null>(null)
-  const lastCadCodeRef = useRef('') // current CAD model, so follow-ups edit it
+  // Synchronous per-target in-flight guard. `streaming` state is stale during the
+  // multi-second intent/clarify preflight, so a fast second Enter could double-fire
+  // the SAME turn. We key by target chat (not a global flag) so a deliberate
+  // background build in another chat is still allowed — only re-sending into the
+  // same target mid-flight is blocked.
+  const sendingChatsRef = useRef<Set<string>>(new Set())
   const lastSentPromptRef = useRef('') // stopped mid-generation → prompt returns for editing
+  // A Studio build paused to ask clarifying questions: the user's NEXT message
+  // answers them and resumes the build with this kind + original prompt.
+  const pendingBuildRef = useRef(new Map<string, { kind: string; prompt: string; questions?: ClarifyQ[]; mode?: StudioIntent['mode']; additionalKinds?: StudioIntent['additionalKinds'] }>())
   const chatsRef = useRef<Chat[]>([]) // always-latest chats (for reads after awaits)
   const attachPromiseRef = useRef<Promise<void> | null>(null) // in-flight extraction
   const scrollRef = useRef<HTMLDivElement>(null)
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null) // debounced chat persistence
+  // Stick-to-bottom: while the answer streams we follow it so it "finishes as you
+  // go", but only if you're already at the bottom — scroll up to read history and
+  // we stop yanking you down. Resumes the moment you return to the bottom.
+  const pinnedRef = useRef(true)
+  const onChatScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (el) pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+  }, [])
   const taRef = useRef<HTMLTextAreaElement>(null)
 
   // connected GitHub repo + staged changes
@@ -940,39 +866,45 @@ export default function Workspace({ user, onLogout }: Props) {
   }, [activeRepo, changeCount])
 
   // persist — always lands the write (see persistChats) so deletions stick.
+  // The heavy serialize+write is DEBOUNCED: during streaming `chats` updates every
+  // animation frame, and persisting each frame meant a full JSON.stringify of the
+  // whole transcript + a server push per frame (jank + write amplification). A
+  // trailing write ~450ms after the last change captures the settled state; the
+  // tab-close/unmount flush below guarantees nothing in-flight is lost.
   useEffect(() => {
     chatsRef.current = chats
-    persistChats(chats)
-  }, [chats])
+    // Checkpoint ongoing streams too: a trailing debounce never fires while
+    // tokens keep arriving, leaving a long-running reply entirely unsaved.
+    if (!persistTimerRef.current) persistTimerRef.current = setTimeout(() => { persistTimerRef.current = null; persistChats(chatsRef.current, sessionToken) }, streaming ? 2000 : 150)
+  }, [chats, streaming])
+  useEffect(() => {
+    // Land the latest chats immediately when the tab is hidden/closed or the panel
+    // unmounts — so a close mid-stream (or right after an edit) never loses the
+    // last change waiting on the debounce.
+    const flushNow = () => {
+      if (persistTimerRef.current) { clearTimeout(persistTimerRef.current); persistTimerRef.current = null }
+      // Skip when signed out: sign-out clears localStorage, and this cleanup can
+      // run AFTER that during unmount — writing the chats back would resurrect the
+      // previous user's history. sessionWasCleared() flips synchronously in
+      // clearLocal(), before the component's cleanup runs.
+      if (sessionWasCleared()) return
+      try { persistChats(chatsRef.current, sessionToken) } catch { /* best-effort */ }
+    }
+    const onVis = () => { if (document.visibilityState === 'hidden') flushNow() }
+    window.addEventListener('pagehide', flushNow)
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      window.removeEventListener('pagehide', flushNow)
+      document.removeEventListener('visibilitychange', onVis)
+      flushNow()
+    }
+  }, [])
   useEffect(() => {
     if (activeId) localStorage.setItem(ACTIVE_KEY, activeId)
     setPendingIds([]) // a different chat → no carried-over prompt chips
   }, [activeId])
   // Remember the current view so a refresh returns to your last touch point.
   useEffect(() => { if (view !== 'settings') localStorage.setItem('nalu-view', view) }, [view])
-  useEffect(() => {
-    try {
-      localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects))
-    } catch {
-      /* ignore */
-    }
-  }, [projects])
-
-  const createProject = useCallback((name: string) => {
-    const n = name.trim()
-    if (!n) return
-    const id = uid()
-    setProjects((ps) => [{ id, name: n, createdAt: Date.now() }, ...ps])
-    setActiveProjectId(id)
-    setNewProjectName(null)
-  }, [])
-  const deleteProject = useCallback((id: string) => {
-    addTombstone(DELETED_PROJECTS_KEY, id) // permanent — survives re-sync from any device
-    // Unfile this project's chats (keep them under "All"), then drop the project.
-    setChats((cs) => cs.map((c) => (c.projectId === id ? { ...c, projectId: undefined } : c)))
-    setProjects((ps) => ps.filter((p) => p.id !== id))
-    setActiveProjectId((cur) => (cur === id ? null : cur))
-  }, [])
   useEffect(() => {
     localStorage.setItem(MODEL_KEY, model)
   }, [model])
@@ -997,19 +929,28 @@ export default function Workspace({ user, onLogout }: Props) {
       if (m.design) out.push({ kind: 'design', label: m.design.kind === 'brand' ? 'Brand book' : m.design.kind, mi: i })
       if (m.cad) out.push({ kind: 'cad', label: 'CAD model', mi: i })
       if (m.video) out.push({ kind: 'video', label: 'Video', mi: i })
+      // Generated IMAGES aren't a structured field — Nalu embeds them as markdown
+      // data-URL images in the assistant's text (![alt](data:image/…); api/image always
+      // returns a base64 data URL). List EACH one (data-URL only, so a linked web image
+      // in a normal answer isn't mislabeled a generated file).
+      if (m.role === 'assistant' && typeof m.content === 'string') {
+        const re = /!\[([^\]]*)\]\(data:image\//gi
+        let mm: RegExpExecArray | null
+        while ((mm = re.exec(m.content))) out.push({ kind: 'image', label: (mm[1] || '').trim().slice(0, 40) || 'Image', mi: i })
+      }
     })
     return out
   }, [active])
 
   // Everything Nalu has built across ALL chats — the Studio gallery previews it.
   const creations = useMemo(() => {
-    const out: { key: string; chatId: string; mi: number; kind: string; title: string; html?: string; img?: string }[] = []
+    const out: Creation[] = []
     chats.forEach((c) =>
       c.messages.forEach((m, mi) => {
         const base = { key: `${c.id}:${mi}`, chatId: c.id, mi }
         if (m.design) {
-          const d = m.design as { kind: string; html?: string; name?: string }
-          out.push({ ...base, kind: d.kind, title: d.name || c.title || d.kind, html: typeof d.html === 'string' ? d.html : undefined })
+          const d = m.design as { kind: string; html?: string; name?: string; motion?: Creation['motion'] }
+          out.push({ ...base, kind: d.kind, title: d.name || c.title || d.kind, html: typeof d.html === 'string' ? d.html : undefined, motion: d.motion })
         } else if (m.deck) out.push({ ...base, kind: 'deck', title: m.deck.title || c.title || 'Presentation' })
         else if (m.sheet) out.push({ ...base, kind: 'sheet', title: m.sheet.title || c.title || 'Spreadsheet' })
         else if (m.doc) out.push({ ...base, kind: 'doc', title: m.doc.title || c.title || 'Document' })
@@ -1046,9 +987,26 @@ export default function Workspace({ user, onLogout }: Props) {
     [activeId],
   )
 
+  // Follow the answer as it streams in (depends on the LAST message's length, so it
+  // fires on every token flush — not just when a new message is added). Instant
+  // during streaming so it never lags the text; smooth for discrete jumps. Only when
+  // pinned to the bottom, so you're never dragged away from history you scrolled up to.
+  const lastMsgLen = messages.length ? (typeof messages[messages.length - 1]?.content === 'string' ? (messages[messages.length - 1].content as string).length : 0) : 0
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages.length, streaming])
+    if (!pinnedRef.current) return
+    const el = scrollRef.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: streaming ? 'auto' : 'smooth' })
+  }, [messages.length, lastMsgLen, streaming])
+  // A brand-new answer starts pinned so it follows from the first token.
+  useEffect(() => { if (streaming) pinnedRef.current = true }, [streaming])
+  // Switching chats lands you at the BOTTOM of the newly-opened conversation and
+  // re-pins — otherwise the scroll container keeps the previous chat's offset, so
+  // you'd open a chat mid-scroll (or above its latest messages).
+  useEffect(() => {
+    pinnedRef.current = true
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [activeId])
 
   const newChat = useCallback(() => {
     // Do NOT abort in-flight work — a video/doc generation keeps running in the
@@ -1066,28 +1024,41 @@ export default function Workspace({ user, onLogout }: Props) {
     setActiveId((cur) => (cur === id ? null : cur))
   }, [])
 
-  // Move a chat into a project (or out, projectId = null).
-  const [chatMenu, setChatMenu] = useState<string | null>(null) // which chat's "move" menu is open
-  const moveChatToProject = useCallback((chatId: string, projectId: string | null) => {
-    setChats((cs) => cs.map((c) => (c.id === chatId ? { ...c, projectId: projectId ?? undefined } : c)))
-    setChatMenu(null)
-  }, [])
+  const [renamingChat, setRenamingChat] = useState<{ id: string; title: string } | null>(null)
+  const startRename = (chat: Chat) => {
+    setRenamingChat({ id: chat.id, title: chat.title })
+    setSidebarOpen(true)
+    setChatsExpanded(true)
+    setQuery('')
+  }
+  const saveChatName = () => {
+    const title = renamingChat?.title.trim().slice(0, 120)
+    if (!renamingChat || !title) return
+    const next = chatsRef.current.map(chat => chat.id === renamingChat.id ? { ...chat, title, titleUpdatedAt: Math.max(Date.now(), (chat.titleUpdatedAt || 0) + 1) } : chat)
+    chatsRef.current = next
+    setChats(next)
+    persistChats(next, sessionToken)
+    setRenamingChat(null)
+  }
 
   // ---- Attachments + Notes (per chat, referenced by the AI) ----------------
   const [attaching, setAttaching] = useState(false)
   // Attachments just added but not yet sent — these show as chips in the prompt.
   // After sending they clear from the prompt but stay saved (drawer + AI context).
   const [pendingIds, setPendingIds] = useState<string[]>([])
+  const pendingIdsRef = useRef<string[]>([])
+  const [attachmentError, setAttachmentError] = useState('')
 
   // Ensure there's an active chat to hang attachments/notes on; returns its id.
   const ensureChat = useCallback((): string => {
     if (activeId && chats.some((c) => c.id === activeId)) return activeId
     const id = uid()
-    setChats((cs) => [{ id, title: 'New chat', messages: [], createdAt: Date.now(), projectId: activeProjectId ?? undefined }, ...cs])
+    const next = [{ id, title: 'New chat', messages: [], createdAt: Date.now() }, ...chatsRef.current]
+    chatsRef.current = next; setChats(next)
     setActiveId(id)
     setView('chat')
     return id
-  }, [activeId, chats, activeProjectId])
+  }, [activeId, chats])
 
   const addAttachments = useCallback(
     async (files: FileList | File[]) => {
@@ -1097,22 +1068,31 @@ export default function Workspace({ user, onLogout }: Props) {
       setAttaching(true)
       // Record the in-flight extraction so send() can WAIT for it — otherwise a
       // question sent before a slow PDF finishes parsing would miss the file.
-      const job = (async () => {
-        try {
-          const extracted = await Promise.all(list.map((f) => extractAttachment(f)))
-          setChats((cs) =>
-            cs.map((c) => (c.id === id ? { ...c, attachments: [...(c.attachments || []), ...extracted] } : c)),
-          )
-          setPendingIds((ids) => [...ids, ...extracted.map((e) => e.id)])
-        } finally {
-          setAttaching(false)
+      setAttachmentError('')
+      const previousJob = attachPromiseRef.current
+      const work = (async () => {
+        const extracted = await Promise.all(list.map((f) => extractAttachment(f)))
+        if (localStorage.getItem('nalu-token') !== sessionToken) return
+        const next = chatsRef.current.map(c => c.id === id ? { ...c, attachments: [...(c.attachments || []), ...extracted] } : c)
+        chatsRef.current = next; setChats(next)
+        pendingIdsRef.current = [...pendingIdsRef.current, ...extracted.map(a => a.id)]
+        setPendingIds(pendingIdsRef.current)
+        // Keep local image bytes if upload fails; never silently drop an image.
+        for (const attachment of extracted) {
+          try {
+            const saved = await saveChatAttachment(attachment, id, sessionToken || '')
+            if (localStorage.getItem('nalu-token') !== sessionToken) return
+            const updated = chatsRef.current.map(c => c.id === id ? { ...c, attachments: c.attachments?.map(a => a.id === saved.id ? saved : a) } : c)
+            chatsRef.current = updated; setChats(updated)
+          } catch { setAttachmentError('An image is saved on this device but could not sync to your account yet. Nalu will retry when you send.') }
         }
       })()
+      const job = Promise.all([previousJob, work]).then(() => {}).catch(() => { setAttachmentError('A file could not be read. Please attach it again.') }).finally(() => { if (attachPromiseRef.current === job) setAttaching(false) })
       attachPromiseRef.current = job
       await job
       if (attachPromiseRef.current === job) attachPromiseRef.current = null
     },
-    [ensureChat],
+    [ensureChat, sessionToken],
   )
 
   const removeAttachment = useCallback(
@@ -1136,24 +1116,55 @@ export default function Workspace({ user, onLogout }: Props) {
   )
 
   const send = useCallback(
-    async (text: string, opts?: { keepView?: boolean }) => {
+    async (text: string, opts?: { keepView?: boolean; userMessageId?: string; assistantMessageId?: string; studioKind?: string; studioTarget?: Creation; attachments?: Attachment[] }) => {
       const content = text.trim()
       if (!content || streaming) return
+      // Per-target re-entry guard (see sendingChatsRef): block a second fire into
+      // the same chat while its turn is still starting/streaming, but allow a
+      // deliberate send into a different chat (background builds keep running).
+      const targetChatId = opts?.studioTarget?.chatId ?? activeId
+      const guardKey = targetChatId ?? '__new__'
+      if (sendingChatsRef.current.has(guardKey)) return
+      sendingChatsRef.current.add(guardKey)
       // If the user ×'d out of the intent chip for this exact prompt, skip every
       // studio/artifact route and answer in plain chat instead.
-      const plain = dismissedIntent !== null && dismissedIntent === content
+      const explicitCancel = /^(?:cancel|never mind|nevermind|forget (?:it|that))\b/i.test(content)
+      const plain = (dismissedIntent !== null && dismissedIntent === content) || explicitCancel
+      // If the last turn paused to ask clarifying questions, THIS message is the
+      // answer — resume that build (consume the pending state so it fires once).
+      const savedQuestion = activeId ? chatsRef.current.find(c => c.id === activeId)?.messages.slice(-1)[0]?.clarify : undefined
+      const savedBuild = savedQuestion && !savedQuestion.answered && savedQuestion.build ? { ...savedQuestion.build, questions: savedQuestion.questions } : null
+      const changedTopic = explicitCancel || /^(?:instead|new (?:question|topic))\b/i.test(content)
+      const resuming = !plain && !opts?.studioKind && !changedTopic && activeId ? pendingBuildRef.current.get(activeId) ?? savedBuild : null
+      if (activeId) pendingBuildRef.current.delete(activeId)
       setInput('')
       setDismissedIntent(null)
-      setPendingIds([]) // attachments stay saved (drawer + AI), just clear the prompt chips
 
       // Resolve the target chat id + full history SYNCHRONOUSLY from current
       // state — never from inside the setChats updater (which React runs
       // later), so the page switches to the conversation immediately instead
       // of leaving you on the home screen having to click into the chat.
       lastSentPromptRef.current = content
-      const chatId = activeId ?? uid()
-      const existing = chats.find((c) => c.id === chatId)
-      const history: Msg[] = [...(existing?.messages ?? []), { role: 'user', content }]
+      const chatId = targetChatId ?? uid()
+      // Read history from the always-current ref (not the closure `chats`), so a
+      // programmatic caller like regenerate() — which slices the chat then calls
+      // send() in the same tick — builds on the freshest message list.
+      const existing = (chatsRef.current.find((c) => c.id === chatId)) || chats.find((c) => c.id === chatId)
+      const assistantMessageId = opts?.assistantMessageId || uid()
+      if (opts?.keepView) setStudioTurn({ chatId, messageId: assistantMessageId })
+      const history: Msg[] = [...(existing?.messages ?? []).map(m => m.clarify && !m.clarify.answered ? { ...m, updatedAt: Date.now(), clarify: { ...m.clarify, answered: true } } : m), { id: opts?.userMessageId || uid(), updatedAt: Date.now(), role: 'user', content }]
+
+      // Commit the user's request before attachments or any network operation.
+      // A refresh immediately after Send must not lose the new conversation.
+      const checkpoint: Chat = { ...(existing || { id: chatId, title: content.length > 40 ? content.slice(0, 40) + '…' : content, createdAt: Date.now() }), messages: [...history, { id: assistantMessageId, updatedAt: Date.now(), role: 'assistant', content: '' }] }
+      const checkpointChats = [checkpoint, ...chatsRef.current.filter(c => c.id !== chatId)]
+      chatsRef.current = checkpointChats; setChats(checkpointChats)
+      persistChats(checkpointChats, sessionToken)
+      setActiveId(chatId)
+      if (!opts?.keepView) setView('chat')
+      const ctrl = new AbortController()
+      abortRef.current = ctrl
+      setStreaming(true)
 
       // If a document is still being read (e.g. a slow PDF), WAIT for it so the
       // AI never misses an attachment the user just added.
@@ -1167,10 +1178,33 @@ export default function Workspace({ user, onLogout }: Props) {
       // Notes + attached documents for THIS chat (read from the freshest state,
       // post-await), so the AI references them in EVERY path — a text answer or a
       // generated doc/sheet/deck/design/CAD.
+      if (ctrl.signal.aborted) { sendingChatsRef.current.delete(guardKey); return }
       const ctxChat = chatsRef.current.find((c) => c.id === chatId) || existing
+      const sentAttachments = opts?.attachments || (ctxChat?.attachments || []).filter(a => pendingIdsRef.current.includes(a.id))
+      if (sentAttachments.length) history[history.length - 1].attachments = sentAttachments
+      const sentIds = new Set(sentAttachments.map(a => a.id))
+      pendingIdsRef.current = pendingIdsRef.current.filter(id => !sentIds.has(id)); setPendingIds(pendingIdsRef.current)
       // Images attached to this chat (downscaled on import) — fed to the vision
       // model AND embeddable into generated docs.
-      const imageAtts = (ctxChat?.attachments || []).filter((a) => a.isImage && a.dataUrl)
+      const imageAtts: Attachment[] = []
+      let imageLoadError = ''
+      for (const attachment of (ctxChat?.attachments || []).filter(a => a.isImage)) {
+        try {
+          const dataUrl = await loadChatAttachment(attachment, sessionToken || '')
+          if (!dataUrl) throw new Error(`The original image “${attachment.name}” is unavailable. Please attach it again.`)
+          let restored = { ...attachment, dataUrl }
+          try { restored = { ...restored, ...await saveChatAttachment(restored, chatId, sessionToken || '') } } catch { /* inline bytes remain in the chat until sync succeeds */ }
+          imageAtts.push(restored)
+        } catch (error) { imageLoadError = error instanceof Error ? error.message : 'An attached image could not load. Please retry.' }
+      }
+      if (ctrl.signal.aborted || localStorage.getItem('nalu-token') !== sessionToken) { sendingChatsRef.current.delete(guardKey); return }
+      if (imageAtts.length) {
+        if (imageAtts.every(a => a.storage)) setAttachmentError('')
+        const restored = new Map(imageAtts.map(a => [a.id, a]))
+        if (history[history.length - 1].attachments) history[history.length - 1].attachments = history[history.length - 1].attachments?.map(a => restored.get(a.id) || a)
+        const next = chatsRef.current.map(c => c.id === chatId ? { ...c, attachments: c.attachments?.map(a => restored.get(a.id) || a) } : c)
+        chatsRef.current = next; setChats(next)
+      }
       const ctxParts: string[] = []
       if (ctxChat?.notes && ctxChat.notes.trim())
         ctxParts.push(`## Notes (kept by the user for you to reference)\n${ctxChat.notes.trim()}`)
@@ -1188,7 +1222,15 @@ export default function Workspace({ user, onLogout }: Props) {
         : ''
       // For artifact generators (doc/sheet/slides/design/cad) we fold the context
       // into the prompt; the chat path injects it as a separate message below.
-      const withCtx = (prompt: string) => (ctxBlock ? prompt + ctxBlock : prompt)
+      // When RESUMING after clarifying questions, prepend the ORIGINAL request so
+      // the generator builds from both the original ask and the user's answers.
+      const buildPreamble = resuming
+        ? `ORIGINAL REQUEST: ${resuming.prompt}\n\nQuestions asked: ${resuming.questions?.map(q => q.q).join("; ") || "See the conversation"}\n\nThe user has now answered below — use BOTH the original request and these answers:\n\n`
+        : ''
+      const logoAnswers = resuming ? (resuming.questions || []).reduce((answer, question) => answer.split(question.q).join(''), content).trim() : ''
+      const withCtx = (prompt: string) => buildPreamble + (ctxBlock ? prompt + ctxBlock : prompt)
+      const writingBrief = { messages: history.map(m => ({ role: m.role, content: m.content })), material: ctxParts.join('\n\n'), memory: buildChatMemory(history) }
+      const writingPrompt = buildPreamble + content
 
       // Two agents on one artifact: run the matching domain specialist first
       // (via forced routing) and hand its expert brief to the artifact engine.
@@ -1226,11 +1268,11 @@ export default function Workspace({ user, onLogout }: Props) {
         let next = cs
         if (!cs.some((c) => c.id === chatId)) {
           const title = content.length > 40 ? content.slice(0, 40) + '…' : content
-          next = [{ id: chatId, title, messages: [], createdAt: Date.now(), projectId: activeProjectId ?? undefined }, ...cs]
+          next = [{ id: chatId, title, messages: [], createdAt: Date.now() }, ...cs]
         }
         return next.map((c) =>
           c.id === chatId
-            ? { ...c, messages: [...history, { role: 'assistant', content: '' }] }
+            ? { ...c, messages: [...history, { id: assistantMessageId, updatedAt: Date.now(), role: 'assistant', content: '' }] }
             : c,
         )
       })
@@ -1239,53 +1281,91 @@ export default function Workspace({ user, onLogout }: Props) {
       // there); every other path jumps to the chat where the reply streams.
       if (!opts?.keepView) setView('chat')
 
-      const wire: WireMessage[] = history.map((m) => ({ role: m.role, content: m.content }))
-      const ctrl = new AbortController()
-      abortRef.current = ctrl
+      const wire: WireMessage[] = history.map((m) => ({ role: m.role, content: m.clarify ? `${m.content}\n${m.clarify.questions.map(q => q.q + (q.options.length ? ' (' + q.options.join('; ') + ')' : '')).join('\n')}` : m.content }))
+      // Enter "streaming" NOW — before the intent/clarify preflight round-trips — so
+      // the composer shows Stop and the reply bubble shows the breathing indicator
+      // during that 1-3s window (instead of a blank, un-stoppable pause).
+      setStreaming(true)
 
-      // ---- HOLISTIC INTENT — understand the whole prompt, cleanly. Fast regex
-      // decides clear cases instantly; when signals CONFLICT (or a build-ish ask
-      // matches nothing), a quick LLM classifier reads the whole message and
-      // picks the single intended output; `forcedKind` overrides routing below. ----
-      let forcedKind: string | null = null
-      if (!plain) {
-        const cand: string[] = []
-        if (isVideoPrompt(content)) cand.push('video')
-        if (isImagePrompt(content)) cand.push('image')
-        if (isSheetPrompt(content)) cand.push('spreadsheet')
-        if (isSlidesPrompt(content)) cand.push('slides')
-        if (isCadPrompt(content)) cand.push('cad')
-        if (isDocPrompt(content) && !isSheetPrompt(content)) cand.push(isLongDocPrompt(content) ? 'book' : 'document')
-        const dkGuess = designKind(content)
-        if (dkGuess) cand.push(dkGuess === 'webpage' ? 'website' : dkGuess)
-        const uniq = [...new Set(cand)]
-        const buildish = /\b(make|build|create|design|generate|produce|write|draft|do|put together|whip up|render|film|shoot)\b/i.test(content)
-        if (uniq.length >= 2 || (uniq.length === 0 && buildish && content.length > 24)) {
-          try {
-            const cr = await fetch('/api/web', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'intent', prompt: content, signals: uniq, hasImage: imageAtts.length > 0 }),
-              signal: ctrl.signal,
-            })
-            const cj = (await cr.json().catch(() => ({}))) as { kind?: string }
-            if (cj.kind && cj.kind !== 'chat') forcedKind = cj.kind
-          } catch { /* classifier optional — fall back to regex order */ }
+      // Resolve once. The selected Studio tool is explicit; free-form chat uses
+      // the whole request and current chat's artifact context. No later keyword
+      // matcher can overrule this decision, including a decision to stay in chat.
+      const intentContext = (existing?.messages || []).slice(-6).map(m => ({
+        role: m.role, text: typeof m.content === 'string' ? m.content.slice(0, 1800) : '',
+        artifacts: [m.doc && 'document', m.sheet && 'spreadsheet', m.deck && 'slides', m.cad && 'cad', m.video && 'video', m.email && 'email', m.design?.kind].map(normalizeStudioKind).filter(Boolean),
+      }))
+      const recentKind = intentContext.slice().reverse().find(m => m.artifacts.length)?.artifacts[0]
+      const selectedKind = normalizeStudioKind(opts?.studioKind)
+      let intent: StudioIntent = plain
+        ? { kind: 'chat', mode: 'chat', additionalKinds: [] }
+        : selectedKind
+          ? { kind: selectedKind, mode: opts?.studioTarget ? 'edit' : 'create', additionalKinds: [], source: 'selection' }
+          : fallbackStudioIntent(content, recentKind)
+      if (!plain && !selectedKind && !resuming && shouldClassifyStudio(content, recentKind)) {
+        try {
+          const cr = await fetch('/api/web', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'intent', prompt: content, hasImage: imageAtts.length > 0, hasPrev: recentKind, context: intentContext }),
+            signal: ctrl.signal,
+          })
+          const classified = cr.ok ? parseStudioIntent(await cr.json().catch(() => null)) : null
+          if (classified) intent = classified
+        } catch { /* Keep the conservative single-route fallback. */ }
+      }
+      if (resuming) intent = parseStudioIntent(resuming) || intent
+      const forcedKind = intent.kind
+      // Ask based on the whole brief and conversation, and preserve the pending
+      // request on the message so answering still works after a reload.
+      const useDefaults = /\b(go ahead|best judg(?:ment|ement)|you (?:choose|decide)|no questions|don.t ask)\b/i.test(content)
+      const bk: string | null = !plain && forcedKind !== 'chat' && !resuming && !opts?.studioTarget ? forcedKind : null
+      if (bk && !useDefaults) {
+        try {
+          const clr = await fetch('/api/web', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'clarify', prompt: buildPreamble + content, kind: bk, context: (existing?.messages.length ? JSON.stringify(existing.messages.slice(-8).map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content.slice(0, 2000) : '' }))) : '') + ctxBlock }),
+            signal: ctrl.signal,
+          })
+          const cj = (await clr.json().catch(() => ({}))) as { questions?: (string | ClarifyQ)[] }
+          // Normalize to the structured MCQ shape (tolerate a bare-string question).
+          const qs: ClarifyQ[] = Array.isArray(cj.questions)
+            ? cj.questions.map((q) => (typeof q === 'string' ? { q, options: [] } : q))
+                .filter((q) => q && typeof q.q === 'string' && q.q.trim())
+                .map((q) => ({ q: q.q.trim(), options: Array.isArray(q.options) ? q.options.filter((o) => typeof o === 'string' && o.trim()).slice(0, 4) : [], multi: !!q.multi }))
+                .slice(0, 3)
+            : []
+          if (qs.length) {
+            pendingBuildRef.current.set(chatId, { kind: bk, prompt: buildPreamble + content, questions: qs, mode: intent.mode, additionalKinds: intent.additionalKinds })
+            const intro = qs.length === 1 ? 'One detail will help me build the right thing:' : 'A few details will help me build the right thing:'
+            setChats((cs) =>
+              cs.map((c) =>
+                c.id === chatId ? { ...c, messages: c.messages.map((m, i) => (m.id === assistantMessageId ? { ...m, updatedAt: Date.now(), role: 'assistant', content: intro, clarify: { questions: qs, build: { kind: bk, prompt: buildPreamble + content, mode: intent.mode, additionalKinds: intent.additionalKinds } } } : m)) } : c,
+              ),
+            )
+            abortRef.current = null
+            setStreaming(false) // this turn is done — it asked, now it waits
+            sendingChatsRef.current.delete(guardKey)
+            return
+          }
+        } catch {
+          /* clarify is optional — never block a build on it */
         }
       }
       // Translate the classifier's decision into the branch predicates. When the
       // classifier fired, EXACTLY one route is true and the rest are forced off.
-      const wantK = (k: string, fallback: boolean): boolean => (forcedKind ? forcedKind === k : fallback)
-      setStreaming(true)
+      const wantK = (k: string): boolean => forcedKind === k
+      // (streaming was already turned on above, before the preflight round-trips)
 
       let acc = ''
       let accReasoning = ''
       let accSheet: SheetDoc | undefined
       let accDoc: DocDoc | undefined
+      let accEmail: EmailDoc | undefined
       let accVideo: string | undefined
       let accCad: string | undefined
       let accDesign: DesignArtifact | undefined
       let accDeck: Deck | undefined
-      let accLoading: 'image' | 'sheet' | 'doc' | 'video' | 'cad' | 'design' | 'slides' | undefined
+      let accLoading: 'image' | 'sheet' | 'doc' | 'video' | 'cad' | 'design' | 'slides' | 'email' | undefined
       // Smooth typewriter reveal for STREAMING TEXT: `acc` holds all received
       // text; `shown` eases up toward acc.length a few percent per frame, so the
       // display is decoupled from bursty network chunks and text flows in
@@ -1297,12 +1377,17 @@ export default function Workspace({ user, onLogout }: Props) {
           cs.map((c) => {
             if (c.id !== chatId) return c
             const msgs = c.messages.slice()
-            msgs[msgs.length - 1] = {
+            const messageIndex = msgs.findIndex(m => m.id === assistantMessageId)
+            if (messageIndex < 0) return c
+            msgs[messageIndex] = {
+              id: assistantMessageId,
+              updatedAt: Date.now(),
               role: 'assistant',
               content,
               reasoning: accReasoning || undefined,
               sheet: accSheet,
               doc: accDoc,
+              email: accEmail,
               video: accVideo,
               cad: accCad,
               design: accDesign,
@@ -1338,10 +1423,23 @@ export default function Workspace({ user, onLogout }: Props) {
         if (!revealRaf) revealRaf = requestAnimationFrame(reveal)
       }
 
+      // SAFETY NET: everything below routes to a build/agent path that can throw
+      // (a network drop mid-stream, a tool executor, a parse). Without this guard
+      // a single uncaught throw would skip the setStreaming(false) at the bottom —
+      // leaving the spinner spinning forever and soft-locking the chat (send()
+      // early-returns while `streaming`). The finally ALWAYS clears streaming.
+      try {
+
+      // Stopped DURING the intent/clarify preflight (Stop is now reachable there):
+      // the abort already fired, so bail cleanly before entering any build path —
+      // otherwise the artifact fetch would reject with AbortError and its catch
+      // would render a spurious "⚠️ … failed" bubble. The finally unwinds state.
+      if (ctrl.signal.aborted) return
+
       // Photo → executive breakdown board: real vision analysis of the attached
       // photo(s), then a premium presentation board built from that analysis,
       // with the actual photo embedded via {{PHOTO_n}} placeholders.
-      if (!plain && imageAtts.length > 0 && wantK('board', BREAKDOWN_INTENT.test(content))) {
+      if (!plain && imageAtts.length > 0 && wantK('board')) {
         setRouteName('Nalu Studio')
         accLoading = 'design'
         flush()
@@ -1395,10 +1493,11 @@ export default function Workspace({ user, onLogout }: Props) {
       // kind lives in the saved chat (synced across devices); an edit-ish
       // follow-up revises IT rather than regenerating from scratch. ----------
       const lastArts = (() => {
-        const msgs = ctxChat?.messages || []
-        const out: { doc?: DocDoc; sheet?: SheetDoc; deck?: Deck; cad?: string; designs: Record<string, DesignArtifact>; recent?: { type: string; kind?: string } } = { designs: {} }
+        const msgs = opts?.studioTarget ? (ctxChat?.messages || []).slice(0, opts.studioTarget.mi + 1) : ctxChat?.messages || []
+        const out: { email?: EmailDoc; doc?: DocDoc; sheet?: SheetDoc; deck?: Deck; cad?: string; designs: Record<string, DesignArtifact>; recent?: { type: string; kind?: string } } = { designs: {} }
         for (let i = msgs.length - 1; i >= 0; i--) {
           const m = msgs[i]
+          if (m.email && !out.email) { out.email = m.email; out.recent ||= { type: 'email' } }
           if (m.doc && !out.doc) { out.doc = m.doc; out.recent ||= { type: 'doc' } }
           if (m.sheet && !out.sheet) { out.sheet = m.sheet; out.recent ||= { type: 'sheet' } }
           if (m.deck && !out.deck) { out.deck = m.deck; out.recent ||= { type: 'deck' } }
@@ -1409,31 +1508,15 @@ export default function Workspace({ user, onLogout }: Props) {
         return out
       })()
       const editTarget = (() => {
-        if (plain || !STUDIO_EDIT_VERB.test(content) || content.length > 500) return null
-        if (/\b(new|another|fresh|separate)\b[^.?!]*\b(doc|document|sheet|deck|site|game|logo|poster|design|blueprint|video)\b/i.test(content)) return null
-        if (isVideoPrompt(content) || isImagePrompt(content)) return null
-        const T: Array<[RegExp, { type: string; kind?: string }]> = [
-          [/\b(slides?|deck|presentation|powerpoint)\b/i, { type: 'deck' }],
-          [/\b(spreadsheet|sheet|workbook|tab|column|row|cell|formula)\b/i, { type: 'sheet' }],
-          [/\b(blueprint|floor ?plan)\b/i, { type: 'design', kind: 'blueprint' }],
-          [/\blogo\b/i, { type: 'design', kind: 'logo' }],
-          [/\bpalette\b/i, { type: 'design', kind: 'palette' }],
-          [/\bposter\b/i, { type: 'design', kind: 'poster' }],
-          [/\b(carousel|slideshow|swipe post|social post)\b/i, { type: 'design', kind: 'carousel' }],
-          [/\b(brand book|brand guide(lines)?)\b/i, { type: 'design', kind: 'brand' }],
-          [/\bgame\b/i, { type: 'design', kind: 'game' }],
-          [/\b(animation|motion graphic)\b/i, { type: 'design', kind: 'motion' }],
-          [/\bboard\b/i, { type: 'design', kind: 'board' }],
-          [/\b(website|web ?page|site|landing page|hero|nav(bar)?|homepage)\b/i, { type: 'design', kind: 'webpage' }],
-          [/\b(3d model|cad\b)\b/i, { type: 'cad' }],
-          [/\b(document|\bdoc\b|report|letter|memo|essay|article|chapter|the book)\b/i, { type: 'doc' }],
-        ]
-        const has = (t: { type: string; kind?: string }) =>
-          t.type === 'doc' ? !!lastArts.doc : t.type === 'sheet' ? !!lastArts.sheet : t.type === 'deck' ? !!lastArts.deck : t.type === 'cad' ? !!lastArts.cad : !!(t.kind && lastArts.designs[t.kind])
-        for (const [re, t] of T) if (re.test(content) && has(t)) return t
-        // a short bare follow-up ("make it more minimal") targets the most recent artifact
-        if (content.length < 160 && lastArts.recent && has(lastArts.recent) && !isDocPrompt(content) && !isSheetPrompt(content) && !isSlidesPrompt(content)) return lastArts.recent
-        return null
+        if (plain || intent.mode !== 'edit' || forcedKind === 'chat') return null
+        const target = forcedKind === 'document' || forcedKind === 'book' ? { type: 'doc' }
+          : forcedKind === 'spreadsheet' ? { type: 'sheet' }
+          : forcedKind === 'slides' ? { type: 'deck' }
+          : forcedKind === 'cad' ? { type: 'cad' }
+          : forcedKind === 'email' ? { type: 'email' }
+          : { type: 'design', kind: forcedKind === 'website' ? 'webpage' : forcedKind }
+        const exists = target.type === 'email' ? lastArts.email : target.type === 'doc' ? lastArts.doc : target.type === 'sheet' ? lastArts.sheet : target.type === 'deck' ? lastArts.deck : target.type === 'cad' ? lastArts.cad : target.kind && lastArts.designs[target.kind]
+        return exists ? target : null
       })()
 
       // doc / sheet / deck follow-up edits → revise-in-place via prev payloads
@@ -1444,7 +1527,7 @@ export default function Workspace({ user, onLogout }: Props) {
         try {
           const r = await fetch('/api/doc', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: withCtx(content), prevDoc: JSON.stringify(lastArts.doc).slice(0, 90000), images: [] }),
+            body: JSON.stringify({ ...writingBrief, prompt: writingPrompt, prevDoc: JSON.stringify(lastArts.doc), images: [] }),
             signal: ctrl.signal,
           })
           const data = (await r.json().catch(() => ({}))) as DocDoc & { error?: string }
@@ -1467,7 +1550,7 @@ export default function Workspace({ user, onLogout }: Props) {
           })
           const data = (await r.json().catch(() => ({}))) as SheetDoc & { error?: string }
           accLoading = undefined
-          if (r.ok && Array.isArray(data.sheets) && data.sheets.length) { accSheet = data; acc = '' }
+          if (r.ok && Array.isArray(data.sheets) && data.sheets.length) { accSheet = cleanSheet(data); acc = '' }
           else acc = `⚠️ ${data.error || `Edit failed ${r.status}`}`
         } catch (e) { accLoading = undefined; if (!ctrl.signal.aborted) acc = `⚠️ ${e instanceof Error ? e.message : 'Edit failed'}` }
         flush(); setStreaming(false); setRouteName('Nalu'); abortRef.current = null
@@ -1485,7 +1568,7 @@ export default function Workspace({ user, onLogout }: Props) {
           })
           const data = (await r.json().catch(() => ({}))) as Deck & { error?: string }
           accLoading = undefined
-          if (r.ok && Array.isArray(data.slides) && data.slides.length) { accDeck = data; acc = '' }
+          if (r.ok && Array.isArray(data.slides) && data.slides.length) { accDeck = cleanDeck(data); acc = '' }
           else acc = `⚠️ ${data.error || `Edit failed ${r.status}`}`
         } catch (e) { accLoading = undefined; if (!ctrl.signal.aborted) acc = `⚠️ ${e instanceof Error ? e.message : 'Edit failed'}` }
         flush(); setStreaming(false); setRouteName('Nalu'); abortRef.current = null
@@ -1495,20 +1578,22 @@ export default function Workspace({ user, onLogout }: Props) {
       // LONG-FORM: books / scientific articles / big legal documents — outline
       // first, then every chapter generated in turn and streamed into the doc
       // as it grows. No page cap; a failed chapter retries then is skipped.
-      if (!plain && wantK('book', isLongDocPrompt(content) && !isSheetPrompt(content))) {
+      if (!plain && wantK('book')) {
         setRouteName('Nalu Docs — long form')
         accLoading = 'doc'
         flush()
         try {
-          const boost = await runBoost('Nalu Docs')
           const or = await fetch('/api/doc', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: withCtx(content) + boost, mode: 'outline' }),
+            body: JSON.stringify({ ...writingBrief, prompt: writingPrompt, mode: 'outline' }),
             signal: ctrl.signal,
           })
           const outline = (await or.json().catch(() => ({}))) as {
             title?: string; subtitle?: string; cover?: string; kind?: string
+            design?: DocDoc['design']
+            sources?: DocDoc['sources']; checkedAt?: string; researchStatus?: DocDoc['researchStatus']
+            mediaPreference?: DocDoc['mediaPreference']
             chapters?: Array<{ heading?: string; brief?: string; targetWords?: number }>
             error?: string
           }
@@ -1519,7 +1604,7 @@ export default function Workspace({ user, onLogout }: Props) {
             return
           }
           const chapters = outline.chapters.slice(0, 48)
-          accDoc = normalizeDoc({ title: outline.title, subtitle: outline.subtitle, cover: outline.cover, blocks: [] })
+          accDoc = normalizeDoc({ title: outline.title, subtitle: outline.subtitle, cover: '', design: outline.design, mediaPreference: outline.mediaPreference, sources: outline.sources, checkedAt: outline.checkedAt, researchStatus: outline.researchStatus, blocks: [] })
           accLoading = undefined
           const summaries: string[] = []
           for (let ci = 0; ci < chapters.length; ci++) {
@@ -1533,15 +1618,20 @@ export default function Workspace({ user, onLogout }: Props) {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
-                    prompt: content, mode: 'section', docTitle: outline.title, docKind: outline.kind || 'report',
+                    ...writingBrief, prompt: writingPrompt, mode: 'section', docTitle: outline.title, docKind: outline.kind || 'report',
                     heading: ch.heading, brief: ch.brief, targetWords: ch.targetWords,
                     index: ci, total: chapters.length,
                     context: summaries.slice(-6).join('\n'),
                   }),
                   signal: ctrl.signal,
                 })
-                const sj = (await sr.json().catch(() => ({}))) as { blocks?: DocBlock[] }
-                if (sr.ok && Array.isArray(sj.blocks) && sj.blocks.length) blocks = sj.blocks
+                const sj = (await sr.json().catch(() => ({}))) as { blocks?: DocBlock[]; sources?: DocDoc['sources']; checkedAt?: string; researchStatus?: DocDoc['researchStatus'] }
+                if (sr.ok && Array.isArray(sj.blocks) && sj.blocks.length) {
+                  blocks = sj.blocks
+                  const sources: Map<string, NonNullable<DocDoc['sources']>[number]> = new Map((accDoc?.sources || []).map(source => [source.url, source]))
+                  for (const source of sj.sources || []) sources.set(source.url, source)
+                  accDoc = { ...accDoc, sources: [...sources.values()], checkedAt: sj.checkedAt || accDoc?.checkedAt, researchStatus: sj.researchStatus === 'unverified' || accDoc?.researchStatus === 'unverified' ? 'unverified' : sources.size ? 'verified-sources' : sj.researchStatus }
+                }
               } catch { /* retry once */ }
             }
             if (blocks) {
@@ -1549,7 +1639,8 @@ export default function Workspace({ user, onLogout }: Props) {
               const text = blocks.map((b) => ('text' in b && b.text) || '').join(' ')
               summaries.push(`Ch.${ci + 1} "${ch.heading}": ${text.slice(0, 260)}`)
             } else if (!ctrl.signal.aborted) {
-              summaries.push(`Ch.${ci + 1} "${ch.heading}": (skipped)`)
+              summaries.push(`Ch.${ci + 1} "${ch.heading}": (generation failed; not included)` )
+              accDoc = { ...accDoc, incompleteSections: [...(accDoc?.incompleteSections || []), String(ch.heading || `Chapter ${ci + 1}`)] }
             }
             flush() // progressive: the document grows chapter by chapter on screen
           }
@@ -1565,14 +1656,29 @@ export default function Workspace({ user, onLogout }: Props) {
         return
       }
 
-      if (!plain && wantK('document', isDocPrompt(content) && !isSheetPrompt(content))) {
+      if (!plain && wantK('email')) {
+        setRouteName('Nalu Email')
+        accLoading = 'email'
+        flush()
+        try {
+          const r = await fetch('/api/email', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...writingBrief, prompt: writingPrompt, ...(editTarget?.type === 'email' && lastArts.email ? { prevEmail: lastArts.email } : {}) }), signal: ctrl.signal,
+          })
+          const data = (await r.json().catch(() => ({}))) as { to?: string; subject?: string; body?: string; error?: string }
+          accLoading = undefined
+          if (r.ok && (data.body || data.subject)) { accEmail = { to: data.to || '', subject: data.subject || 'Email', body: data.body || '' }; acc = '' }
+          else acc = `⚠️ ${data.error || `Email error ${r.status}`}`
+        } catch (e) { accLoading = undefined; if (!ctrl.signal.aborted) acc = `⚠️ ${e instanceof Error ? e.message : 'email failed'}` }
+        flush(); setStreaming(false); abortRef.current = null
+        return
+      } else if (!plain && wantK('document')) {
         setRouteName('Nalu Docs')
         accLoading = 'doc'
         flush()
         try {
           // Two-agent build: the domain expert (e.g. Nalu Financial) drafts the
           // substance, then Nalu Docs designs the document from it.
-          const boost = await runBoost('Nalu Docs')
           // Caption attached images (vision) so the text model can place them.
           const docImgs = imageAtts.length
             ? await Promise.all(
@@ -1582,14 +1688,14 @@ export default function Workspace({ user, onLogout }: Props) {
           const r = await fetch('/api/doc', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: withCtx(content) + boost, images: docImgs.map((im) => ({ caption: im.caption })) }),
+            body: JSON.stringify({ ...writingBrief, prompt: writingPrompt, images: docImgs.map((im) => ({ caption: im.caption })) }),
             signal: ctrl.signal,
           })
           const data = (await r.json().catch(() => ({}))) as DocDoc & { error?: string }
           accLoading = undefined
           if (r.ok && Array.isArray(data.blocks) && data.blocks.length) {
-            const blocks = await embedDocImages(data.blocks, docImgs)
-            accDoc = normalizeDoc({ title: data.title, subtitle: data.subtitle, cover: data.cover, blocks })
+            const blocks = await embedDocImages(data.blocks, data.mediaPreference?.omitAttached ? [] : docImgs)
+            accDoc = normalizeDoc({ ...data, cover: '', blocks })
             acc = ''
           } else {
             acc = `⚠️ ${data.error || `Document error ${r.status}`}`
@@ -1605,7 +1711,7 @@ export default function Workspace({ user, onLogout }: Props) {
       }
 
       // Nalu Slides: AI builds a deck → inline preview + PowerPoint/PDF download.
-      if (!plain && wantK('slides', isSlidesPrompt(content))) {
+      if (!plain && wantK('slides')) {
         setRouteName('Nalu Slides')
         accLoading = 'slides'
         flush()
@@ -1620,8 +1726,58 @@ export default function Workspace({ user, onLogout }: Props) {
           const data = (await r.json().catch(() => ({}))) as Deck & { error?: string }
           accLoading = undefined
           if (r.ok && Array.isArray(data.slides) && data.slides.length) {
-            accDeck = { title: data.title, subtitle: data.subtitle, slides: data.slides }
+            accDeck = cleanDeck({ title: data.title, subtitle: data.subtitle, cover: data.cover, slides: data.slides, design: data.design })
             acc = ''
+            // "…and a logo for it": routing collapses each message to ONE primary
+            // kind (here 'slides'), so a co-requested logo was silently dropped.
+            // Build it as its own artifact on the SAME message (deck + logo cards).
+            if (intent.additionalKinds.includes('logo')) {
+              accLoading = 'design'
+              flush()
+              try {
+                const lr = await fetch('/api/design', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ prompt: withCtx(content), kind: 'logo', logoBrief: { request: resuming?.prompt || content, answers: logoAnswers }, brand: getBrand() || undefined }),
+                  signal: ctrl.signal,
+                })
+                const ld = (await lr.json().catch(() => ({}))) as Record<string, unknown>
+                if (lr.ok && ('lockup' in ld || 'mark' in ld || 'initials' in ld || 'html' in ld)) {
+                  accDesign = normalizeArtifact('logo', ld)
+                }
+              } catch { /* logo is a bonus — the deck already succeeded */ }
+              accLoading = undefined
+            }
+            // COMPANION PLAYBOOK: every PITCH deck also ships an "Investor Meeting
+            // Playbook" doc (speaker script per slide, numbers to know, tough-Q&A,
+            // objection handling, the close) so you can nail the meeting. Built from
+            // the finished deck and shown on the SAME message (deck + doc cards).
+            // On the ask-questions path the user's ANSWER ("go ahead") replaces the pitch
+            // prompt, so also test the ORIGINAL request (resuming.prompt) — plus the built
+            // deck — so the playbook never drops just because the answer had no pitch words.
+            if ((PITCH_INTENT.test(content) || (resuming && PITCH_INTENT.test(resuming.prompt)) || deckLooksPitch(accDeck)) && !accDoc) {
+              setRouteName('Nalu Slides + Playbook')
+              accLoading = 'doc'
+              flush()
+              // The playbook SHIPS WITH every pitch deck — retry once so a transient miss
+              // never drops it. A user Stop (AbortError) breaks out; only build misses retry.
+              for (let attempt = 0; attempt < 2 && !accDoc; attempt++) {
+                try {
+                  const pr = await fetch('/api/doc', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: deckPlaybookPrompt(accDeck), images: [] }),
+                    signal: ctrl.signal,
+                  })
+                  const pd = (await pr.json().catch(() => ({}))) as DocDoc & { error?: string }
+                  if (pr.ok && Array.isArray(pd.blocks) && pd.blocks.length) { accDoc = normalizeDoc(pd); break }
+                } catch (e) {
+                  if (e instanceof DOMException && e.name === 'AbortError') break
+                  /* transient — retry once more */
+                }
+              }
+              accLoading = undefined
+            }
           } else {
             acc = `⚠️ ${data.error || `Slides error ${r.status}`}`
           }
@@ -1636,7 +1792,7 @@ export default function Workspace({ user, onLogout }: Props) {
       }
 
       // Nalu CAD: AI writes OpenSCAD → inline 3D model viewer (compiled in-browser).
-      if (!plain && wantK('cad', isCadPrompt(content))) {
+      if (!plain && wantK('cad')) {
         setRouteName('Nalu CAD')
         accLoading = 'cad'
         flush()
@@ -1662,7 +1818,7 @@ export default function Workspace({ user, onLogout }: Props) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               prompt: withCtx(content) + (spec.trim() ? `\n\nEXACT SPEC from Nalu Construction — model these dimensions precisely:\n${spec.trim().slice(0, 6000)}` : ''),
-              prevCode: lastCadCodeRef.current || lastArts.cad || '',
+              prevCode: intent.mode === 'edit' ? lastArts.cad || '' : '',
             }),
             signal: ctrl.signal,
           })
@@ -1670,7 +1826,6 @@ export default function Workspace({ user, onLogout }: Props) {
           accLoading = undefined
           if (r.ok && data.code) {
             accCad = data.code
-            lastCadCodeRef.current = data.code
             acc = ''
           } else {
             acc = `⚠️ ${data.error || `CAD error ${r.status}`}`
@@ -1697,26 +1852,13 @@ export default function Workspace({ user, onLogout }: Props) {
         }
         return ''
       })()
-      const WEB_EDIT_VERB = /\b(make|change|turn|add|remove|delete|update|fix|swap|adjust|edit|recolou?r|resize|move|replace|rename|redo|restyle|animate|center|align|darker|lighter|bigger|smaller|sticky)\b/i
-      const NEW_SITE_ASK = /\b(new|another|different|fresh|separate)\b[^.?!]*\b(site|website|page|app|design)\b|\b(website|site|landing page|web ?app|homepage)\s+(for|about)\b/i
-      // a VIDEO ask always goes to the video engine — even when it mentions
-      // walkthrough/blueprint (those words otherwise route to the 3D builder)
       const DESIGN_KINDS = ['website', 'logo', 'palette', 'brand', 'blueprint', 'poster', 'canvas', 'shopping', 'motion', 'game', 'board', 'carousel']
-      let studioKind = plain || isVideoPrompt(content)
-        ? null
-        : forcedKind
-          ? (DESIGN_KINDS.includes(forcedKind) ? (forcedKind === 'website' ? 'webpage' : (forcedKind as ReturnType<typeof designKind>)) : null)
-          : designKind(content)
+      let studioKind: DesignKind | null = !plain && DESIGN_KINDS.includes(forcedKind)
+        ? (forcedKind === 'website' ? 'webpage' : forcedKind as DesignKind) : null
       // Studio memory: a design-kind edit revises the LAST artifact of that kind
       const prevArt = editTarget?.type === 'design' && editTarget.kind ? lastArts.designs[editTarget.kind] : undefined
       if (prevArt && editTarget?.kind) studioKind = editTarget.kind as typeof studioKind
-      const isWebEdit =
-        !plain && !!lastWebHtml && WEB_EDIT_VERB.test(content) && !NEW_SITE_ASK.test(content) &&
-        (studioKind === 'webpage' ||
-          (!studioKind &&
-            /\b(page|site|website|hero|nav(bar)?|header|footer|section|headline|tagline|button|cta|colors?|palette|fonts?|layout|board)\b/i.test(content) &&
-            !isDocPrompt(content) && !isSheetPrompt(content) && !isSlidesPrompt(content) && !isCadPrompt(content) &&
-            !isVideoPrompt(content) && !isImagePrompt(content)))
+      const isWebEdit = !plain && forcedKind === 'website' && intent.mode === 'edit' && !!lastWebHtml
       if (isWebEdit) studioKind = 'webpage'
       if (studioKind) {
         setRouteName('Nalu Studio')
@@ -1726,15 +1868,15 @@ export default function Workspace({ user, onLogout }: Props) {
         // ask, READ it with vision and create the artifact in that same spirit
         // (its style, colors, symbol) — instead of ignoring it.
         let refAnalysis = ''
-        if (imageAtts.length > 0 && (studioKind === 'logo' || studioKind === 'brand' || studioKind === 'palette')) {
+        if (imageAtts.length > 0 && (studioKind === 'logo' || studioKind === 'brand' || studioKind === 'palette' || studioKind === 'poster')) {
           try {
             await streamChat(
               [
                 {
                   role: 'user',
                   content: [
-                    { type: 'text', text: `The user attached this reference image for a ${studioKind} they want. Describe it precisely so we can create a ${studioKind} in the SAME visual spirit: the STYLE (flat/minimal/geometric/hand-drawn/vintage/etc.), the exact COLORS (name each), any SYMBOL/ICON/MARK and its exact shapes and composition, the typography vibe, and the overall mood. Be specific and concise.` },
-                    ...imageAtts.map((a) => ({ type: 'image_url' as const, image_url: { url: a.dataUrl as string } })),
+                    { type: 'text', text: designReferenceBrief(imageAtts, buildPreamble + content, studioKind) },
+                    ...imageAtts.flatMap((a, i) => [{ type: 'text' as const, text: `PHOTO_${i}: ${a.name}` }, { type: 'image_url' as const, image_url: { url: a.dataUrl as string } }]),
                   ],
                 },
               ],
@@ -1744,30 +1886,41 @@ export default function Workspace({ user, onLogout }: Props) {
           } catch { /* proceed without the reference */ }
         }
         try {
-          const r = await fetch('/api/design', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          if (imageLoadError) throw new Error(imageLoadError)
+          if (studioKind === 'poster' && imageAtts.length && !refAnalysis.trim()) throw new Error('The reference images could not be read. Your files are saved; retry to use them in the design.')
+          const designRequest = {
               prompt:
                 (refAnalysis.trim()
                   ? `REFERENCE IMAGE the user attached — create the ${studioKind} in THIS SAME visual spirit (match its style, colors, and the form of its symbol/mark as described here):\n${refAnalysis.trim()}\n\n----\n\n`
                   : '') +
                 withCtx(content) +
+                (studioKind === 'poster' && imageAtts.length ? designReferenceInstructions(imageAtts, refAnalysis) : '') +
                 (prevArt && (editTarget?.kind === 'logo' || editTarget?.kind === 'palette' || editTarget?.kind === 'shopping')
                   ? `\n\nPREVIOUS ${editTarget.kind.toUpperCase()} JSON (revise THIS — keep everything not mentioned in the request identical; output the full updated JSON):\n${JSON.stringify(prevArt).slice(0, 9000)}`
                   : ''),
               kind: studioKind,
+              ...(studioKind === 'logo' ? { logoBrief: { request: resuming?.prompt || content, answers: logoAnswers } } : {}),
+              ...(studioKind === 'logo' && refAnalysis.trim() ? { logoReference: refAnalysis.trim() } : {}),
+              ...(studioKind === 'logo' && prevArt && editTarget?.kind === 'logo' ? { prevLogo: Object.fromEntries(Object.entries(prevArt).filter(([key]) => !['imgCache', 'options', 'mark', 'lockup'].includes(key))) } : {}),
               brand: getBrand() || undefined,
               ...(prevArt && 'html' in prevArt && (prevArt as { html?: string }).html
-                ? { prevHtml: (prevArt as { html: string }).html }
+                ? { prevHtml: designHtmlForEdit((prevArt as { html: string }).html, imageAtts) }
                 : isWebEdit
                   ? { prevHtml: lastWebHtml }
                   : {}),
               ...(prevArt && editTarget?.kind === 'blueprint' ? { prevBlueprint: JSON.stringify(prevArt).slice(0, 60000) } : {}),
-            }),
-            signal: ctrl.signal,
-          })
-          const data = (await r.json().catch(() => ({}))) as { error?: string }
+          }
+          let r = await fetch('/api/design', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(designRequest), signal: ctrl.signal })
+          let data = (await r.json().catch(() => ({}))) as { error?: string }
+          // A text-only draft is not a successful photo-based poster. Repair once
+          // with the same source images; don't save a fabricated replacement.
+          if (r.ok && studioKind === 'poster' && imageAtts.length) {
+            try { prepareDesignResponse(studioKind, data, imageAtts) }
+            catch {
+              r = await fetch('/api/design', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...designRequest, prompt: designRequest.prompt + '\nREQUIRED REPAIR: return complete HTML and include the supplied subject/headshot via its exact {{PHOTO_n}} placeholder. The previous response omitted the source image or was not valid HTML.' }), signal: ctrl.signal })
+              data = await r.json().catch(() => ({}))
+            }
+          }
           accLoading = undefined
           // html-kinds carry `html`; json-kinds carry their payload key. webpage
           // omits `kind` server-side, so discriminate on the payload, not `kind`.
@@ -1785,7 +1938,7 @@ export default function Workspace({ user, onLogout }: Props) {
               'items' in data ||
               (studioKind === 'carousel' && 'slides' in data))
           if (ok) {
-            accDesign = normalizeArtifact(studioKind, data)
+            accDesign = prepareDesignResponse(studioKind, data, imageAtts)
             acc = ''
             // A freshly generated palette / brand becomes the active Brand Kit
             // immediately, so docs, decks and sheets the user downloads next
@@ -1794,6 +1947,26 @@ export default function Workspace({ user, onLogout }: Props) {
             if (accDesign.kind === 'palette' || accDesign.kind === 'brand') {
               const b = deriveBrand(accDesign)
               if (b) setBrand(b)
+            }
+            // Symmetric to the deck path: "a logo AND a pitch deck" — if the primary
+            // route landed on the logo but a deck was also asked for, co-build the
+            // deck as its own artifact on this same message (logo + deck cards).
+            if (studioKind === 'logo' && intent.additionalKinds.includes('slides')) {
+              accLoading = 'slides'
+              flush()
+              try {
+                const dr = await fetch('/api/slides', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ prompt: withCtx(content) }),
+                  signal: ctrl.signal,
+                })
+                const dd = (await dr.json().catch(() => ({}))) as Deck & { error?: string }
+                if (dr.ok && Array.isArray(dd.slides) && dd.slides.length) {
+                  accDeck = cleanDeck({ title: dd.title, subtitle: dd.subtitle, cover: dd.cover, slides: dd.slides, design: dd.design })
+                }
+              } catch { /* deck is a bonus — the logo already succeeded */ }
+              accLoading = undefined
             }
           } else {
             acc = `⚠️ ${data.error || `Studio error ${r.status}`}`
@@ -1809,7 +1982,7 @@ export default function Workspace({ user, onLogout }: Props) {
       }
 
       // Spreadsheet: build a real workbook (Excel formulas) the user can download.
-      if (!plain && wantK('spreadsheet', isSheetPrompt(content))) {
+      if (!plain && wantK('spreadsheet')) {
         setRouteName('Nalu Sheets')
         accLoading = 'sheet'
         flush()
@@ -1824,7 +1997,7 @@ export default function Workspace({ user, onLogout }: Props) {
           const data = (await r.json().catch(() => ({}))) as SheetDoc & { error?: string }
           accLoading = undefined
           if (r.ok && Array.isArray(data.sheets) && data.sheets.length) {
-            accSheet = { title: data.title, sheets: data.sheets }
+            accSheet = cleanSheet({ title: data.title, sheets: data.sheets })
             acc = ''
           } else {
             acc = `⚠️ ${data.error || `Spreadsheet error ${r.status}`}`
@@ -1842,7 +2015,7 @@ export default function Workspace({ user, onLogout }: Props) {
       // Video generation: route to the (pluggable) video endpoint. An attached
       // photo (or the blueprint on screen) becomes the START FRAME — true
       // image-to-video walkthroughs and blueprint→3D grow reveals.
-      if (!plain && wantK('video', isVideoPrompt(content))) {
+      if (!plain && wantK('video')) {
         setRouteName('Nalu Video')
         accLoading = 'video'
         flush()
@@ -1852,20 +2025,18 @@ export default function Workspace({ user, onLogout }: Props) {
           if (!vImage && /\b(blueprint|floor ?plan|walk.?through|this (plan|design)|grow|3d)\b/i.test(content)) {
             vImage = await blueprintSnapshot()
           }
-          const r = await fetch('/api/video', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: vidPrompt, ...(vImage ? { image: vImage } : {}) }),
+          // $0-first ladder: real MiniMax-H3 on the user's own machine (if the
+          // h3-server runner is up) → in-browser on-device engine (any device)
+          // → free cloud pool. Each rung reports progress into the loading pill.
+          const out = await generateVideo({
+            prompt: vidPrompt,
+            ...(vImage ? { image: vImage } : {}),
             signal: ctrl.signal,
+            onProgress: (_f, phase) => { setRouteName(`Nalu Video · ${phase}`) },
           })
-          const data = (await r.json().catch(() => ({}))) as { url?: string; error?: string }
           accLoading = undefined
-          if (r.ok && data.url) {
-            accVideo = data.url
-            acc = ''
-          } else {
-            acc = `⚠️ ${data.error || `Video error ${r.status}`}`
-          }
+          accVideo = out.url
+          acc = ''
         } catch (e) {
           accLoading = undefined
           acc = `⚠️ ${e instanceof Error ? e.message : 'Video request failed'}`
@@ -1878,7 +2049,7 @@ export default function Workspace({ user, onLogout }: Props) {
 
       // Image generation: if the user is asking for an image, call the image
       // endpoint (Nalu Image / CogView) and render the result inline as Markdown.
-      if (!plain && wantK('image', isImagePrompt(content))) {
+      if (!plain && wantK('image')) {
         setRouteName('Nalu Image')
         accLoading = 'image'
         flush()
@@ -1948,7 +2119,7 @@ export default function Workspace({ user, onLogout }: Props) {
       // Up to 12 tool rounds so the agent can do genuinely deep, multi-step
       // research (search → read sources → refine → read more) before answering.
       for (let round = 0; round < 12 && !ctrl.signal.aborted; round++) {
-        const { text, reasoning, autoResearch, toolCalls } = await streamChat(
+        const { text, autoResearch, toolCalls, error, finishReason } = await streamChat(
           conv,
           model,
           {
@@ -1973,37 +2144,32 @@ export default function Workspace({ user, onLogout }: Props) {
           tools,
           context,
           thinkLevel,
+          undefined, // specialist — keyword-routed for normal chat
+          true, // opt into cross-chat memory: this is the main interactive turn
         )
-        // Recover tool calls a model emitted as plain text instead of the
-        // tool_calls field (known serving gap: GLM emits JSON, DeepSeek emits
-        // <tool_name>…</tool_name>). Run them for real and strip the call syntax
-        // from what the user sees (keeping any "Let me research…" preamble).
+        // Keep partial text visible, but never recover or execute actions from an
+        // interrupted response. onError above already provides the retry message.
+        if (error || ctrl.signal.aborted) break
         let calls = toolCalls
         let shownText = text
-        // When the SERVER already did the research (autoResearch), the model got
-        // no tools — its text is the final answer. Skip the recovery/tool loop
-        // entirely so nothing re-runs and the turn ends cleanly.
-        if (!autoResearch && !calls.length) {
-          // In deep-think mode the model often emits its tool-call JSON inside the
-          // REASONING section (before the answer marker). Recover from BOTH the
-          // answer and the reasoning so the tools actually run and the raw JSON is
-          // stripped from whichever pane it appeared in.
-          const recA = recoverToolCalls(text, tools)
-          const recR = recoverToolCalls(reasoning, tools)
-          const found = [...recA.calls, ...recR.calls]
-          if (found.length) {
-            calls = found
-            acc = acc.slice(0, acc.length - text.length) + recA.cleaned
-            shownText = recA.cleaned
-            if (recR.calls.length && reasoning) {
-              accReasoning = accReasoning.slice(0, accReasoning.length - reasoning.length) + recR.cleaned
-            }
+        // A serving adapter may encode the call as text despite an explicit
+        // tool_calls finish reason. Recover only that case. Code examples and
+        // reasoning are content, not authorization to execute an action.
+        if (!autoResearch && !calls.length && finishReason === 'tool_calls') {
+          const recovered = recoverToolCalls(text, tools)
+          if (recovered.calls.length) {
+            calls = recovered.calls
+            acc = acc.slice(0, acc.length - text.length) + recovered.cleaned
+            shownText = recovered.cleaned
             flush()
           }
         }
         conv.push({ role: 'assistant', content: shownText || null, tool_calls: calls.length ? calls : undefined })
-        if (autoResearch || !calls.length) break
+        // Server research can still request native tools to complete the task.
+        // Only confirmed calls reach here; textual recovery stays gated above.
+        if (!calls.length) break
         for (const tc of calls) {
+          if (ctrl.signal.aborted) break
           let label = ''
           try {
             const a = JSON.parse(tc.function.arguments || '{}') as { path?: string; query?: string; url?: string }
@@ -2023,30 +2189,88 @@ export default function Workspace({ user, onLogout }: Props) {
         }
         setChangeCount(Object.keys(changesRef.current).length)
       }
-      if (!sawAny) {
+      if (!sawAny && !ctrl.signal.aborted) {
         acc = '⚠️ No response from the Nalu engine. Please try again in a moment.'
       }
       // Deep-think fallback: if the model produced reasoning but never the answer
       // marker, don't strand it in the left pane — show it as the answer.
-      if (accReasoning && !acc.trim()) {
-        acc = accReasoning
+      if (accReasoning && !acc.trim() && !ctrl.signal.aborted) {
+        acc = 'Nalu did not finish its answer. Your request is saved; tap Retry to try again.'
         accReasoning = ''
       }
       flush() // ensure the final, complete text is rendered (no pending frame lost)
-      setStreaming(false)
-      abortRef.current = null
+      } catch (e) {
+        // A user-initiated Stop aborts the request — that's not an error, so keep
+        // whatever streamed. Any OTHER throw surfaces as a recoverable message so
+        // the user never sees a silently-frozen turn.
+        if (!ctrl.signal.aborted) {
+          const msg = e instanceof Error && e.message ? e.message : 'Something went wrong'
+          acc = acc && acc.trim() ? `${acc}\n\n⚠️ ${msg}` : `⚠️ ${msg}. Please try again.`
+          try { flush() } catch { /* render is best-effort */ }
+        }
+      } finally {
+        // ALWAYS unwind the streaming state + release the abort controller + the
+        // re-entry guard, no matter which route ran or how it ended.
+        setStreaming(false)
+        abortRef.current = null
+        sendingChatsRef.current.delete(guardKey)
+      }
     },
-    [activeId, chats, streaming, model, activeRepo, activeProjectId, dismissedIntent, thinkLevel],
+    [activeId, chats, streaming, model, activeRepo, dismissedIntent, thinkLevel],
   )
 
   const stop = useCallback(() => {
     abortRef.current?.abort()
     setStreaming(false)
+    // (the aborted send's finally clears its own per-target guard entry)
     // hand the prompt back so it can be edited and re-sent
     if (lastSentPromptRef.current) setInput((cur) => (cur.trim() ? cur : lastSentPromptRef.current))
   }, [])
 
+  // Regenerate the assistant reply at index `i`: drop that whole turn (the user
+  // prompt that produced it + the reply, and anything after) and re-send the
+  // prompt so a fresh answer streams in its place. Used by the ↻ Retry action —
+  // essential after an error/dropped stream, and handy for a better take.
+  const regenerate = useCallback((i: number) => {
+    if (streaming) return
+    const msgs = chatsRef.current.find((c) => c.id === activeId)?.messages || []
+    let userIdx = -1
+    for (let k = Math.min(i, msgs.length - 1); k >= 0; k--) {
+      if (msgs[k].role === 'user') { userIdx = k; break }
+    }
+    if (userIdx < 0) return
+    const prompt = typeof msgs[userIdx].content === 'string' ? (msgs[userIdx].content as string) : ''
+    if (!prompt.trim()) return
+    // Drop this turn (the user prompt that produced it + the reply + anything after)
+    // so send() re-adds the prompt and streams a fresh reply in its place. Update
+    // chatsRef SYNCHRONOUSLY (not inside the setChats updater, which runs later) so
+    // send() — called on the next line — reads the sliced history immediately.
+    const sliced = msgs.slice(0, userIdx)
+    const clarification = sliced[sliced.length - 1]?.clarify
+    if (activeId && clarification?.build) pendingBuildRef.current.set(activeId, { ...clarification.build, questions: clarification.questions })
+    const nextChats = chatsRef.current.map((c) => (c.id === activeId ? { ...c, messages: sliced } : c))
+    chatsRef.current = nextChats
+    setChats(nextChats)
+    void send(prompt, { userMessageId: msgs[userIdx].id, assistantMessageId: msgs[i]?.id, attachments: msgs[userIdx].attachments })
+  }, [streaming, activeId, send])
+
+  // User answered the interactive clarifying questions → compose their tapped
+  // answers into one message and resume the paused build (pendingBuildRef is set).
+  const submitClarify = useCallback((msgIndex: number, answers: { q: string; a: string }[], keepView = false) => {
+    if (streaming) return
+    const pending = chatsRef.current.find(c => c.id === activeId)?.messages[msgIndex]?.clarify
+    if (activeId && pending?.build) pendingBuildRef.current.set(activeId, { ...pending.build, questions: pending.questions })
+    // Mark this clarify message answered so its chips lock.
+    setChats((cs) => cs.map((c) => (c.id === activeId ? { ...c, messages: c.messages.map((m, i) => (i === msgIndex && m.clarify ? { ...m, updatedAt: Date.now(), clarify: { ...m.clarify, answered: true } } : m)) } : c)))
+    const composed = answers.filter((x) => x.a.trim()).map((x) => `${x.q} ${x.a}`).join('\n')
+    void send(composed.trim() || 'go ahead, use your best judgment', { keepView })
+  }, [streaming, activeId, send])
+
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Don't send while an IME composition is active (Japanese/Chinese/Korean, and
+    // some accent/diacritic input) — Enter there is "confirm the candidate", not
+    // "send the message". isComposing / keyCode 229 both flag an in-progress compose.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       void send(input)
@@ -2060,60 +2284,32 @@ export default function Workspace({ user, onLogout }: Props) {
   }, [closeSidebarOnMobile])
 
   const matchesQuery = (c: Chat) => (query.trim() ? c.title.toLowerCase().includes(query.toLowerCase()) : true)
-  // Chats with no project (shown at the bottom under "Chats"). Newest-first
-  // (new chats are prepended), so the preview slice shows the most recent.
-  const unfiledChats = chats.filter((c) => !c.projectId).filter(matchesQuery)
+  // Include chats previously filed in projects in the same searchable list.
+  const filteredChats = chats.filter(matchesQuery)
   const CHATS_PREVIEW = 8
-  const visibleChats = chatsExpanded || query.trim() ? unfiledChats : unfiledChats.slice(0, CHATS_PREVIEW)
+  const visibleChats = chatsExpanded || query.trim() ? filteredChats : filteredChats.slice(0, CHATS_PREVIEW)
 
-  // One chat row — reused inside a project folder and in the unfiled list.
   const renderChatRow = (c: Chat) => (
-    <div key={c.id} className="mb-0.5">
-      <div
-        className={`group flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] cursor-pointer ${
-          c.id === activeId ? 'bg-glass/10' : 'hover:bg-glass/5'
-        }`}
-        onClick={() => selectChat(c.id)}
-      >
-        <MessageSquare size={13} className="text-dim shrink-0" />
-        <span className="truncate flex-1">{c.title}</span>
-        <div className="relative flex items-center gap-1">
-          <button
-            onClick={(e) => { e.stopPropagation(); setChatMenu((m) => (m === c.id ? null : c.id)) }}
-            className={`shrink-0 text-dim hover:text-ink transition-opacity ${chatMenu === c.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-            title="Move to project"
-            aria-label="Move to project"
-          >
-            <FolderInput size={12} />
+    <div key={c.id} data-chat-id={c.id} className="mb-0.5">
+      {renamingChat?.id === c.id ? (
+        <form className="flex items-center gap-1 rounded-lg bg-glass/[0.08] p-1" onSubmit={event => { event.preventDefault(); saveChatName() }}>
+          <input autoFocus aria-label="Chat name" maxLength={120} value={renamingChat.title}
+            onFocus={event => event.currentTarget.select()}
+            onChange={event => setRenamingChat({ id: c.id, title: event.target.value })}
+            onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setRenamingChat(null) } }}
+            className="min-w-0 flex-1 rounded-md border border-primary/40 bg-glass/[0.08] px-2 py-2 text-sm text-ink outline-none focus:ring-1 focus:ring-primary" />
+          <button type="submit" aria-label="Save chat name" title="Save chat name" disabled={!renamingChat.title.trim()} className="rounded-md p-2 text-primary hover:bg-glass/10 disabled:opacity-30"><Check size={16} /></button>
+          <button type="button" aria-label="Cancel rename" title="Cancel rename" onClick={() => setRenamingChat(null)} className="rounded-md p-2 text-dim hover:bg-glass/10"><X size={16} /></button>
+        </form>
+      ) : (
+        <div className={`group flex items-center gap-1 rounded-lg pl-2.5 pr-1 text-[13px] ${c.id === activeId ? 'bg-glass/10' : 'hover:bg-glass/5'}`}>
+          <button onClick={() => selectChat(c.id)} title={c.title} className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left">
+            <MessageSquare size={13} className="shrink-0 text-dim" /><span className="truncate">{c.title}</span>
           </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); deleteChat(c.id) }}
-            className="opacity-0 group-hover:opacity-100 text-dim hover:text-ink transition-opacity shrink-0"
-            aria-label="Delete chat"
-          >
-            <Trash2 size={12} />
-          </button>
-          {chatMenu === c.id && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setChatMenu(null) }} />
-              <div className="absolute right-0 top-6 z-50 w-44 overflow-hidden rounded-lg border border-glass/15 bg-panel2 py-1 shadow-xl" onClick={(e) => e.stopPropagation()}>
-                <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-dim">Move to</div>
-                <button onClick={() => moveChatToProject(c.id, null)}
-                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-glass/10 ${!c.projectId ? 'text-gold' : 'text-ink'}`}>
-                  <MessageSquare size={12} /> No project
-                </button>
-                {projects.map((p) => (
-                  <button key={p.id} onClick={() => moveChatToProject(c.id, p.id)}
-                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-glass/10 ${c.projectId === p.id ? 'text-gold' : 'text-ink'}`}>
-                    <FolderGit2 size={12} className="text-gold" /> <span className="truncate">{p.name}</span>
-                  </button>
-                ))}
-                {projects.length === 0 && <div className="px-3 py-1.5 text-[11px] text-dim">No projects yet</div>}
-              </div>
-            </>
-          )}
+          <button onClick={() => startRename(c)} aria-label={`Rename chat: ${c.title}`} title="Rename chat" className="shrink-0 rounded-md p-2 text-dim hover:bg-glass/10 hover:text-ink"><Pencil size={13} /></button>
+          <button onClick={() => deleteChat(c.id)} aria-label="Delete chat" title="Delete chat" className="shrink-0 rounded-md p-2 text-dim hover:bg-glass/10 hover:text-ink"><Trash2 size={13} /></button>
         </div>
-      </div>
+      )}
       {c.id === activeId && (
         <ChatDrawer
           attachments={c.attachments || []}
@@ -2130,29 +2326,16 @@ export default function Workspace({ user, onLogout }: Props) {
 
   const topBarTitle =
     view === 'chat' ? active?.title || 'New chat' : VIEW_TITLES[view]
+  const studioChat = studioTurn ? chats.find(c => c.id === studioTurn.chatId) : active
+  const studioMessageIndex = studioTurn ? studioChat?.messages.findIndex(m => m.id === studioTurn.messageId) ?? -1 : (studioChat?.messages.length ?? 0) - 1
+  const studioMessage = studioChat?.messages[studioMessageIndex]
+  const studioResultKey = studioChat && studioMessageIndex >= 0 ? `${studioChat.id}:${studioMessageIndex}` : undefined
 
   return (
     <div
-      className="relative isolate h-[100dvh] w-screen flex text-ink overflow-hidden font-sans"
-      style={{ backgroundColor: isDark ? 'rgb(11,12,16)' : 'rgb(247,249,251)' }}
+      className="nalu-workspace relative isolate h-[100dvh] w-screen flex text-ink overflow-hidden font-sans" data-workspace-theme={isDark ? 'dark' : 'light'}
     >
-      {/* Background model photo — a DEDICATED layer behind everything, so no
-          opaque panel can ever cover it (the old inline root background could be
-          hidden). Kept prominent; the wash above only softens it for readability. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10 bg-center bg-cover"
-        style={{ backgroundImage: `url(${bgFor(routeName)})`, transition: 'background-image 600ms ease' }}
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10"
-        style={{
-          background: isDark
-            ? 'radial-gradient(1100px 760px at 6% -12%, rgba(56,120,255,0.18), transparent 55%), radial-gradient(950px 680px at 102% -4%, rgba(40,90,200,0.14), transparent 55%), linear-gradient(180deg, rgba(11,12,16,0.48), rgba(11,12,16,0.64))'
-            : 'radial-gradient(1200px 620px at 50% -14%, rgba(93,156,214,0.10), transparent 60%), linear-gradient(180deg, rgba(247,249,251,0.52), rgba(238,242,247,0.66))',
-        }}
-      />
+      {/* The avatar workspace is scoped to the authenticated app. */}
 
       {/* Mobile backdrop — taps close the off-canvas sidebar. */}
       {sidebarOpen && (
@@ -2165,17 +2348,18 @@ export default function Workspace({ user, onLogout }: Props) {
 
       {/* Sidebar — push column on desktop, off-canvas overlay on phones. */}
       <aside
-        className={`${sidebarOpen ? 'w-64' : 'w-0'} fixed inset-y-0 left-0 z-40 md:static md:z-auto transition-[width] duration-200 shrink-0 overflow-hidden border-r border-glass/[0.18] ws-glass flex flex-col`}
+        ref={element => { if (element) element.inert = !sidebarOpen }}
+        aria-hidden={!sidebarOpen}
+        className={`ws-sidebar ${sidebarOpen ? 'w-64' : 'w-0'} fixed inset-y-0 left-0 z-40 md:static md:z-auto transition-[width] duration-200 shrink-0 overflow-hidden border-r border-glass/[0.18] ws-glass flex flex-col`}
       >
-        <div className="h-12 flex items-center gap-2 px-3 shrink-0">
-          <img src="/wolf-icon.png" alt="Nalu" className={`${logoClass} w-6 h-6 rounded-md`} />
-          <span className="text-sm font-semibold tracking-tight">Nalu</span>
+        <div className="ws-brand flex items-center gap-2 px-5 shrink-0">
+          <button aria-label="Nalu home" onClick={() => { newChat(); closeSidebarOnMobile() }}><img src={avatarWordmark} alt="nalu" /></button>
         </div>
 
         <div className="px-3 pb-2">
           <button
             onClick={() => { newChat(); closeSidebarOnMobile() }}
-            className="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm bg-glass/5 hover:bg-glass/10 transition-colors"
+            className="ws-new-chat w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors"
           >
             <Plus size={15} /> New chat
           </button>
@@ -2193,107 +2377,37 @@ export default function Workspace({ user, onLogout }: Props) {
           </div>
         </div>
 
-        {/* Nav — compact 2×2 tiles instead of a stack of full-width buttons */}
-        <nav className="grid grid-cols-2 gap-1.5 px-2 pb-2">
-          {NAV_ITEMS.map((item) => {
+        <nav className="ws-navigation" aria-label="Workspace sections">
+          {NAV_ITEMS.map(item => {
             const Icon = item.icon
-            const activeNav = view === item.view
-            return (
-              <button
-                key={item.view}
-                onClick={() => { setView(item.view); closeSidebarOnMobile() }}
-                className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] transition-colors ${
-                  activeNav ? 'bg-primary/[0.14] text-primary font-medium ring-1 ring-primary/25' : 'text-dim hover:bg-glass/[0.06] hover:text-ink'
-                }`}
-              >
-                <Icon size={15} className="shrink-0" />
-                <span className="truncate">{item.label}</span>
-              </button>
-            )
+            return <button key={item.view} aria-current={view === item.view ? 'page' : undefined}
+              onClick={() => { setView(item.view); closeSidebarOnMobile() }}>
+              <Icon size={17} strokeWidth={1.5}/><span>{item.label}</span>
+            </button>
           })}
         </nav>
 
         {view === 'chat' && (
           <>
-            {/* Projects — fold chats under a project. */}
-            <div className="px-2 pt-1">
-              <div className="flex items-center px-1 pb-1 text-[11px] uppercase tracking-wide text-dim">
-                <span>Projects</span>
-                <button
-                  onClick={() => setNewProjectName('')}
-                  title="New project"
-                  className="ml-auto rounded p-0.5 text-dim hover:bg-glass/10 hover:text-ink"
-                >
-                  <Plus size={13} />
-                </button>
-              </div>
-              {newProjectName !== null && (
-                <input
-                  autoFocus
-                  value={newProjectName}
-                  onChange={(e) => setNewProjectName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') createProject(newProjectName)
-                    if (e.key === 'Escape') setNewProjectName(null)
-                  }}
-                  onBlur={() => (newProjectName.trim() ? createProject(newProjectName) : setNewProjectName(null))}
-                  placeholder="Project name…"
-                  className="mt-1 w-full rounded-lg border border-glass/15 bg-glass/[0.05] px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-glass/30"
-                />
-              )}
-              {/* Each project is a folder; opening it reveals its chats nested inside. */}
-              {projects.map((p) => {
-                const projChats = chats.filter((c) => c.projectId === p.id).filter(matchesQuery)
-                const open = activeProjectId === p.id
-                return (
-                  <div key={p.id}>
-                    <div
-                      className={`group flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[13px] cursor-pointer ${
-                        open ? 'bg-glass/[0.07] text-ink' : 'text-dim hover:bg-glass/5'
-                      }`}
-                      onClick={() => setActiveProjectId(open ? null : p.id)}
-                    >
-                      <ChevronRight size={13} className={`shrink-0 text-dim transition-transform ${open ? 'rotate-90' : ''}`} />
-                      <FolderGit2 size={13} className="shrink-0 text-gold" />
-                      <span className="truncate flex-1">{p.name}</span>
-                      {!open && <span className="shrink-0 text-[10px] text-dim group-hover:hidden">{chats.filter((c) => c.projectId === p.id).length}</span>}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); deleteProject(p.id) }}
-                        className="hidden shrink-0 text-dim hover:text-ink group-hover:block"
-                        aria-label="Delete project"
-                      >
-                        <Trash2 size={11} />
-                      </button>
-                    </div>
-                    {open && (
-                      <div className="ml-2 mt-0.5 mb-1 space-y-0.5 border-l border-glass/[0.12] pl-1.5">
-                        {projChats.length === 0 ? (
-                          <div className="px-2 py-1 text-[11px] text-dim">Empty — “New chat” adds one here.</div>
-                        ) : (
-                          projChats.map(renderChatRow)
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
+            <div role="status" aria-label="Chat save status" className="px-3 pb-2 text-[11px] text-dim">
+              {saveState === 'saved' ? 'Saved to your account' : saveState === 'saving' ? 'Saving chats…' : saveState === 'loading' ? 'Loading saved chats…' : saveState === 'error' ? 'Chats need attention — keep this tab open.' : 'Waiting to sync your chats'}
+              {(saveState === 'pending' || saveState === 'error') && <button className="ml-2 underline hover:text-ink" onClick={retrySync}>Retry save</button>}
             </div>
-
-            {/* Chats not filed under any project. */}
+            {/* Every saved chat, including former project chats. */}
             <div className="flex-1 overflow-y-auto px-2 pb-2">
-              {unfiledChats.length > 0 && (
+              {filteredChats.length > 0 && (
                 <div className="px-1 pt-2 pb-1 text-[11px] uppercase tracking-wide text-dim">Chats</div>
               )}
-              {unfiledChats.length === 0 && projects.length === 0 && (
+              {filteredChats.length === 0 && (
                 <div className="px-2 py-3 text-xs text-dim">No chats yet.</div>
               )}
               {visibleChats.map(renderChatRow)}
-              {!query.trim() && unfiledChats.length > CHATS_PREVIEW && (
+              {!query.trim() && filteredChats.length > CHATS_PREVIEW && (
                 <button
                   onClick={() => setChatsExpanded((v) => !v)}
                   className="mt-0.5 flex w-full items-center gap-1 rounded-lg px-2 py-1.5 text-[12px] font-medium text-gold hover:bg-glass/[0.06]"
                 >
-                  {chatsExpanded ? <><ChevronUp size={13} /> Show less</> : <><ChevronDown size={13} /> Show all {unfiledChats.length} chats</>}
+                  {chatsExpanded ? <><ChevronUp size={13} /> Show less</> : <><ChevronDown size={13} /> Show all {filteredChats.length} chats</>}
                 </button>
               )}
             </div>
@@ -2303,7 +2417,7 @@ export default function Workspace({ user, onLogout }: Props) {
 
         <div className="border-t border-glass/[0.18] p-2 space-y-0.5">
           <button
-            onClick={() => setView('settings')}
+            onClick={() => { setView('settings'); closeSidebarOnMobile() }}
             className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[12px] transition-colors ${
               view === 'settings' ? 'bg-glass/10 text-ink' : 'text-dim hover:bg-glass/5'
             }`}
@@ -2314,7 +2428,7 @@ export default function Workspace({ user, onLogout }: Props) {
             href="/download.html" target="_blank" rel="noreferrer"
             className="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[12px] text-dim hover:bg-glass/5 transition-colors"
           >
-            <img src="/wolf-icon.png" alt="" className="w-3.5 h-3.5 shrink-0 object-contain" /> Download Nalu Desktop
+            <img src={avatarArtwork} alt="" className="w-5 h-5 rounded shrink-0 object-contain" /> Download Nalu Desktop
           </a>
           <a
             href="/privacy.html"
@@ -2342,16 +2456,17 @@ export default function Workspace({ user, onLogout }: Props) {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 flex flex-col min-w-0">
-        <div className="h-12 flex items-center gap-2 px-3 border-b border-glass/[0.18] shrink-0">
+      <main className="ws-main flex-1 flex flex-col min-w-0">
+        <div className="ws-topbar flex items-center gap-2 px-5 shrink-0">
           <button
             onClick={() => setSidebarOpen((v) => !v)}
-            className="w-8 h-8 rounded-md hover:bg-glass/10 flex items-center justify-center text-white"
+            className="w-8 h-8 rounded-md hover:bg-glass/10 flex items-center justify-center text-ink"
             aria-label="Toggle sidebar"
           >
             <PanelLeft size={16} />
           </button>
           <span className="truncate text-sm text-dim">{topBarTitle}</span>
+          {view === 'chat' && active && <button onClick={() => startRename(active)} aria-label="Rename current chat" title="Rename chat" className="shrink-0 rounded-md p-1.5 text-dim hover:bg-glass/10 hover:text-ink"><Pencil size={13} /></button>}
           <button
             onClick={toggleTheme}
             className="ml-auto flex shrink-0 items-center gap-1.5 rounded-lg border border-glass/[0.14] bg-glass/[0.06] px-2.5 py-1.5 text-xs text-dim hover:bg-glass/10 hover:text-ink transition-colors"
@@ -2363,6 +2478,7 @@ export default function Workspace({ user, onLogout }: Props) {
           </button>
           {view === 'chat' && (
             <div className="flex shrink-0 items-center gap-2">
+              <PlaygroundControls />
               {activeRepo ? (
                 <>
                   {changeCount > 0 && (
@@ -2442,6 +2558,13 @@ export default function Workspace({ user, onLogout }: Props) {
             creations={creations}
             onOpen={openCreation}
             streaming={streaming}
+            resultKey={studioResultKey}
+            onStop={stop}
+            feedback={!streaming && studioMessage?.role === 'assistant' && (studioMessage.clarify && !studioMessage.clarify.answered
+              ? <div className="ws-studio-feedback"><p>{studioMessage.content}</p><ClarifyBlock key={studioMessage.id || studioResultKey} questions={studioMessage.clarify.questions} onSubmit={answers => submitClarify(studioMessageIndex, answers, true)}/></div>
+              : studioTurn && studioMessage.content && !creations.some(c => c.key === studioResultKey)
+                ? <div className="ws-studio-feedback" role="alert"><p>{studioMessage.content}</p><span>Your brief and previous creations are saved. You can adjust the brief and try again.</span></div>
+                : null)}
             renderCreation={(c) => {
               // Render the creation's REAL interactive card (the same components
               // chat uses) so EVERY kind previews right inside the Studio.
@@ -2450,7 +2573,7 @@ export default function Workspace({ user, onLogout }: Props) {
               if (!m) return null
               if (m.design)
                 return (
-                  <CardErrorBoundary label="The design">
+                  <CardErrorBoundary label="The design" resetKey={m.design} previewHtml={typeof m.design === 'object' && 'html' in m.design && typeof m.design.html === 'string' ? m.design.html : undefined}>
                     <Suspense fallback={<MediaLoader kind="design" />}>
                       <DesignArtifactCard
                         art={m.design}
@@ -2470,7 +2593,11 @@ export default function Workspace({ user, onLogout }: Props) {
               if (m.deck)
                 return (
                   <CardErrorBoundary label="The deck">
-                    <Suspense fallback={<MediaLoader kind="slides" />}><SlidesCard data={m.deck} /></Suspense>
+                    <Suspense fallback={<div role="status" className="flex items-center gap-2 py-6 text-sm text-dim"><Loader2 size={18} className="motion-safe:animate-spin" />Opening deck…</div>}>
+                      <SlidesCard data={m.deck} onUpdate={deck => setChats(cs => cs.map(ch =>
+                        ch.id === c.chatId ? { ...ch, messages: ch.messages.map((mm, k) => k === c.mi ? { ...mm, deck } : mm) } : ch
+                      ))} />
+                    </Suspense>
                   </CardErrorBoundary>
                 )
               if (m.sheet)
@@ -2498,20 +2625,20 @@ export default function Workspace({ user, onLogout }: Props) {
               }
               return null
             }}
-            onGenerate={(prompt) => {
+            onGenerate={(prompt, toolKey, target) => {
               // Stay in the Studio so the design renders here first; it also lands in chat.
               closeSidebarOnMobile()
-              void send(prompt, { keepView: true })
+              void send(prompt, { keepView: true, studioKind: toolKey, studioTarget: target })
             }}
           />
         )}
         {view === 'map' && <MapPanel />}
+        {view === 'memory' && IS_WEB_APP && <MemoryPanel onOpenChat={(id) => { setActiveId(id); setView('chat') }} />}
         {view === 'agents' && (
           <Suspense fallback={<div className="flex flex-1 items-center justify-center text-sm text-dim"><Loader2 size={18} className="mr-2 animate-spin" /> Loading AutoPilot…</div>}>
-            <AgentsPanel />
+            <div className="ws-feature-shell"><WorkspaceIntro compact label="AutoPilot" title="Leave it with me." description="Plan the steps, connect your tools, and follow your work as it happens."/><AgentsPanel /></div>
           </Suspense>
         )}
-        {view === 'projects' && <ProjectsPanel />}
         {view === 'skills' && <SkillsPanel />}
         {view === 'automations' && <AutomationsPanel />}
         {view === 'settings' && (
@@ -2520,12 +2647,14 @@ export default function Workspace({ user, onLogout }: Props) {
 
         {view === 'chat' &&
           (messages.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center px-4">
-              <img src="/wolf-icon.png" alt="Nalu" className="w-12 h-12 mb-4 object-contain drop-shadow" />
-              <h1 className="text-2xl sm:text-3xl font-light mb-8 text-center">
-                {greeting}
-              </h1>
-              <div className="w-full max-w-2xl">
+            <div className="ws-chat-home">
+              <div className="ws-chat-welcome">
+                <NaluAvatar size={286} />
+                <span className="ws-eyebrow"><i />Right here with you</span>
+                <h1>I'm right here.</h1>
+                <p>A thought, a question, a new idea.<br/>A little help for whatever comes next.</p>
+              </div>
+              <div className="ws-home-composer w-full max-w-2xl">
                 <Composer
                   input={input}
                   setInput={setInput}
@@ -2544,29 +2673,39 @@ export default function Workspace({ user, onLogout }: Props) {
                   
                 />
               </div>
+              <div className="ws-chat-suggestions" aria-label="Ways to begin">
+                <button onClick={() => { setInput('Help me plan my day.'); taRef.current?.focus() }}><StickyNote size={18}/><span>Plan my day<small>A little room to think</small></span></button>
+                <button onClick={() => setView('studio')}><Palette size={18}/><span>Make something<small>Bring an idea to life</small></span></button>
+                <button onClick={() => setView('agents')}><Bot size={18}/><span>Leave it with Nalu<small>Your work, moving forward</small></span></button>
+              </div>
             </div>
           ) : (
             <>
-              <div ref={scrollRef} className="flex-1 overflow-y-auto">
+              <div ref={scrollRef} onScroll={onChatScroll} className="ws-chat-thread flex-1 overflow-y-auto overscroll-contain">
                 <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+                  {attachmentError && <p role="alert" className="rounded-xl border border-glass/20 bg-panel/80 p-3 text-sm text-ink">{attachmentError}</p>}
                   {messages.map((m, i) => (
                     <div
                       key={i}
                       ref={(el) => {
                         msgRefs.current[i] = el
                       }}
-                      className={`scroll-mt-20 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                      className={`ws-chat-message scroll-mt-20 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
                       {m.role === 'user' ? (
                         // Your messages render as an iMessage-style blue bubble on the
                         // right — no avatar — so it's obvious which side is you.
-                        <div className="max-w-[78%] rounded-2xl rounded-br-md bg-gradient-to-b from-[#3b82f6] to-[#2f6fed] px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-white shadow-sm">
+                        <div dir="auto" className="ws-user-message max-w-[78%] rounded-2xl rounded-br-md bg-gradient-to-b from-[#3b82f6] to-[#2f6fed] px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-white shadow-sm">
                           {m.content}
+                          <MessageAttachments attachments={m.attachments || (i === messages.findIndex(message => message.role === 'user') ? active?.attachments || [] : [])} />
                         </div>
                       ) : (
                         // Nalu's answer: full-width, left-aligned, no avatar.
                         <div className="w-full min-w-0">
-                          <div className="text-xs text-dim mb-1">Nalu</div>
+                          <div className="ws-assistant-identity">
+                            {streaming && i === messages.length - 1 ? <NaluAvatar size={42} phase="thinking"/> : <img src={avatarArtwork} alt=""/>}
+                            <span>Nalu<small>{streaming && i === messages.length - 1 ? 'Thinking with you' : 'Here to help'}</small></span>
+                          </div>
                           <AssistantThink reasoning={m.reasoning} isLive={streaming && i === messages.length - 1}>
                           <>
                             {m.loading ? (
@@ -2575,14 +2714,17 @@ export default function Workspace({ user, onLogout }: Props) {
                               // Render full Markdown LIVE while streaming, so the
                               // styling appears as the text arrives (rAF-throttled
                               // upstream keeps it smooth). A subtle caret trails it.
-                              <div className={streaming && i === messages.length - 1 ? 'streaming-caret' : undefined}>
+                              <div className={streaming && i === messages.length - 1 ? 'streaming-caret nalu-stream-fade' : undefined}>
                                 <Markdown>{cleanForDisplay(m.content)}</Markdown>
+                                {m.clarify && !m.clarify.answered && !streaming && (
+                                  <ClarifyBlock questions={m.clarify.questions} onSubmit={(ans) => submitClarify(i, ans)} />
+                                )}
                               </div>
                             ) : !m.sheet && !m.doc && !m.video && !m.cad && !m.design && !m.deck && streaming && i === messages.length - 1 ? (
                               // Waiting for the first token — the Nalu mark breathes
                               // with three soft dots while waiting for the first token.
                               <div className="flex items-center gap-2 py-0.5">
-                                <img src="/wolf-icon.png" alt="" className={`${logoClass} w-5 h-5 nalu-think`} />
+                                <img src={avatarArtwork} alt="" className="w-7 h-7 rounded-lg nalu-think" />
                                 <WolfWord className="text-[13px]" />
                               </div>
                             ) : null}
@@ -2604,10 +2746,19 @@ export default function Workspace({ user, onLogout }: Props) {
                                 </Suspense>
                               </CardErrorBoundary>
                             )}
+                            {m.email && (
+                              <CardErrorBoundary label="The email">
+                                <Suspense fallback={<MediaLoader kind="doc" />}>
+                                  <EmailCard data={m.email} />
+                                </Suspense>
+                              </CardErrorBoundary>
+                            )}
                             {m.deck && (
                               <CardErrorBoundary label="The deck">
-                                <Suspense fallback={<MediaLoader kind="slides" />}>
-                                  <SlidesCard data={m.deck} />
+                                <Suspense fallback={<div role="status" className="flex items-center gap-2 py-6 text-sm text-dim"><Loader2 size={18} className="motion-safe:animate-spin" />Opening deck…</div>}>
+                                  <SlidesCard data={m.deck} onUpdate={deck => setChats(cs => cs.map(ch =>
+                                    ch.id === activeId ? { ...ch, messages: ch.messages.map((mm, k) => k === i ? { ...mm, deck } : mm) } : ch
+                                  ))} />
                                 </Suspense>
                               </CardErrorBoundary>
                             )}
@@ -2626,7 +2777,7 @@ export default function Workspace({ user, onLogout }: Props) {
                               </CardErrorBoundary>
                             )}
                             {m.design && (
-                              <CardErrorBoundary label="The design">
+                              <CardErrorBoundary label="The design" resetKey={m.design} previewHtml={typeof m.design === 'object' && 'html' in m.design && typeof m.design.html === 'string' ? m.design.html : undefined}>
                                 <Suspense fallback={<MediaLoader kind="design" />}>
                                   <DesignArtifactCard
                                     art={m.design}
@@ -2663,13 +2814,43 @@ export default function Workspace({ user, onLogout }: Props) {
                             </div>
                           </>
                           </AssistantThink>
+                          {/* Message actions — Copy the answer + Retry (regenerate).
+                              Hidden while THIS message is still streaming or loading
+                              a media card; retry is the recovery path after an error
+                              or a dropped stream. */}
+                          {!m.loading && !(streaming && i === messages.length - 1) && (typeof m.content === 'string' && (m.content.trim().length > 0 || !!m.id)) && (
+                            <div className="mt-1.5 flex items-center gap-1 text-dim">
+                              <button
+                                onClick={() => {
+                                  const t = cleanForDisplay(typeof m.content === 'string' ? m.content : '')
+                                  navigator.clipboard?.writeText(t)
+                                    .then(() => { setCopiedMsg(i); setTimeout(() => setCopiedMsg((c) => (c === i ? null : c)), 1500) })
+                                    .catch(() => {})
+                                }}
+                                title="Copy"
+                                aria-label="Copy message"
+                                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] hover:bg-glass/10 hover:text-ink"
+                              >
+                                {copiedMsg === i ? <><Check size={12} className="text-emerald-400" /> Copied</> : <><Copy size={12} /> Copy</>}
+                              </button>
+                              <button
+                                onClick={() => regenerate(i)}
+                                disabled={streaming}
+                                title="Regenerate this response"
+                                aria-label="Retry"
+                                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] hover:bg-glass/10 hover:text-ink disabled:opacity-40"
+                              >
+                                <RotateCw size={12} /> Retry
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
                   ))}
                 </div>
               </div>
-              <div className="border-t border-glass/[0.18] px-4 py-3">
+              <div className="ws-chat-composer-dock px-4 py-3">
                 <div className="max-w-3xl mx-auto">
                   <BrandBar />
                   <Composer
@@ -2700,6 +2881,54 @@ export default function Workspace({ user, onLogout }: Props) {
   )
 }
 
+// Interactive multiple-choice clarifying questions rendered inside an assistant
+// message before a Studio build. The user taps answers (single- or multi-select)
+// and hits Build; the composed answers resume the paused build. They can also skip
+// to let Nalu use its best judgment.
+function ClarifyBlock({ questions, onSubmit }: { questions: ClarifyQ[]; onSubmit: (answers: { q: string; a: string }[]) => void }) {
+  const [sel, setSel] = useState<Record<number, string[]>>({})
+  const [custom, setCustom] = useState<Record<number, string>>({})
+  const toggle = (qi: number, opt: string, multi?: boolean) => {
+    setSel((s) => {
+      const cur = s[qi] || []
+      if (multi) return { ...s, [qi]: cur.includes(opt) ? cur.filter((o) => o !== opt) : [...cur, opt] }
+      return { ...s, [qi]: cur.includes(opt) ? [] : [opt] } // single-select toggles
+    })
+  }
+  const build = () => onSubmit(questions.map((q, qi) => ({ q: q.q, a: custom[qi]?.trim() || (sel[qi] || []).join(', ') })))
+  const allAnswered = questions.every((_, qi) => custom[qi]?.trim() || sel[qi]?.length)
+  return (
+    <div className="mt-2 space-y-3 rounded-xl border border-glass/[0.12] bg-glass/[0.03] p-3">
+      {questions.map((q, qi) => (
+        <div key={qi}>
+          <div className="mb-1.5 text-[13px] font-medium text-ink">{q.q}</div>
+          <div className="flex flex-wrap gap-1.5">
+            {q.options.map((opt, oi) => {
+              const on = (sel[qi] || []).includes(opt)
+              return (
+                <button key={oi} onClick={() => toggle(qi, opt, q.multi)}
+                  className={`rounded-full border px-3 py-1 text-[12.5px] transition-colors ${on ? 'border-accent/60 bg-accent/20 text-ink' : 'border-glass/15 bg-glass/[0.04] text-dim hover:border-glass/30 hover:text-ink'}`}>
+                  {opt}
+                </button>
+              )
+            })}
+            {q.multi && <span className="self-center text-[10px] text-dim">pick any</span>}
+          </div>
+          <input aria-label={`Your answer: ${q.q}`} value={custom[qi] || ''} onChange={e => setCustom(c => ({ ...c, [qi]: e.target.value }))}
+            placeholder="Or write your own answer" className="mt-2 w-full rounded-md border border-glass/15 bg-transparent px-2.5 py-2 text-[13px] text-ink placeholder:text-dim" />
+        </div>
+      ))}
+      <div className="flex items-center gap-2 pt-0.5">
+        <button onClick={build} disabled={!allAnswered}
+          className="rounded-lg bg-gradient-to-r from-[#c9a86a] to-accent px-3.5 py-1.5 text-[12.5px] font-semibold text-[#15170f] hover:brightness-110 disabled:opacity-40">
+          Build with these answers
+        </button>
+        <button onClick={() => onSubmit([])} className="text-[12px] text-dim hover:text-ink">Skip, use best judgment</button>
+      </div>
+    </div>
+  )
+}
+
 // ---- composer ------------------------------------------------------------
 
 // Inline drawer under the ACTIVE chat in the left rail: uploaded attachments
@@ -2712,6 +2941,7 @@ const ARTIFACT_ICON: Record<string, LucideIcon> = {
   design: Palette,
   cad: Box,
   video: Film,
+  image: ImageIcon,
 }
 function ChatDrawer({
   attachments,
@@ -2751,9 +2981,7 @@ function ChatDrawer({
     return new Blob([a.text || ''], { type: 'text/plain' })
   }
   const open = (a: Attachment) => {
-    const url = URL.createObjectURL(blobFor(a))
-    window.open(url, '_blank', 'noopener')
-    setTimeout(() => URL.revokeObjectURL(url), 60000)
+    openArtifactBlob(blobFor(a), a.name)
   }
   const download = (a: Attachment) => {
     const url = URL.createObjectURL(blobFor(a))
@@ -2870,7 +3098,7 @@ function Composer({
   onStop: () => void
   onKey: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
   taRef: React.RefObject<HTMLTextAreaElement>
-  onAttach: (files: FileList) => void
+  onAttach: (files: FileList | File[]) => void
   attaching: boolean
   attachments: Attachment[]
   onRemoveAttachment: (id: string) => void
@@ -2882,29 +3110,80 @@ function Composer({
   const [showTools, setShowTools] = useState(false)
   // Voice dictation via the browser Speech API — transcribes into the composer.
   const [listening, setListening] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
   const recRef = useRef<{ stop: () => void } | null>(null)
-  const toggleVoice = () => {
-    const SR = (window as unknown as { SpeechRecognition?: new () => any; webkitSpeechRecognition?: new () => any }).SpeechRecognition
-      || (window as unknown as { webkitSpeechRecognition?: new () => any }).webkitSpeechRecognition
-    if (!SR) return
-    if (listening) { try { recRef.current?.stop() } catch { /* noop */ } return }
-    const rec = new SR()
-    rec.lang = 'en-US'
-    rec.interimResults = true
-    rec.continuous = false
-    const base = input
-    rec.onresult = (e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => {
-      let txt = ''
-      for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript
-      setInput((base ? base + ' ' : '') + txt)
-    }
-    rec.onend = () => { setListening(false); recRef.current = null }
-    rec.onerror = () => { setListening(false); recRef.current = null }
-    recRef.current = rec
-    setListening(true)
-    try { rec.start() } catch { setListening(false) }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mediaRef = useRef<{ recorder: any; stream: MediaStream } | null>(null)
+  // Keep the textarea height in sync when `input` changes programmatically (voice
+  // dictation, or reset after send) — onChange only fires for user typing/paste.
+  useEffect(() => {
+    const t = taRef.current
+    if (!t) return
+    t.style.height = 'auto'
+    t.style.height = Math.min(t.scrollHeight, 160) + 'px'
+  }, [input, taRef])
+  // Voice → text. Prefer the browser's LIVE recognition (Chrome/Edge/Safari — works
+  // instantly, no server needed); if the browser lacks it (e.g. Firefox), fall back
+  // to recording + server Whisper (/api/transcribe, which upgrades to real Whisper
+  // when a GROQ_API_KEY/OpenAI key is set). Tap to start, tap again to stop.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const startSR = (SR: new () => any): boolean => {
+    try {
+      const rec = new SR()
+      rec.lang = 'en-US'; rec.interimResults = true; rec.continuous = false
+      const base = taRef.current?.value || input
+      rec.onresult = (e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => {
+        let txt = ''
+        for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript
+        setInput((base ? base.trimEnd() + ' ' : '') + txt)
+      }
+      rec.onend = () => { setListening(false); recRef.current = null }
+      rec.onerror = () => { setListening(false); recRef.current = null }
+      recRef.current = rec; setListening(true); rec.start()
+      return true
+    } catch { setListening(false); return false }
   }
-  const voiceSupported = typeof window !== 'undefined' && !!((window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition || (window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition)
+  const toggleVoice = async () => {
+    if (listening) {
+      try { recRef.current?.stop() } catch { /* noop */ }
+      try { mediaRef.current?.recorder?.stop() } catch { /* noop */ }
+      return
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (SR && startSR(SR)) return
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const MR = (window as any).MediaRecorder
+    if (!MR || !navigator.mediaDevices?.getUserMedia) return
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MR(stream)
+      const chunks: Blob[] = []
+      recorder.ondataavailable = (e: { data: Blob }) => { if (e.data && e.data.size) chunks.push(e.data) }
+      recorder.onstop = async () => {
+        setListening(false)
+        stream.getTracks().forEach((t) => t.stop())
+        mediaRef.current = null
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' })
+        if (blob.size < 800) return // too short to be speech
+        setTranscribing(true)
+        try {
+          const dataUrl: string = await new Promise((res) => { const r = new FileReader(); r.onloadend = () => res(String(r.result)); r.readAsDataURL(blob) })
+          const resp = await fetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audio: dataUrl, mime: blob.type }) })
+          const j = await resp.json().catch(() => ({}))
+          if (j.text) setInput((taRef.current?.value?.trim() || input.trim() ? (taRef.current?.value || input).trimEnd() + ' ' : '') + j.text)
+        } catch { /* transcription failed silently */ } finally { setTranscribing(false) }
+      }
+      mediaRef.current = { recorder, stream }
+      setListening(true)
+      recorder.start()
+    } catch { setListening(false) }
+  }
+  const voiceSupported = typeof window !== 'undefined' && typeof navigator !== 'undefined' && (
+    !!(window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition ||
+    !!(window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition ||
+    (!!navigator.mediaDevices?.getUserMedia && typeof (window as unknown as { MediaRecorder?: unknown }).MediaRecorder !== 'undefined')
+  )
   const [dragOver, setDragOver] = useState(false)
   // Hide the chip when the user ×'d out of it for this exact prompt — editing
   // the text brings it back (the stored dismissal no longer matches).
@@ -2924,7 +3203,7 @@ function Composer({
         setDragOver(false)
         if (e.dataTransfer?.files?.length) onAttach(e.dataTransfer.files)
       }}
-      className={`relative rounded-2xl border bg-glass/[0.11] backdrop-blur-2xl px-3 py-2.5 transition-colors ${dragOver ? 'border-accent ring-2 ring-accent/40' : intent ? 'border-accent/55 shadow-[0_0_0_1px_rgba(175,140,86,0.25)]' : 'border-glass/[0.14] focus-within:border-glass/20'}`}
+      className={`ws-composer relative rounded-2xl border bg-glass/[0.11] backdrop-blur-2xl px-3 py-2.5 transition-colors ${dragOver ? 'border-accent ring-2 ring-accent/40' : intent ? 'border-accent/55 shadow-[0_0_0_1px_rgba(175,140,86,0.25)]' : 'border-glass/[0.14] focus-within:border-glass/20'}`}
     >
       {dragOver && (
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent/70 bg-panel/80 backdrop-blur-sm">
@@ -3019,51 +3298,49 @@ function Composer({
       {voiceSupported && (
         <button
           onClick={toggleVoice}
-          title={listening ? 'Listening… tap to stop' : 'Dictate with your voice'}
-          className={`mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg hover:bg-glass/15 ${listening ? 'text-gold animate-pulse' : 'text-dim hover:text-ink'}`}
+          disabled={transcribing}
+          title={transcribing ? 'Transcribing…' : listening ? 'Recording… tap to transcribe' : 'Dictate with your voice (Whisper)'}
+          className={`mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg hover:bg-glass/15 disabled:opacity-60 ${listening ? 'text-red-400 animate-pulse' : transcribing ? 'text-gold' : 'text-dim hover:text-ink'}`}
           aria-label="Voice input"
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="5" y1="9" x2="5" y2="15" />
-            <line x1="9.5" y1="5.5" x2="9.5" y2="18.5" />
-            <line x1="14" y1="8" x2="14" y2="16" />
-            <line x1="18.5" y1="10.5" x2="18.5" y2="13.5" />
-          </svg>
+          {transcribing ? <Loader2 size={16} className="animate-spin" /> : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="5" y1="9" x2="5" y2="15" />
+              <line x1="9.5" y1="5.5" x2="9.5" y2="18.5" />
+              <line x1="14" y1="8" x2="14" y2="16" />
+              <line x1="18.5" y1="10.5" x2="18.5" y2="13.5" />
+            </svg>
+          )}
         </button>
       )}
-      {/* Composer with an inline highlight backdrop: typing think / ultrathink /
-          packmind lights up gold/blue so you SEE the thinking tier engage. */}
+      {/* Plain, native textarea: its own text is visible, so copy/paste, backspace,
+          selection and scrolling all "just work". The active thinking tier still shows
+          in the badge to the right. Auto-grows to a cap, then scrolls inside itself. */}
       <div className="relative min-w-0 flex-1">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words text-[13.5px] py-1 leading-normal text-ink"
-        >
-          {thinkSegments(input).map((s, i) =>
-            s.word ? (
-              <span
-                key={`${s.word}-${i}`}
-                className="think-word"
-                style={{ color: THINK_COLORS[s.word!], fontFamily: THINK_FONT, fontStyle: 'italic', fontWeight: 500 }}
-              >{s.t}</span>
-            ) : (
-              <span key={i}>{s.t}</span>
-            ),
-          )}
-        </div>
         <textarea
           ref={taRef}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKey}
-          rows={1}
-          placeholder="Ask Nalu anything…"
-          className="relative w-full bg-transparent text-transparent caret-ink outline-none resize-none text-[13.5px] placeholder:text-dim max-h-40 py-1 leading-normal"
-          style={{ height: 'auto' }}
-          onInput={(e) => {
+          onChange={(e) => {
+            setInput(e.target.value)
             const t = e.currentTarget
             t.style.height = 'auto'
             t.style.height = Math.min(t.scrollHeight, 160) + 'px'
           }}
+          onKeyDown={onKey}
+          onPaste={(e) => {
+            // Paste images / videos / any file straight from the clipboard (e.g. a
+            // screenshot, or a copied photo/video) → attach it. Plain text still pastes.
+            const dt = e.clipboardData
+            if (!dt) return
+            const files: File[] = []
+            if (dt.files && dt.files.length) for (const f of Array.from(dt.files)) files.push(f)
+            else if (dt.items) for (const it of Array.from(dt.items)) { if (it.kind === 'file') { const f = it.getAsFile(); if (f) files.push(f) } }
+            if (files.length) { e.preventDefault(); onAttach(files) }
+          }}
+          rows={1}
+          placeholder="Ask Nalu anything…  (paste images or videos too)"
+          className="w-full resize-none overflow-y-auto bg-transparent text-ink caret-ink outline-none text-[13.5px] placeholder:text-dim max-h-40 py-1 leading-normal [scrollbar-width:thin]"
+          style={{ height: 'auto' }}
         />
       </div>
       {thinkLevel > 0 && (

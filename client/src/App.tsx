@@ -1,60 +1,29 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import NavBar from './components/NavBar'
 import HeroSection from './components/HeroSection'
 import AuthPanel from './components/AuthPanel'
-import BallAndLine from './components/BallAndLine'
-import WolfHead from './components/WolfHead'
+import NaluChase from './components/NaluChase'
 import PlatformSection from './components/PlatformSection'
 import SolutionsSection from './components/SolutionsSection'
 import PricingSection from './components/PricingSection'
 import LearnSection from './components/LearnSection'
 import LoadingScreen from './components/LoadingScreen'
 import ControlScreenDemo from './components/ControlScreenDemo'
-import Workspace from './components/workspace/Workspace'
 import { useAuth } from './components/AuthProvider'
 
+const Workspace = lazy(() => import('./components/workspace/Workspace'))
+
 const TOTAL_PAGES = 5
-const LOADING_MIN_MS = 1200
-
-const PRELOAD_IMAGES = [
-  '/images/wolf-landscape.png',
-  '/images/bg-hills-teal.png',
-  '/images/bg-beach-rocks.png',
-  '/images/bg-meadow-sunset.png',
-  '/images/bg-sandy-beach.png',
-  '/nalu-logo.png',
-]
-
 export default function App() {
   const { user, signOut } = useAuth()
   const [activeIndex, setActiveIndex] = useState(0)
   const [direction, setDirection] = useState(0)
-  const [isLoading, setIsLoading] = useState(true)
+  const [playgroundReady, setPlaygroundReady] = useState(false)
   const [controlMode, setControlMode] = useState(false)
 
-  useEffect(() => {
-    const start = performance.now()
-    let settled = 0
-    const total = PRELOAD_IMAGES.length
+  useEffect(() => { setPlaygroundReady(!user) }, [user])
 
-    const finish = () => {
-      const elapsed = performance.now() - start
-      const remaining = Math.max(0, LOADING_MIN_MS - elapsed)
-      setTimeout(() => setIsLoading(false), remaining)
-    }
-
-    PRELOAD_IMAGES.forEach((src) => {
-      const img = new Image()
-      const done = () => {
-        settled += 1
-        if (settled === total) finish()
-      }
-      img.onload = done
-      img.onerror = done
-      img.src = src
-    })
-  }, [])
   const isAnimating = useRef(false)
   const touchStartX = useRef(0)
   const touchStartY = useRef(0)
@@ -68,6 +37,7 @@ export default function App() {
   }, [activeIndex])
 
   useEffect(() => {
+    if (user) return
     let accumulated = 0
     let timeout: ReturnType<typeof setTimeout>
     const threshold = 50
@@ -102,10 +72,11 @@ export default function App() {
     }
 
     window.addEventListener('wheel', handleWheel, { passive: false })
-    return () => window.removeEventListener('wheel', handleWheel)
-  }, [activeIndex, goTo])
+    return () => { window.removeEventListener('wheel', handleWheel); clearTimeout(timeout) }
+  }, [activeIndex, goTo, user])
 
   useEffect(() => {
+    if (user) return
     const handleTouchStart = (e: TouchEvent) => {
       touchStartX.current = e.touches[0].clientX
       touchStartY.current = e.touches[0].clientY
@@ -125,7 +96,7 @@ export default function App() {
       window.removeEventListener('touchstart', handleTouchStart)
       window.removeEventListener('touchend', handleTouchEnd)
     }
-  }, [activeIndex, goTo])
+  }, [activeIndex, goTo, user])
 
   const handleSetActiveIndex = useCallback((index: number) => {
     goTo(index)
@@ -151,17 +122,17 @@ export default function App() {
 
   // Signed in → the Nalu (Codex-style) workspace. Signed out → the landing pages.
   if (user) {
-    return <Workspace user={user} onLogout={signOut} />
+    return <Suspense fallback={<LoadingScreen />}><Workspace key={user.id} user={user} onLogout={signOut} /></Suspense>
   }
 
   return (
     <>
-      <AnimatePresence>{isLoading && <LoadingScreen />}</AnimatePresence>
       <motion.main
         className="h-screen bg-background relative overflow-hidden"
-        initial={{ opacity: 0, scale: 1.04 }}
-        animate={{ opacity: isLoading ? 0 : 1, scale: isLoading ? 1.04 : 1 }}
-        transition={{ duration: 0.9, ease: [0.22, 0.61, 0.36, 1], delay: isLoading ? 0 : 0.55 }}
+        initial={false}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.2 }}
+        onAnimationComplete={() => setPlaygroundReady(true)}
       >
       <div className="absolute top-0 left-0 right-0 z-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
         <NavBar
@@ -212,15 +183,13 @@ export default function App() {
         ))}
       </div>
 
-        <a
-          href="/privacy.html"
-          className="absolute bottom-5 right-5 z-20 text-[11px] text-nav-text/70 hover:text-primary transition-colors"
-        >
-          Privacy
-        </a>
+        <nav aria-label="Policies" className="absolute bottom-5 right-5 z-20 flex gap-4 rounded-full bg-surface/95 px-3 py-1.5 text-[11px] text-nav-text">
+          <a href="/sms.html" className="hover:text-primary">Messaging</a>
+          <a href="/privacy.html" className="hover:text-primary">Privacy</a>
+        </nav>
 
-        <WolfHead />
-        <BallAndLine />
+        {/* Start stalking after the page is visible, so the opening pounce is seen. */}
+        {playgroundReady && <NaluChase />}
         <AnimatePresence>
           {controlMode && (
             <ControlScreenDemo

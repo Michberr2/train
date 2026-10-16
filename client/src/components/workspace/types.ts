@@ -8,7 +8,13 @@ export type DesignKind = 'webpage' | 'poster' | 'canvas' | 'palette' | 'brand' |
 // webpage + poster + motion + game + board are self-contained-HTML artifacts
 // (DesignCard). motion is a looping animated "HyperFrame"; game is a playable
 // PlayCanvas game; board is a photo-breakdown executive presentation board.
-export type WebpageArt = { kind: 'webpage' | 'poster' | 'motion' | 'game' | 'board'; html: string; name?: string; truncated?: boolean }
+export type WebsiteQuality = { runtime?: {
+  status: 'passed' | 'partial' | 'failed' | 'unavailable'
+  widths: number[]
+  checks: { name: string; width: number; passed: boolean; detail?: string }[]
+  limitations: string[]
+} }
+export type WebpageArt = { kind: 'webpage' | 'poster' | 'motion' | 'game' | 'board'; html: string; name?: string; truncated?: boolean; quality?: WebsiteQuality; motion?: import('./motionFrame').MotionSpec }
 export type CarouselSlide = { kind: 'cover' | 'point' | 'cta'; badge?: string; headline: string; sub?: string; body?: string[]; img?: string }
 export type CarouselArt = {
   kind: 'carousel'; name?: string; platform?: string; ratio?: string; handle?: string

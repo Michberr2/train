@@ -1,3 +1,4 @@
+import Scenery from './Scenery'
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { TrendingUp, Shield, Zap } from 'lucide-react'
@@ -47,16 +48,13 @@ export default function LearnSection() {
 
   return (
     <div className="relative h-screen w-full flex flex-col">
-      <div
-        className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-        style={{ backgroundImage: 'url(/images/bg-sandy-beach.png)' }}
-      />
+      <Scenery src="/images/bg-sandy-beach.png" />
 
       <div className="h-28 md:h-32 flex-shrink-0" />
 
       <div className="relative z-10 flex-1 flex flex-col items-center md:justify-center w-full max-w-5xl mx-auto px-4 sm:px-6 pb-8 overflow-y-auto scrollbar-hide">
         <motion.div
-          className="text-center mb-8 md:mb-12"
+          className="scenery-caption text-center mb-8 md:mb-12"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94] }}
@@ -64,7 +62,7 @@ export default function LearnSection() {
           <h1 className="text-3xl md:text-4xl lg:text-5xl font-light text-white mb-2 tracking-tight drop-shadow-lg">
             Learn about Nalu
           </h1>
-          <p className="text-sm text-white/80 font-light drop-shadow">An AI that helps anyone build AI</p>
+          <p className="text-sm text-white font-light drop-shadow">An AI that helps anyone build AI</p>
         </motion.div>
 
         <div className="w-full max-w-4xl bg-white/90 dark:bg-white/95 backdrop-blur-xl rounded-2xl p-6 md:p-10 shadow-xl flex-shrink-0">
@@ -79,7 +77,7 @@ export default function LearnSection() {
                 className={`relative px-5 py-3 min-h-[44px] text-base md:text-lg transition-colors rounded-xl ${
                   activeTab === tab.key
                     ? 'text-gray-900 font-normal'
-                    : 'text-gray-400 hover:text-gray-900 font-light'
+                    : 'text-gray-600 hover:text-gray-900 font-light'
                 }`}
               >
                 {tab.label}
@@ -106,7 +104,7 @@ export default function LearnSection() {
                 exit={{ opacity: 0, y: -12 }}
                 transition={{ duration: 0.3, ease: 'easeOut' }}
               >
-                <p className="text-base md:text-lg text-gray-500 leading-relaxed text-center max-w-2xl mx-auto font-light">
+                <p className="text-base md:text-lg text-gray-600 leading-relaxed text-center max-w-2xl mx-auto font-light">
                   Nalu is the AI that helps you build AI. Free in the browser, powerful on the desktop, designed for people with no ML background.
                 </p>
 
@@ -144,7 +142,7 @@ export default function LearnSection() {
                         <Icon className="w-5 h-5 text-blue-500" />
                       </div>
                       <h3 className="text-sm font-medium text-gray-900 mb-2 tracking-tight">{title}</h3>
-                      <p className="text-xs text-gray-500 leading-relaxed font-light">{body}</p>
+                      <p className="text-xs text-gray-600 leading-relaxed font-light">{body}</p>
                     </motion.div>
                   ))}
                 </motion.div>
@@ -162,7 +160,7 @@ export default function LearnSection() {
                 exit={{ opacity: 0, y: -12 }}
                 transition={{ duration: 0.3, ease: 'easeOut' }}
               >
-                <p className="text-sm md:text-base text-gray-400 leading-relaxed text-center font-light">
+                <p className="text-sm md:text-base text-gray-600 leading-relaxed text-center font-light">
                   Foundational reading that shaped how Nalu helps anyone build AI.
                 </p>
 
@@ -185,8 +183,8 @@ export default function LearnSection() {
                         <h3 className="text-sm font-medium text-gray-900 mb-1 group-hover:text-blue-500 transition-colors tracking-tight">
                           {book.title}
                         </h3>
-                        <p className="text-xs text-gray-500 mb-1.5 font-light">{book.author}</p>
-                        <p className="text-[11px] text-gray-400 font-light tracking-wide">{book.readTime}</p>
+                        <p className="text-xs text-gray-600 mb-1.5 font-light">{book.author}</p>
+                        <p className="text-[11px] text-gray-600 font-light tracking-wide">{book.readTime}</p>
                       </div>
                     </motion.div>
                   ))}
@@ -205,7 +203,7 @@ export default function LearnSection() {
                 exit={{ opacity: 0, y: -12 }}
                 transition={{ duration: 0.3, ease: 'easeOut' }}
               >
-                <p className="text-base md:text-lg text-gray-500 leading-relaxed text-center max-w-xl mx-auto font-light">
+                <p className="text-base md:text-lg text-gray-600 leading-relaxed text-center max-w-xl mx-auto font-light">
                   Our mission is simple: put the power to build AI in the hands of anyone with an idea, not just researchers.
                 </p>
 
@@ -224,7 +222,7 @@ export default function LearnSection() {
                       className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200/60 text-center"
                     >
                       <h3 className="text-sm font-medium text-gray-900 mb-3 tracking-tight">{card.title}</h3>
-                      <p className="text-xs text-gray-500 leading-relaxed font-light">{card.body}</p>
+                      <p className="text-xs text-gray-600 leading-relaxed font-light">{card.body}</p>
                     </motion.div>
                   ))}
                 </motion.div>

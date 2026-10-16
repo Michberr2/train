@@ -1,8 +1,17 @@
 {
-  "buildCommand": "cd client && npm install && npm run build",
+  "buildCommand": "npm run build",
   "outputDirectory": "client/dist",
   "framework": null,
   "functions": {
+    "api/connect.ts": {
+      "maxDuration": 60
+    },
+    "api/oauth.ts": {
+      "maxDuration": 60
+    },
+    "api/connection-media.ts": {
+      "maxDuration": 300
+    },
     "api/chat.ts": {
       "maxDuration": 300
     },
@@ -19,7 +28,10 @@
       "maxDuration": 300
     },
     "api/design.ts": {
-      "maxDuration": 300
+      "maxDuration": 300,
+      "memory": 2048,
+      "supportsCancellation": true,
+      "includeFiles": "node_modules/@sparticuz/chromium/bin/**"
     },
     "api/video.ts": {
       "maxDuration": 300
@@ -36,17 +48,44 @@
     "api/image.ts": {
       "maxDuration": 300
     },
+    "api/studio-image.ts": {
+      "maxDuration": 300
+    },
     "api/cron.ts": {
+      "maxDuration": 300
+    },
+    "api/phone.ts": {
+      "maxDuration": 300
+    },
+    "api/call.ts": {
+      "maxDuration": 30
+    },
+    "api/messages.ts": {
+      "maxDuration": 300
+    },
+    "api/task-attachments.ts": {
+      "maxDuration": 300
+    },
+    "api/email.ts": {
       "maxDuration": 300
     }
   },
   "rewrites": [
     {
-      "source": "/((?!api/|openscad/|privacy|download|install\\.sh|nalu\\.mjs).*)",
+      "source": "/((?!api/|openscad/|privacy|sms|download|install\\.sh|nalu\\.mjs).*)",
       "destination": "/index.html"
     }
   ],
   "headers": [
+    {
+      "source": "/backgrounds/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
     {
       "source": "/(.*)",
       "headers": [
@@ -78,5 +117,6 @@
       "path": "/api/cron",
       "schedule": "*/15 * * * *"
     }
-  ]
+  ],
+  "installCommand": "npm ci"
 }

@@ -1,3 +1,4 @@
+import Scenery from './Scenery'
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import UltraThinkDemo from './UltraThinkDemo'
@@ -21,15 +22,12 @@ export default function SolutionsSection() {
 
   return (
     <div className="relative h-screen w-full flex flex-col">
-      <div
-        className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-        style={{ backgroundImage: 'url(/images/bg-beach-rocks.png)' }}
-      />
+      <Scenery src="/images/bg-beach-rocks.png" />
 
       <div className="h-28 md:h-32 flex-shrink-0" />
 
       <div className="relative z-10 flex-1 flex flex-col items-center md:justify-center w-full max-w-5xl mx-auto px-4 sm:px-6 pb-8 overflow-y-auto scrollbar-hide">
-        <h1 className="text-3xl md:text-4xl lg:text-5xl font-light text-white mb-8 md:mb-12 tracking-tight text-center drop-shadow-lg">
+        <h1 className="scenery-caption text-3xl md:text-4xl lg:text-5xl font-light text-white mb-8 md:mb-12 tracking-tight text-center drop-shadow-lg">
           An AI that builds AI. Free to use. Yours to keep.
         </h1>
 
@@ -49,7 +47,7 @@ export default function SolutionsSection() {
                 className={`relative px-5 py-3 min-h-[44px] text-base md:text-lg transition-colors rounded-xl ${
                   activeTab === t.key
                     ? 'text-gray-900 font-normal'
-                    : 'text-gray-400 hover:text-gray-900 font-light'
+                    : 'text-gray-600 hover:text-gray-900 font-light'
                 }`}
               >
                 {t.label}
@@ -69,7 +67,7 @@ export default function SolutionsSection() {
             role="tabpanel"
             className="space-y-6"
           >
-            <p className="text-base md:text-lg text-gray-500 leading-relaxed text-center max-w-xl mx-auto font-light">
+            <p className="text-base md:text-lg text-gray-600 leading-relaxed text-center max-w-xl mx-auto font-light">
               {subtitleByTab[activeTab]}
             </p>
             <UltraThinkDemo type={activeTab as 'methods' | 'advice' | 'reliability' | 'reward'} />

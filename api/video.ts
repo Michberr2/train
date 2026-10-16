@@ -56,6 +56,38 @@ const FREE_SPACES = (env('NALU_VIDEO_FREE_SPACES') || env('NALU_VIDEO_FREE_SPACE
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+// LTX-2.3 (fal) exposes a fixed DURATION enum. This is our path to clips LONGER
+// than the ~4-8s every other backend is capped at: snap a requested length to
+// the nearest enum value that does not exceed it (so "15s" → 14s, never over-ask).
+const LTX_DURATIONS = [6, 8, 10, 12, 14, 16, 18, 20]
+function snapLtxDuration(sec: number): number {
+  const under = LTX_DURATIONS.filter((d) => d <= sec)
+  return under.length ? under[under.length - 1] : LTX_DURATIONS[0]
+}
+
+// Longest single-shot clip we'll attempt (LTX-2.3 native max). Requests beyond
+// this are clamped; true minute-long video needs segment stitching (future).
+const MAX_SECONDS = 20
+
+// Figure out how long a clip the user wants: an explicit body.duration/seconds
+// wins; otherwise parse a natural-language length out of the prompt ("15 second
+// clip", "20s", "half a minute", "1 minute"). Returns null when unspecified so
+// callers keep their own default. Clamped to [2, MAX_SECONDS].
+function requestedSeconds(prompt: string, body: Record<string, unknown>): number | null {
+  const clamp = (n: number) => Math.min(MAX_SECONDS, Math.max(2, Math.round(n)))
+  const fromBody = Number(body.duration ?? body.seconds)
+  if (Number.isFinite(fromBody) && fromBody > 0) return clamp(fromBody)
+  const half = /\bhalf\s+a?\s*min(?:ute)?\b/i.test(prompt)
+  if (half) return clamp(30)
+  const m = prompt.match(/(\d+(?:\.\d+)?)\s*(?:-|to|\s)?\s*(seconds?|secs?|s\b|minutes?|mins?|m\b)/i)
+  if (m) {
+    let n = parseFloat(m[1])
+    if (/^m|min/i.test(m[2])) n *= 60
+    if (Number.isFinite(n) && n > 0) return clamp(n)
+  }
+  return null
+}
+
 // Motion-aware prompt enrichment so "a wolf running" actually RUNS (the raw
 // models often render a static subject). Reuses the Nalu LLM gateway (failover).
 const LLM_KEY = env('TINKER_API_KEY') || ''
@@ -211,7 +243,10 @@ async function deepinfraVideo(prompt: string): Promise<{ url?: string; error?: s
 }
 
 // ---- 1) fal.ai (audio) ----
-async function falVideo(prompt: string): Promise<{ url?: string; error?: string }> {
+async function falVideo(prompt: string, seconds?: number): Promise<{ url?: string; error?: string }> {
+  // LTX-2.3 is our LONG-CLIP backend: snap the requested length to its duration
+  // enum (up to 20s) so "make a 15s video" actually renders 14s, not the 6s default.
+  const duration = seconds ? snapLtxDuration(seconds) : Number(env('FAL_VIDEO_DURATION')) || 6
   const submit = await fetch(`https://queue.fal.run/${FAL_MODEL}`, {
     method: 'POST',
     headers: { Authorization: `Key ${FAL_KEY}`, 'Content-Type': 'application/json' },
@@ -220,7 +255,7 @@ async function falVideo(prompt: string): Promise<{ url?: string; error?: string 
       negative_prompt: VIDEO_NEGATIVE,
       // LTX-2.3 fast: duration enum {6,8,…20}s (6 = cheapest), resolution enum
       // {1080p,1440p,2160p} (1080p = cheapest; there is no 720p), audio on.
-      duration: Number(env('FAL_VIDEO_DURATION')) || 6,
+      duration,
       aspect_ratio: env('FAL_VIDEO_ASPECT') || '16:9',
       generate_audio: true,
       resolution: env('FAL_VIDEO_RESOLUTION') || '1080p',
@@ -237,7 +272,7 @@ async function falVideo(prompt: string): Promise<{ url?: string; error?: string 
   if (!job.status_url || !job.response_url) return { error: 'no status url from provider' }
   const deadline = Date.now() + 260000
   for (;;) {
-    await sleep(3000)
+    await sleep(2000)
     if (Date.now() > deadline) return { error: 'video timed out — try a shorter clip' }
     const s = await fetch(job.status_url, { headers: { Authorization: `Key ${FAL_KEY}` } })
     const st = (await s.json().catch(() => ({}))) as { status?: string }
@@ -502,6 +537,14 @@ export default async function handler(req: any, res: any) {
   const image = typeof body.image === 'string' && body.image.startsWith('data:image/') ? body.image : undefined
   // social video posts are vertical 9:16 (reels/tiktok/shorts/stories or explicit)
   const wantVertical = body.vertical === true || /\b(reels?|tiktok|shorts?|vertical|story|stories|9:16)\b/i.test(prompt)
+  // How long a clip? explicit body.duration/seconds or a length named in the
+  // prompt ("15 second clip", "20s", "a minute"). >8s ⇒ prefer the LTX (fal)
+  // backend, which is the one that natively renders past 8 seconds.
+  const seconds = requestedSeconds(prompt, body)
+  const longClip = (seconds || 0) > 8
+  // Fast/draft mode: explicit body.fast or a "make it quick" ask. Skips the LLM
+  // prompt-enrichment round-trip and leads with the fastest synchronous backend.
+  const wantFast = body.fast === true || /\b(fast|quick(?:ly)?|asap|draft|rough|instantly?)\b/i.test(prompt)
 
   // ARCHITECTURAL MODE — the craft that makes walkthroughs read as real film:
   // from a technical drawing/blueprint → the "grow into 3D" transformation; from
@@ -514,6 +557,10 @@ export default async function handler(req: any, res: any) {
     finalPrompt = DRAWING.test(prompt)
       ? `Cinematic architectural transformation animation. ${image ? 'Start on the exact technical drawing in the input image, same framing.' : 'Start with a clean black-and-white technical architectural drawing of the space.'} The camera slowly pushes forward while the drawing gradually transforms into a photorealistic space: linework extrudes into 3D geometry, walls and ceilings gain real depth, furniture emerges from wireframe forms, materials organically appear across every surface — wood grain develops, stone and flooring become realistic, plants grow into detailed vegetation, curtains softly materialize. Natural daylight progressively fills the space: volumetric sunlight, soft shadows and reflections, subtle curtain movement, shallow depth of field. The transformation feels seamless and magical, maintaining the same camera angle throughout. Ultra realistic architectural visualization style, smooth transitions, premium cinematic look, warm lighting, highly detailed. Subject: ${prompt}`
       : `Cinematic real-estate walkthrough film of the exact space in the input image — keep its architecture, furniture, materials and lighting faithful. One continuous stabilized gimbal shot gliding slowly forward through the space, gentle parallax, no cuts. Natural volumetric daylight through the windows, soft moving shadows, photorealistic PBR materials, subtle life (curtains breathing, foliage swaying), shallow depth of field, premium architectural film look, ultra detailed, 4k. ${prompt}`
+  } else if (wantFast) {
+    // Fast mode: skip the LLM enrichment round-trip (saves up to ~18s) and use a
+    // solid deterministic template so the clip still moves.
+    finalPrompt = `${prompt}. ONE continuous shot, no cuts. Natural, lifelike, continuous motion true to the description; the subject actively moves; smooth cinematic camera; realistic lighting; sharp focus; ultra-detailed.`
   } else {
     // Expand the request into a faithful, detailed prompt FIRST so the clip
     // accurately matches what was asked (raw 1-liners render vague/wrong).
@@ -521,7 +568,7 @@ export default async function handler(req: any, res: any) {
   }
 
   type Backend = { name: string; run: () => Promise<{ url?: string; error?: string }> }
-  const fal: Backend = { name: 'fal', run: () => falVideo(finalPrompt) }
+  const fal: Backend = { name: 'fal', run: () => falVideo(finalPrompt, seconds || undefined) }
   const deepinfra: Backend = { name: 'deepinfra', run: () => deepinfraVideo(finalPrompt) }
   const selfHost: Backend = { name: 'self-host', run: () => customVideo(finalPrompt) }
   const free: Backend = { name: 'free', run: () => freeSpaceVideo(finalPrompt, image) }
@@ -531,24 +578,41 @@ export default async function handler(req: any, res: any) {
 
   const ladder: Backend[] = []
   const add = (b: Backend, ok: boolean) => { if (ok) ladder.push(b) }
-  add(veo, !!GEMINI_KEY) // highest fidelity (native audio on Veo 3.x) — always first when configured
-  if (image) {
-    // image-to-video, best first: full Wan 2.2-A14B (HF router, ~1400px) →
-    // free LTX pool → Wan 2.2-5B ZeroGPU — three independent engines.
-    add(hfWan, !!HF_TOKEN)
-    ladder.push(free, wan)
-  } else if (wantAudio) {
-    add(fal, !!FAL_KEY) // audio
-    add(selfHost, !!(V_BASE && V_KEY)) // audio
-    add(deepinfra, !!DEEPINFRA_KEY) // silent
-    add(hfWan, !!HF_TOKEN)
-    ladder.push(free)
-  } else {
-    add(hfWan, !!HF_TOKEN) // best quality available with existing creds
+  if (longClip) {
+    // LONGER-THAN-8s: only LTX-2.3 (fal) natively renders past 8s, so it leads.
+    // Veo/Wan fall in behind as ~8s fallbacks if fal is unavailable/fails.
+    add(fal, !!FAL_KEY)
+    add(veo, !!GEMINI_KEY)
+    if (image) { add(hfWan, !!HF_TOKEN); ladder.push(free, wan) }
+    else { add(hfWan, !!HF_TOKEN); add(deepinfra, !!DEEPINFRA_KEY); add(selfHost, !!(V_BASE && V_KEY)); ladder.push(free) }
+  } else if (wantFast && !image) {
+    // FAST: lead with the fastest SYNCHRONOUS backend (DeepInfra distilled — one
+    // POST, no queue), then the free pool, then queue-based engines.
     add(deepinfra, !!DEEPINFRA_KEY)
-    add(selfHost, !!(V_BASE && V_KEY))
     add(fal, !!FAL_KEY)
     ladder.push(free)
+    add(hfWan, !!HF_TOKEN)
+    add(veo, !!GEMINI_KEY)
+  } else {
+    add(veo, !!GEMINI_KEY) // highest fidelity (native audio on Veo 3.x) — always first when configured
+    if (image) {
+      // image-to-video, best first: full Wan 2.2-A14B (HF router, ~1400px) →
+      // free LTX pool → Wan 2.2-5B ZeroGPU — three independent engines.
+      add(hfWan, !!HF_TOKEN)
+      ladder.push(free, wan)
+    } else if (wantAudio) {
+      add(fal, !!FAL_KEY) // audio
+      add(selfHost, !!(V_BASE && V_KEY)) // audio
+      add(deepinfra, !!DEEPINFRA_KEY) // silent
+      add(hfWan, !!HF_TOKEN)
+      ladder.push(free)
+    } else {
+      add(hfWan, !!HF_TOKEN) // best quality available with existing creds
+      add(deepinfra, !!DEEPINFRA_KEY)
+      add(selfHost, !!(V_BASE && V_KEY))
+      add(fal, !!FAL_KEY)
+      ladder.push(free)
+    }
   }
 
   try {
@@ -557,7 +621,10 @@ export default async function handler(req: any, res: any) {
       try {
         const out = await b.run()
         if (out.url) {
-          res.status(200).json({ url: out.url, name: 'Nalu Video' })
+          // Report the clip length: fal honors the snapped request; other
+          // backends are ~their native short length.
+          const outSeconds = b.name === 'fal' && seconds ? snapLtxDuration(seconds) : undefined
+          res.status(200).json({ url: out.url, name: 'Nalu Video', backend: b.name, ...(outSeconds ? { seconds: outSeconds } : {}) })
           return
         }
         if (out.error) lastErr = out.error

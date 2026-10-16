@@ -55,7 +55,7 @@ test.describe('Security', () => {
     if (!res) { test.info().annotations.push({ type: 'metric', description: 'http blocked outright (good)' }); return }
     const status = res.status()
     const loc = res.headers()['location'] || ''
-    const secure = status === 0 || (status >= 300 && status < 400 && loc.startsWith('https:')) || status === 200 && BASE_URL.startsWith('https:')
+    const secure = status === 0 || (status >= 300 && status < 400 && loc.startsWith('https:'))
     expect(secure, `http did not redirect to https (status ${status}, location ${loc})`).toBeTruthy()
   })
 })

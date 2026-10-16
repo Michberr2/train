@@ -221,18 +221,18 @@ export default function UltraThinkDemo({ type = 'advice' }: Props) {
   return (
     <div className="bg-white rounded-2xl border border-gray-200/60 shadow-sm text-left w-full max-w-[600px] min-h-[300px] mx-auto flex flex-col relative">
       <div className="px-6 md:px-8 py-5 border-b border-gray-100">
-        <p className="text-xs font-light text-gray-400 mb-1.5">You</p>
+        <p className="text-xs font-light text-gray-600 mb-1.5">You</p>
         <p className="text-sm md:text-base text-gray-900 font-light leading-relaxed break-words">
           {typedQuestion}
           {step === -1 && typedQuestion.length < current.question.length && (
-            <span className="animate-pulse text-gray-400">|</span>
+            <span aria-hidden="true" className="animate-pulse text-gray-600">|</span>
           )}
         </p>
       </div>
 
       {step >= 0 && (
         <div className="px-6 md:px-8 py-5 flex-1">
-          <p className="text-xs font-light text-gray-400 mb-2.5">Nalu</p>
+          <p className="text-xs font-light text-gray-600 mb-2.5">Nalu</p>
 
           <div className="space-y-1.5 mb-4">
             {current.steps.map(
@@ -240,7 +240,7 @@ export default function UltraThinkDemo({ type = 'advice' }: Props) {
                 index < step && (
                   <p
                     key={index}
-                    className="text-xs md:text-[13px] font-light text-gray-400 italic transition-opacity duration-500"
+                    className="text-xs md:text-[13px] font-light text-gray-600 italic transition-opacity duration-500"
                   >
                     {stepText}
                   </p>
@@ -254,7 +254,7 @@ export default function UltraThinkDemo({ type = 'advice' }: Props) {
                 <p className="text-sm md:text-base text-gray-900 font-light leading-relaxed break-words">
                   {typedAnswer}
                   {typedAnswer.length < current.answer.length && (
-                    <span className="animate-pulse text-gray-400">|</span>
+                    <span aria-hidden="true" className="animate-pulse text-gray-600">|</span>
                   )}
                 </p>
               </div>
@@ -269,7 +269,7 @@ export default function UltraThinkDemo({ type = 'advice' }: Props) {
 
               {type === 'reliability' && current.sources && typedAnswer.length === current.answer.length && (
                 <div className="mt-5 pt-4 border-t border-gray-100">
-                  <p className="text-[11px] font-light text-gray-400 mb-2">Sources</p>
+                  <p className="text-[11px] font-light text-gray-600 mb-2">Sources</p>
                   <div className="flex flex-wrap gap-1.5">
                     {current.sources.map((source, index) => (
                       <span

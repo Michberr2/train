@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nalu-data",
+  "main": "worker.ts",
+  "account_id": "6826d9734eab1ea0f292421e1962960d",
+  "compatibility_date": "2026-09-13",
+  "workers_dev": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nalu-data",
+      "database_id": "ab0c5a40-a5c4-4cdb-b3d9-1982bb3d157b",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "nalu-files"
+    }
+  ]
+}

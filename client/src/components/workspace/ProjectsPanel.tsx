@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { projectDeletedIds } from '../../../../shared/projectMerge'
 import { FolderGit2, Github, Trash2, Plus, X } from 'lucide-react'
 
 type Project = {
@@ -6,39 +7,23 @@ type Project = {
   name: string
   repo?: string
   createdAt: number
+  _projectSync?: { conflictOf?: string }
 }
 
 const STORAGE_KEY = 'nalu-projects'
 
-const DEFAULT_PROJECTS: Project[] = [
-  {
-    id: 'p-nalu-web',
-    name: 'Nalu Web Workspace',
-    repo: 'nalu-labs/nalu-web',
-    createdAt: Date.now() - 1000 * 60 * 60 * 24 * 9,
-  },
-  {
-    id: 'p-agent-runtime',
-    name: 'Agent Runtime',
-    repo: 'nalu-labs/agent-runtime',
-    createdAt: Date.now() - 1000 * 60 * 60 * 24 * 4,
-  },
-  {
-    id: 'p-scratchpad',
-    name: 'Scratchpad',
-    createdAt: Date.now() - 1000 * 60 * 60 * 6,
-  },
-]
+const DELETED_KEY = 'nalu-deleted-workspace-projects'
 
 function loadProjects(): Project[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return DEFAULT_PROJECTS
+    if (!raw) return []
     const parsed = JSON.parse(raw) as Project[]
-    if (!Array.isArray(parsed)) return DEFAULT_PROJECTS
-    return parsed
+    if (!Array.isArray(parsed)) return []
+    const deleted = new Set(projectDeletedIds(localStorage.getItem(DELETED_KEY) || '[]'))
+    return parsed.filter(project => !deleted.has(project.id))
   } catch {
-    return DEFAULT_PROJECTS
+    return []
   }
 }
 
@@ -61,12 +46,22 @@ export default function ProjectsPanel() {
   const [repo, setRepo] = useState('')
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(projects))
-    } catch {
-      /* ignore persistence errors */
+    const reload = () => setProjects(loadProjects())
+    const storage = (event: StorageEvent) => { if (event.key === STORAGE_KEY || event.key === DELETED_KEY || event.key === null) reload() }
+    window.addEventListener('nalu-hydrated', reload)
+    window.addEventListener('nalu-session-cleared', reload)
+    window.addEventListener('storage', storage)
+    return () => {
+      window.removeEventListener('nalu-hydrated', reload)
+      window.removeEventListener('nalu-session-cleared', reload)
+      window.removeEventListener('storage', storage)
     }
-  }, [projects])
+  }, [])
+
+  function saveProjects(next: Project[]) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+    setProjects(loadProjects())
+  }
 
   function resetForm() {
     setName('')
@@ -84,16 +79,18 @@ export default function ProjectsPanel() {
       repo: trimmedRepo ? trimmedRepo : undefined,
       createdAt: Date.now(),
     }
-    setProjects((prev) => [next, ...prev])
+    saveProjects([next, ...loadProjects()])
     resetForm()
   }
 
   function deleteProject(id: string) {
-    setProjects((prev) => prev.filter((p) => p.id !== id))
+    const deleted = projectDeletedIds(localStorage.getItem(DELETED_KEY) || '[]')
+    localStorage.setItem(DELETED_KEY, JSON.stringify([...new Set([...deleted, id])]))
+    saveProjects(loadProjects().filter(project => project.id !== id))
   }
 
   return (
-    <div className="flex h-full flex-col bg-glass/[0.09] backdrop-blur-2xl font-sans text-ink">
+    <div className="flex flex-1 min-h-0 flex-col bg-glass/[0.09] backdrop-blur-2xl font-sans text-ink">
       <header className="flex items-start justify-between gap-4 border-b border-glass/[0.18] px-6 py-5">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-glass/[0.11] backdrop-blur-2xl">
@@ -228,6 +225,9 @@ export default function ProjectsPanel() {
                 <p className="mt-3 text-xs text-dim">
                   Created {formatDate(project.createdAt)}
                 </p>
+                {project._projectSync?.conflictOf && <p className="mt-2 text-xs text-ink">
+                  Another device edited this project. Both versions were kept; delete the version you don’t need.
+                </p>}
               </div>
             ))}
           </div>

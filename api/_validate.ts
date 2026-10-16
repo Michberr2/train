@@ -20,7 +20,7 @@ export function toNumber(v: unknown): number | null {
 }
 
 interface ChartSeries { name?: string; values?: unknown[] }
-interface Chart { type?: string; title?: string; labels?: unknown[]; series?: ChartSeries[] }
+interface Chart { type?: string; title?: string; unit?: string; takeaway?: string; labels?: unknown[]; series?: ChartSeries[] }
 
 /**
  * Normalize a chart spec so it ALWAYS renders: clamp type, coerce every value to
@@ -50,7 +50,14 @@ export function normalizeChart(chart: unknown): Chart | null {
   // A pie chart only renders one series.
   if (type === 'pie') series = [series[0]]
 
-  return { type, title: typeof c.title === 'string' ? c.title : '', labels, series }
+  return {
+    type,
+    title: typeof c.title === 'string' ? c.title : '',
+    unit: typeof c.unit === 'string' ? c.unit.slice(0, 4) : '',
+    takeaway: typeof c.takeaway === 'string' ? c.takeaway.slice(0, 160) : '',
+    labels,
+    series,
+  }
 }
 
 /** True if a value is a string that's purely a formatted number (no formula). */

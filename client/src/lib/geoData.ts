@@ -134,8 +134,8 @@ function permitOne(rec: Record<string, unknown>, svc: PermitSvc): Permit {
   return { facts, title: type || 'Building permit', lat, lng }
 }
 
-async function jget(url: string): Promise<unknown> {
-  const r = await fetch(url, { headers: { Accept: 'application/json' } })
+async function jget(url: string, signal?: AbortSignal): Promise<unknown> {
+  const r = await fetch(url, { headers: { Accept: 'application/json' }, signal })
   if (!r.ok) throw new Error(`HTTP ${r.status}`)
   return r.json()
 }
@@ -164,14 +164,14 @@ export async function queryParcelAt(lat: number, lng: number): Promise<{ state?:
 }
 
 // Recent building permits near a point (pre-design / design / construction).
-export async function queryPermitsNear(lat: number, lng: number, limit = 20): Promise<{ city?: string; permits?: Permit[]; error?: string }> {
+export async function queryPermitsNear(lat: number, lng: number, limit = 20, signal?: AbortSignal): Promise<{ city?: string; permits?: Permit[]; error?: string }> {
   const svc = permitSvcFor(lng, lat)
   if (!svc) return { error: `No free building-permit feed is wired for this city yet. Live coverage: ${permitCities()}. (Permits are filed per municipality; more cities can be added on request.)` }
   let url: string
   if (svc.mode === 'circle' && svc.loc) url = `${svc.url}?$where=${encodeURIComponent(`within_circle(${svc.loc}, ${lat}, ${lng}, 1200)`)}&$order=${svc.date}+DESC&$limit=${limit}`
   else { const d = 0.012; url = `${svc.url}?$where=${encodeURIComponent(`${svc.lat} between ${lat - d} and ${lat + d} AND ${svc.lng} between ${lng - d} and ${lng + d}`)}&$order=${svc.date}+DESC&$limit=${limit}` }
   try {
-    const recs = (await jget(url)) as Array<Record<string, unknown>>
+    const recs = (await jget(url, signal)) as Array<Record<string, unknown>>
     return { city: svc.city, permits: recs.map((r) => permitOne(r, svc)) }
   } catch (e) { return { error: `${svc.city} permit feed error: ${(e as Error).message}` } }
 }

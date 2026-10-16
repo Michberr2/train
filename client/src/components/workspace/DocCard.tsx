@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   Document,
   Packer,
   Paragraph,
   HeadingLevel,
   TextRun,
+  ExternalHyperlink,
   ImageRun,
   AlignmentType,
   Table,
@@ -12,90 +13,73 @@ import {
   TableCell,
   WidthType,
   BorderStyle,
+  TableLayoutType,
+  VerticalAlign,
 } from 'docx'
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { FileText, Download, Loader2 } from 'lucide-react'
 import { getBrand, useBrand, toRgb } from './brandKit'
-import { coverImageDataUrl, coverImageBuffer } from './coverImage'
-import { chartDataUrl, hasChartData, type ChartSpec } from './chartRender'
+import { chartDataUrl, hasChartData } from './chartRender'
+import { BrandLogo } from './BrandLogo'
+import { rasterizeLogo, type RasterLogo } from './logoRaster'
+import { normalizeDoc, documentWithSources, type DocBlock, type DocDoc } from './docModel'
+import { documentRuns } from './docInline'
+import { DOC_PAGE, DOC_HEADING_SIZES, DOC_IMAGE_MAX_HEIGHT, fitDocumentImage, documentColumnWidths } from './docLayout'
 
-export type DocBlock =
-  | { type: 'heading'; level?: number; text?: string }
-  | { type: 'paragraph'; text?: string }
-  | { type: 'bullets'; items?: string[] }
-  | { type: 'table'; columns?: string[]; rows?: string[][] }
-  | { type: 'chart'; chart?: ChartSpec }
-  // A user-attached image (screenshot/photo) embedded into the doc. `src` is a
-  // data URL; `w`/`h` are the natural pixel dims (for correct aspect on export).
-  | { type: 'image'; src?: string; caption?: string; w?: number; h?: number }
+export { normalizeDoc } from './docModel'
+export type { DocBlock, DocDoc } from './docModel'
 
-export type DocDoc = {
-  title?: string
-  subtitle?: string
-  cover?: string
-  blocks?: DocBlock[]
+// Resolve the doc's render palette + fonts from its design language (engine) →
+// brand → the luxury default. Keeps DocCard in step with SlidesCard/EmailCard.
+const dhex = (v?: string, fb = '') => (typeof v === 'string' && v ? '#' + v.replace(/^#/, '') : fb)
+const dserif = (name?: string, flag?: boolean) =>
+  typeof flag === 'boolean' ? flag : /serif|georgia|charter|fraunces|times|source serif|garamond|playfair|iowan/i.test((name || '').split(',')[0] || '')
+const dstack = (name?: string, isSerif?: boolean) =>
+  name ? `"${name.replace(/["']/g, '').split(',')[0]}", ${isSerif ? `Georgia, "Times New Roman", serif` : `"Helvetica Neue", Inter, system-ui, Arial, sans-serif`}` : undefined
+
+
+function InlineDocText({ text }: { text: string }) {
+  return <>{documentRuns(text).map((run, i) => run.url ? <a key={i} href={run.url} target="_blank" rel="noopener noreferrer" className="underline decoration-current/40 underline-offset-2 break-words">{run.text}</a> : run.bold ? <strong key={i}>{run.text}</strong> : run.italic ? <em key={i}>{run.text}</em> : run.text)}</>
+}
+function wordRuns(text: string, font: string, size = 22, header = false) {
+  return documentRuns(text).map(run => {
+    const child = new TextRun({ text: run.text, font, size, bold: header || run.bold, italics: run.italic, ...(run.url ? { style: 'Hyperlink' } : {}), ...(header ? { color: 'FFFFFF' } : {}) })
+    return run.url ? new ExternalHyperlink({ link: run.url, children: [child] }) : child
+  })
 }
 
 const HEAD = '0F1B2D' // Nalu midnight navy — readable heading color (luxury baseline)
 const RULE = 'AF8C56' // muted gold — hairlines / small accents only
 
-// The model's JSON is imperfect in the wild: text as nested objects, items as a
-// string, rows as objects. NORMALIZE everything up front so the card and the
-// Word/PDF exports can never throw ("The document couldn't render here").
-function asText(v: unknown): string {
-  if (v == null) return ''
-  if (typeof v === 'string') return v
-  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
-  if (Array.isArray(v)) return v.map(asText).filter(Boolean).join(', ')
-  if (typeof v === 'object') {
-    const o = v as Record<string, unknown>
-    if (o.text != null) return asText(o.text)
-    if (o.value != null) return asText(o.value)
-    try { return JSON.stringify(v) } catch { return '' }
-  }
-  return ''
-}
-export function normalizeDoc(raw: DocDoc): DocDoc {
-  const blocks = (Array.isArray(raw?.blocks) ? raw.blocks : [])
-    .filter((b) => b && typeof b === 'object')
-    .map((b) => {
-      const t = String((b as { type?: unknown }).type || 'paragraph')
-      if (t === 'bullets') {
-        const it = (b as { items?: unknown }).items
-        const items = Array.isArray(it) ? it.map(asText).filter(Boolean) : asText(it).split(/\n+/).filter(Boolean)
-        return { type: 'bullets' as const, items }
-      }
-      if (t === 'table') {
-        const cols = Array.isArray((b as { columns?: unknown }).columns) ? ((b as { columns: unknown[] }).columns).map(asText) : []
-        const rawRows = Array.isArray((b as { rows?: unknown }).rows) ? ((b as { rows: unknown[] }).rows) : []
-        const rows = rawRows.map((r) => (Array.isArray(r) ? r.map(asText) : r && typeof r === 'object' ? Object.values(r as object).map(asText) : [asText(r)]))
-        return { type: 'table' as const, columns: cols, rows }
-      }
-      if (t === 'heading') {
-        const lv = Number((b as { level?: unknown }).level)
-        return { type: 'heading' as const, level: lv >= 1 && lv <= 4 ? lv : 2, text: asText((b as { text?: unknown }).text) }
-      }
-      if (t === 'chart') return b
-      if (t === 'image') return { type: 'image' as const, src: asText((b as { src?: unknown }).src), caption: asText((b as { caption?: unknown }).caption) }
-      return { type: 'paragraph' as const, text: asText((b as { text?: unknown }).text ?? b) }
-    })
-    .filter((b) => (b.type === 'bullets' ? (b.items || []).length : b.type === 'table' ? ((b as { columns?: string[] }).columns || []).length : b.type === 'chart' || b.type === 'image' ? true : ((b as { text?: string }).text || '').trim().length))
-  return { ...raw, title: asText(raw?.title), subtitle: asText(raw?.subtitle), cover: asText(raw?.cover) || undefined, blocks: blocks as DocDoc['blocks'] }
-}
 
 function cleanName(t?: string): string {
   return (t || 'nalu-document').replace(/[\\/:*?"<>|]+/g, '').trim() || 'nalu-document'
 }
 
 // ---- Word (.docx) ----------------------------------------------------------
-function buildDocx(doc: DocDoc, coverImg?: ArrayBuffer | null): Document {
-  // On-brand if a Nalu Studio palette/brand is active, else Nalu defaults.
+function buildDocx(doc: DocDoc, coverImg?: ArrayBuffer | null, logoImg?: RasterLogo | null): Document {
+  // Design language (engine) → brand → Nalu defaults. Headings use the deep ink
+  // color (readable); the accent is reserved for thin rules. docx colors are hex
+  // WITHOUT '#'.
   const brand = getBrand()
-  // Headings use the brand PRIMARY (deep, readable) — never the gold accent,
-  // which is reserved for thin rules. Gold text on white is unreadable.
-  const accent = brand?.primary || HEAD
-  const rule = brand?.accent || RULE
+  const dz = doc.design, dzL = dz?.light, dzF = dz?.fonts
+  const bare = (v?: string) => (typeof v === 'string' && v ? v.replace(/^#/, '') : '')
+  const fam = (v?: string) => (typeof v === 'string' && v ? v.replace(/["']/g, '').split(',')[0].trim() : '')
+  const accent = bare(dzL?.ink) || brand?.primary || HEAD
+  const rule = bare(dzL?.accent) || brand?.accent || RULE
+  const titleFont = fam(dzF?.display) || brand?.headingFont || 'Georgia'
+  const bodyFont = fam(dzF?.body) || brand?.bodyFont || 'Calibri'
+  const blocks = doc.blocks || []
+  let wordMeasure: jsPDF | undefined
+  const wordTextHeight = (text: string, font: string, size: number, style: string) => {
+    wordMeasure ||= new jsPDF({ unit: 'pt', format: 'letter' })
+    wordMeasure.setFont(dserif(font) ? 'times' : 'helvetica', style)
+    wordMeasure.setFontSize(size)
+    // Word supplies the final wrapping; leave a width/height reserve for font
+    // differences so an image does not make its keep-next group exceed a page.
+    return wordMeasure.splitTextToSize(text, DOC_PAGE.contentWidth * .9).length * size * 1.15
+  }
   // Optional cover page: a full-width photo banner + title + subtitle, then a
   // page break before the body.
   const coverChildren: Paragraph[] = []
@@ -114,17 +98,31 @@ function buildDocx(doc: DocDoc, coverImg?: ArrayBuffer | null): Document {
       }),
       new Paragraph({
         spacing: { before: 120, after: 120 },
-        children: [new TextRun({ text: doc.title || 'Document', bold: true, size: 60, color: accent, font: brand?.headingFont || 'Georgia' })],
+        children: [new TextRun({ text: doc.title || 'Document', bold: true, size: 60, color: accent, font: titleFont })],
       }),
       ...(doc.subtitle
         ? [new Paragraph({ children: [new TextRun({ text: doc.subtitle, italics: true, size: 28, color: '666666' })] })]
         : []),
     )
   }
-  const bodyFont = brand?.bodyFont || 'Calibri'
-  // Elegant serif headings (Four Seasons house style); clean sans body.
-  const titleFont = brand?.headingFont || 'Georgia'
   const children: (Paragraph | Table)[] = []
+  // Brand logo at the very top of the document (before the title).
+  if (logoImg) {
+    const logoSize = fitDocumentImage(logoImg.w, logoImg.h, DOC_PAGE.contentPixels * .4, 34)
+    children.push(
+      new Paragraph({
+        spacing: { after: 300 },
+        children: [
+          new ImageRun({
+            type: 'png',
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            data: logoImg.bytes as any,
+            transformation: logoSize,
+          }),
+        ],
+      }),
+    )
+  }
   children.push(
     new Paragraph({
       children: [new TextRun({ text: doc.title || 'Document', bold: true, size: 52, color: accent, font: titleFont })],
@@ -140,47 +138,53 @@ function buildDocx(doc: DocDoc, coverImg?: ArrayBuffer | null): Document {
     )
   }
 
-  for (const b of doc.blocks || []) {
+  for (const [blockIndex, b] of blocks.entries()) {
     if (b.type === 'heading') {
-      const lvl = b.level === 3 ? HeadingLevel.HEADING_3 : b.level === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_1
+      const lvl = [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3, HeadingLevel.HEADING_4][(b.level || 2) - 1]
       children.push(
         new Paragraph({
           heading: lvl,
+          keepNext: true,
+          keepLines: true,
           spacing: { before: 240, after: 120 },
           children: [new TextRun({ text: b.text || '', bold: true, color: accent, font: titleFont })],
         }),
       )
     } else if (b.type === 'paragraph') {
-      children.push(new Paragraph({ children: [new TextRun({ text: b.text || '', size: 22, font: bodyFont })], spacing: { after: 160 } }))
+      children.push(new Paragraph({ children: wordRuns(b.text || '', bodyFont), spacing: { after: 160 } }))
     } else if (b.type === 'bullets') {
       for (const it of b.items || []) {
         children.push(
-          new Paragraph({ text: it, bullet: { level: 0 }, spacing: { after: 60 }, children: [] as TextRun[] }),
+          new Paragraph({ bullet: { level: 0 }, spacing: { after: 60 }, children: wordRuns(it, bodyFont) }),
         )
       }
     } else if (b.type === 'table') {
       const cols = b.columns || []
+      const widths = documentColumnWidths(cols, b.rows || [])
+      const cell = (value: string, ci: number, header = false) => new TableCell({
+        width: { size: widths[ci], type: WidthType.DXA },
+        margins: { top: 80, bottom: 80, left: 120, right: 120 },
+        verticalAlign: VerticalAlign.CENTER,
+        ...(header ? { shading: { fill: accent, color: 'auto', type: 'clear' as never } } : {}),
+        children: [new Paragraph({ spacing: { before: 0, after: 0, line: 240 }, children: wordRuns(value, bodyFont, 20, header) })],
+      })
       const head = new TableRow({
         tableHeader: true, // repeat the header row across page breaks
-        children: cols.map(
-          (c) =>
-            new TableCell({
-              shading: { fill: accent, color: 'auto', type: 'clear' as never } as never,
-              children: [new Paragraph({ children: [new TextRun({ text: c, bold: true, color: 'FFFFFF', font: bodyFont })] })],
-            }),
-        ),
+        children: cols.map((value, ci) => cell(value, ci, true)),
       })
       const body = (b.rows || []).map(
         (r) =>
           new TableRow({
-            children: cols.map(
-              (_, ci) => new TableCell({ children: [new Paragraph({ text: String(r[ci] ?? '') })] }),
-            ),
+            cantSplit: true,
+            children: cols.map((_, ci) => cell(String(r[ci] ?? ''), ci)),
           }),
       )
       children.push(
         new Table({
-          width: { size: 100, type: WidthType.PERCENTAGE },
+          width: { size: DOC_PAGE.contentDxa, type: WidthType.DXA },
+          layout: TableLayoutType.FIXED,
+          columnWidths: widths,
+          indent: { size: 0, type: WidthType.DXA },
           borders: {
             top: { style: BorderStyle.SINGLE, size: 1, color: 'DDDDDD' },
             bottom: { style: BorderStyle.SINGLE, size: 1, color: 'DDDDDD' },
@@ -214,18 +218,34 @@ function buildDocx(doc: DocDoc, coverImg?: ArrayBuffer | null): Document {
     } else if (b.type === 'image' && b.src) {
       const bytes = dataUrlToUint8(b.src)
       if (bytes) {
-        const w = 540
-        const h = b.w && b.h ? Math.round((w * b.h) / b.w) : 360
+        let headingHeight = 0
+        let previous = blockIndex - 1
+        for (; previous >= 0 && blocks[previous].type === 'heading'; previous--) {
+          const heading = blocks[previous] as Extract<DocBlock, { type: 'heading' }>
+          headingHeight += wordTextHeight(heading.text || '', titleFont, DOC_HEADING_SIZES[(heading.level || 2) - 1], 'bold') + 18
+        }
+        if (previous < 0) {
+          headingHeight += wordTextHeight(doc.title || 'Document', titleFont, 26, 'bold') + (doc.subtitle ? 4 : 14)
+          if (doc.subtitle) headingHeight += wordTextHeight(doc.subtitle, bodyFont, 13, 'italic') + 16
+          if (logoImg) headingHeight += fitDocumentImage(logoImg.w, logoImg.h, DOC_PAGE.contentPixels * .4, 34).height * .75 + 15
+        }
+        const next = blocks[blockIndex + 1]
+        const trailingReserve = next?.type === 'paragraph' && next.text ? Math.min(11 * 1.15 * 2, wordTextHeight(next.text, bodyFont, 11, 'normal')) + 8 : 0
+        const available = DOC_PAGE.height - DOC_PAGE.margin * 2 - headingHeight - 40 - trailingReserve
+        const captionHeight = b.caption ? Math.min(wordTextHeight(b.caption, bodyFont, 9, 'italic'), Math.max(24, available - 24)) : 0
+        const imageMaxHeight = Math.max(24, Math.min(DOC_IMAGE_MAX_HEIGHT, available - captionHeight))
+        const size = fitDocumentImage(b.w, b.h, DOC_PAGE.contentPixels, imageMaxHeight * 4 / 3)
         children.push(
           new Paragraph({
             alignment: AlignmentType.CENTER,
+            keepNext: !!b.caption,
             spacing: { before: 160, after: b.caption ? 40 : 200 },
             children: [
               new ImageRun({
                 type: docxImageType(b.src),
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 data: bytes as any,
-                transformation: { width: w, height: h },
+                transformation: size,
               }),
             ],
           }),
@@ -245,26 +265,42 @@ function buildDocx(doc: DocDoc, coverImg?: ArrayBuffer | null): Document {
 
   return new Document({
     styles: {
-      default: { document: { run: { font: bodyFont } } },
+      default: {
+        document: { run: { font: bodyFont, size: 22 }, paragraph: { spacing: { before: 0, after: 160, line: 276 } } },
+        ...Object.fromEntries(DOC_HEADING_SIZES.map((size, i) => [`heading${i + 1}`, { run: { font: titleFont, size: size * 2, bold: true, color: accent }, paragraph: { keepNext: true, spacing: { before: 240, after: 120 } } }])),
+      },
     },
     sections: coverChildren.length
       ? [
-          { properties: {}, children: coverChildren },
-          { properties: {}, children },
+          { properties: { page: { size: { width: DOC_PAGE.widthDxa, height: DOC_PAGE.heightDxa }, margin: { top: DOC_PAGE.marginDxa, bottom: DOC_PAGE.marginDxa, left: DOC_PAGE.marginDxa, right: DOC_PAGE.marginDxa } } }, children: coverChildren },
+          { properties: { page: { size: { width: DOC_PAGE.widthDxa, height: DOC_PAGE.heightDxa }, margin: { top: DOC_PAGE.marginDxa, bottom: DOC_PAGE.marginDxa, left: DOC_PAGE.marginDxa, right: DOC_PAGE.marginDxa } } }, children },
         ]
-      : [{ properties: {}, children }],
+      : [{ properties: { page: { size: { width: DOC_PAGE.widthDxa, height: DOC_PAGE.heightDxa }, margin: { top: DOC_PAGE.marginDxa, bottom: DOC_PAGE.marginDxa, left: DOC_PAGE.marginDxa, right: DOC_PAGE.marginDxa } } }, children }],
   })
 }
 
 /** Build the designed .docx as a Blob (shared with the Agents output nodes). */
 export async function buildDocxBlob(doc: DocDoc, coverImg?: ArrayBuffer | null): Promise<Blob> {
-  return Packer.toBlob(buildDocx(normalizeDoc(doc), coverImg))
+  const brand = getBrand()
+  const src = brand?.logo || brand?.logoMark
+  let logoImg: RasterLogo | null = null
+  if (src) {
+    try { logoImg = await rasterizeLogo(src, { height: 80, bgDark: false }) } catch { /* logo optional */ }
+  }
+  return Packer.toBlob(buildDocx(documentWithSources(doc), coverImg, logoImg))
 }
 /** Build the designed .pdf as a Blob (shared with the Agents output nodes). */
+// The active brand's logo, rasterized to PNG for doc headers (light background).
+async function docBrandLogo(): Promise<RasterLogo | null> {
+  const brand = getBrand()
+  const src = brand?.logo || brand?.logoMark
+  if (!src) return null
+  try { return await rasterizeLogo(src, { height: 80, bgDark: false }) } catch { return null }
+}
 export async function buildPdfBlob(rawDoc: DocDoc): Promise<Blob> {
-  const doc = normalizeDoc(rawDoc)
-  const img = doc.cover ? await coverImageDataUrl(doc.cover) : null
-  return buildPdf(doc, img).output('blob')
+  const doc = documentWithSources(rawDoc)
+  // Documents never get a stock hero cover photo — clean editorial pages only.
+  return buildPdf(doc, null, await docBrandLogo()).output('blob')
 }
 /** Clean, filesystem-safe filename for a doc title. */
 export function docFilename(doc: DocDoc): string {
@@ -305,22 +341,85 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 // ---- PDF -------------------------------------------------------------------
-function buildPdf(doc: DocDoc, coverImg?: string | null): jsPDF {
+function buildPdf(doc: DocDoc, coverImg?: string | null, logoImg?: RasterLogo | null): jsPDF {
   const brand = getBrand()
-  const [ar, ag, ab] = toRgb(brand?.primary || HEAD)
-  const [gr, gg, gb] = toRgb(brand?.accent || RULE)
+  const dz = doc.design, dzL = dz?.light, dzF = dz?.fonts
+  const pick = (v?: string, fb?: string) => (typeof v === 'string' && v ? v : fb || '')
+  const [ar, ag, ab] = toRgb(pick(dzL?.ink, brand?.primary || HEAD))
+  const [gr, gg, gb] = toRgb(pick(dzL?.accent, brand?.accent || RULE))
+  // jsPDF has only 3 core families — map the design's display/body to serif/sans.
+  const isSerif = (name?: string, flag?: boolean) =>
+    typeof flag === 'boolean' ? flag : /serif|georgia|charter|fraunces|times|source serif|garamond|playfair|iowan/i.test((name || '').split(',')[0] || '')
+  const HEADF = isSerif(dzF?.display || brand?.headingFont || 'Georgia', dzF?.displaySerif) ? 'times' : 'helvetica'
+  const BODYF = isSerif(dzF?.body || brand?.bodyFont || 'Arial', dzF?.bodySerif) ? 'times' : 'helvetica'
   const pdf = new jsPDF({ unit: 'pt', format: 'letter' })
-  const margin = 56
+  const margin = DOC_PAGE.margin
   const pageW = pdf.internal.pageSize.getWidth()
   const pageH = pdf.internal.pageSize.getHeight()
   const maxW = pageW - margin * 2
+  const blocks = doc.blocks || []
   let y = margin
 
   const ensure = (need: number) => {
-    if (y + need > pageH - margin) {
+    if (y > margin && y + need > pageH - margin) {
       pdf.addPage()
       y = margin
     }
+  }
+
+  const headingHeight = (block: Extract<DocBlock, { type: 'heading' }>) => {
+    const size = DOC_HEADING_SIZES[(block.level || 2) - 1]
+    pdf.setFont(HEADF, 'bold'); pdf.setFontSize(size)
+    return 10 + pdf.splitTextToSize(block.text || '', maxW).length * (size + 6)
+  }
+  const imageLayouts = new Map<number, { width: number; height: number; captionLines: string[]; heightWithCaption: number }>()
+  const imageLayout = (block: Extract<DocBlock, { type: 'image' }>, index: number, remaining?: number) => {
+    const cached = imageLayouts.get(index)
+    if (cached) return cached
+    let headings = 0
+    for (let previous = index - 1; previous >= 0 && blocks[previous].type === 'heading'; previous--) headings += headingHeight(blocks[previous] as Extract<DocBlock, { type: 'heading' }>)
+    pdf.setFont(BODYF, 'italic')
+    pdf.setFontSize(9)
+    const captionLines: string[] = block.caption ? pdf.splitTextToSize(block.caption, maxW) : []
+    const next = blocks[index + 1]
+    let trailingReserve = 0
+    if (next?.type === 'paragraph' && next.text) {
+      pdf.setFont(BODYF, 'normal'); pdf.setFontSize(11)
+      trailingReserve = Math.min(2, pdf.splitTextToSize(next.text, maxW).length) * 15 + 6
+    }
+    const available = pageH - margin * 2 - headings - 16 - trailingReserve
+    // Captions that themselves span a page continue normally; retain all lines.
+    const captionReserve = Math.min(captionLines.length * 12, Math.max(24, available - 24))
+    let size = fitDocumentImage(block.w, block.h, maxW, Math.max(24, Math.min(DOC_IMAGE_MAX_HEIGHT, available - captionReserve)))
+    const remainingImage = (remaining ?? 0) - captionReserve - 16 - trailingReserve
+    // Use the current page when the figure remains legible. Otherwise move the
+    // intact group to a fresh page instead of reducing it to a tiny thumbnail.
+    if (remainingImage >= Math.min(300, size.height * .75)) size = fitDocumentImage(block.w, block.h, maxW, Math.min(size.height, remainingImage))
+    const layout = { ...size, captionLines, heightWithCaption: size.height + 16 + captionReserve }
+    imageLayouts.set(index, layout)
+    return layout
+  }
+  // Keep headings with the following figure or first table row as Word does.
+  // Measurements use the exact fonts/widths used below; text is never sliced.
+  const followingContentHeight = (start: number, remaining: number): number => {
+    let need = 0
+    for (let index = start; index < blocks.length; index++) {
+      const next = blocks[index]
+      if (next.type === 'heading') {
+        need += headingHeight(next)
+      } else if (next.type === 'image' && next.src) return need + imageLayout(next, index, remaining - need).heightWithCaption
+      else if (next.type === 'chart' && hasChartData(next.chart)) return need + maxW * (620 / 1100) + 16
+      else if (next.type === 'table') {
+        const widths = documentColumnWidths(next.columns || [], next.rows || []).map(width => width / 20)
+        pdf.setFontSize(9)
+        const rowHeight = (cells: string[], bold: boolean) => {
+          pdf.setFont(BODYF, bold ? 'bold' : 'normal')
+          return Math.max(1, ...cells.map((text, i) => pdf.splitTextToSize(text, Math.max(1, widths[i] - 8)).length)) * 10.35 + 8
+        }
+        return need + rowHeight(next.columns || [], true) + (next.rows?.length ? rowHeight(next.rows[0], false) : 0) + 2
+      } else if (next.type === 'paragraph' && next.text || next.type === 'bullets' && next.items?.length) return need + 17
+    }
+    return need
   }
 
   // Cover page — full-bleed photo top, gold rule, serif title + subtitle.
@@ -328,7 +427,7 @@ function buildPdf(doc: DocDoc, coverImg?: string | null): jsPDF {
     try {
       pdf.addImage(coverImg, 'JPEG', 0, 0, pageW, pageH * 0.52)
       pdf.setTextColor(ar, ag, ab)
-      pdf.setFont('times', 'bold')
+      pdf.setFont(HEADF, 'bold')
       pdf.setFontSize(30)
       let cy = pageH * 0.52 + 60
       for (const line of pdf.splitTextToSize(doc.title || 'Document', maxW)) {
@@ -340,7 +439,7 @@ function buildPdf(doc: DocDoc, coverImg?: string | null): jsPDF {
       pdf.line(margin, cy - 8, margin + 90, cy - 8)
       if (doc.subtitle) {
         pdf.setTextColor(110)
-        pdf.setFont('times', 'italic')
+        pdf.setFont(BODYF, 'italic')
         pdf.setFontSize(15)
         cy += 22
         for (const line of pdf.splitTextToSize(doc.subtitle, maxW)) {
@@ -355,8 +454,14 @@ function buildPdf(doc: DocDoc, coverImg?: string | null): jsPDF {
     }
   }
 
+  if (logoImg) {
+    const { width: lw, height: lh } = fitDocumentImage(logoImg.w, logoImg.h, maxW * .4, 24)
+    ensure(lh + 24)
+    try { pdf.addImage(logoImg.dataUrl, 'PNG', margin, y, lw, lh) } catch { /* */ }
+    y += lh + 24
+  }
   pdf.setTextColor(ar, ag, ab)
-  pdf.setFont('helvetica', 'bold')
+  pdf.setFont(HEADF, 'bold')
   pdf.setFontSize(22)
   for (const line of pdf.splitTextToSize(doc.title || 'Document', maxW)) {
     ensure(26)
@@ -365,7 +470,7 @@ function buildPdf(doc: DocDoc, coverImg?: string | null): jsPDF {
   }
   if (doc.subtitle) {
     pdf.setTextColor(120)
-    pdf.setFont('helvetica', 'italic')
+    pdf.setFont(BODYF, 'italic')
     pdf.setFontSize(12)
     for (const line of pdf.splitTextToSize(doc.subtitle, maxW)) {
       ensure(16)
@@ -375,49 +480,74 @@ function buildPdf(doc: DocDoc, coverImg?: string | null): jsPDF {
   }
   y += 8
 
-  for (const b of doc.blocks || []) {
+  const richParagraph = (text: string, indent = 0, bullet = false) => {
+    let x = margin + indent
+    let first = true
+    const newline = () => { y += 15; x = margin + indent; first = false }
+    ensure(15)
+    if (bullet) { pdf.setFont(BODYF, 'normal'); pdf.setFontSize(11); pdf.setTextColor(30); pdf.text('•', margin + 4, y) }
+    for (const run of documentRuns(text)) {
+      for (const token of run.text.split(/(\s+)/).filter(Boolean)) {
+        if (token.includes('\n')) { newline(); continue }
+        const style = run.bold ? 'bold' : run.italic ? 'italic' : 'normal'
+        pdf.setFont(BODYF, style); pdf.setFontSize(11)
+        const available = maxW - indent
+        const parts = pdf.getTextWidth(token) > available ? pdf.splitTextToSize(token, available) as string[] : [token]
+        for (const part of parts) {
+          const width = pdf.getTextWidth(part)
+          if (x + width > margin + maxW && x > margin + indent) newline()
+          if (!part.trim() && x === margin + indent) continue
+          ensure(15)
+          pdf.setFont(BODYF, style); pdf.setFontSize(11); pdf.setTextColor(run.url ? '#2563A6' : '#1E1E1E')
+          if (run.url) pdf.textWithLink(part, x, y, { url: run.url })
+          else pdf.text(part, x, y)
+          x += width
+        }
+      }
+    }
+    if (x > margin + indent || first) y += 15
+    y += 6
+  }
+
+  for (const [blockIndex, b] of blocks.entries()) {
     if (b.type === 'heading') {
       y += 8
-      const size = b.level === 3 ? 12 : b.level === 2 ? 14 : 16
+      const size = DOC_HEADING_SIZES[(b.level || 2) - 1]
       pdf.setTextColor(ar, ag, ab)
-      pdf.setFont('helvetica', 'bold')
+      pdf.setFont(HEADF, 'bold')
       pdf.setFontSize(size)
-      for (const line of pdf.splitTextToSize(b.text || '', maxW)) {
+      const lines = pdf.splitTextToSize(b.text || '', maxW)
+      const followingHeight = followingContentHeight(blockIndex + 1, pageH - margin - y - lines.length * (size + 6) - 2)
+      pdf.setFont(HEADF, 'bold')
+      pdf.setFontSize(size)
+      ensure(lines.length * (size + 6) + 2 + followingHeight)
+      for (const line of lines) {
         ensure(size + 6)
         pdf.text(line, margin, y)
         y += size + 6
       }
       y += 2
     } else if (b.type === 'paragraph') {
-      pdf.setTextColor(30)
-      pdf.setFont('helvetica', 'normal')
-      pdf.setFontSize(11)
-      for (const line of pdf.splitTextToSize(b.text || '', maxW)) {
-        ensure(15)
-        pdf.text(line, margin, y)
-        y += 15
-      }
-      y += 6
+      richParagraph(b.text || '')
     } else if (b.type === 'bullets') {
-      pdf.setTextColor(30)
-      pdf.setFont('helvetica', 'normal')
-      pdf.setFontSize(11)
-      for (const it of b.items || []) {
-        for (const [k, line] of pdf.splitTextToSize(it, maxW - 14).entries()) {
-          ensure(15)
-          pdf.text(k === 0 ? `•  ${line}` : `   ${line}`, margin + 4, y)
-          y += 15
-        }
-      }
-      y += 6
+      for (const item of b.items || []) richParagraph(item, 14, true)
     } else if (b.type === 'table') {
       autoTable(pdf, {
-        head: [b.columns || []],
-        body: (b.rows || []).map((r) => r.map((c) => String(c ?? ''))),
+        head: [(b.columns || []).map(value => documentRuns(value).map(run => run.text).join(''))],
+        body: (b.rows || []).map((r) => r.map((c) => documentRuns(String(c ?? '')).map(run => run.text).join(''))),
         startY: y,
-        margin: { left: margin, right: margin },
-        styles: { fontSize: 9, cellPadding: 4 },
+        rowPageBreak: 'avoid',
+        margin: { left: margin, right: margin, top: margin, bottom: margin },
+        styles: { font: BODYF, fontSize: 9, cellPadding: 4, valign: 'middle' },
+        columnStyles: Object.fromEntries(documentColumnWidths(b.columns || [], b.rows || []).map((width, i) => [i, { cellWidth: width / 20 }])),
         headStyles: { fillColor: [ar, ag, ab] },
+        didDrawCell: data => {
+          const original = data.section === 'head' ? b.columns?.[data.column.index] : b.rows?.[data.row.index]?.[data.column.index]
+          const urls = [...new Set(documentRuns(String(original ?? '')).flatMap(run => run.url ? [run.url] : []))]
+          // Preserve citation targets even when a table cell wraps over lines.
+          // Multiple citations receive separate, equal-width annotation regions.
+          urls.forEach((url, index) => pdf.link(data.cell.x + index * data.cell.width / urls.length, data.cell.y, data.cell.width / urls.length, data.cell.height, { url }))
+        },
       })
       // @ts-expect-error lastAutoTable is attached by the plugin
       y = (pdf.lastAutoTable?.finalY || y) + 14
@@ -435,23 +565,21 @@ function buildPdf(doc: DocDoc, coverImg?: string | null): jsPDF {
         y += ch + 16
       }
     } else if (b.type === 'image' && b.src) {
-      // Fit within the text column, capped so a tall screenshot doesn't dwarf the page.
-      const cw = b.w && b.h ? Math.min(maxW, (maxW * 0.62 * b.w) / b.h) : maxW
-      const ch = b.w && b.h ? (cw * b.h) / b.w : cw * 0.6
-      ensure(ch + (b.caption ? 28 : 16))
+      const { width: cw, height: ch, captionLines, heightWithCaption } = imageLayout(b, blockIndex, pageH - margin - y)
+      ensure(heightWithCaption)
       try {
-        pdf.addImage(b.src, docxImageType(b.src) === 'png' ? 'PNG' : 'JPEG', margin, y, cw, ch)
+        pdf.addImage(b.src, docxImageType(b.src) === 'png' ? 'PNG' : 'JPEG', margin + (maxW - cw) / 2, y, cw, ch)
       } catch {
         /* skip */
       }
       y += ch + 8
       if (b.caption) {
         pdf.setTextColor(110)
-        pdf.setFont('helvetica', 'italic')
+        pdf.setFont(BODYF, 'italic')
         pdf.setFontSize(9)
-        for (const line of pdf.splitTextToSize(b.caption, maxW)) {
+        for (const line of captionLines) {
           ensure(12)
-          pdf.text(line, margin, y)
+          pdf.text(line, pageW / 2, y, { align: 'center' })
           y += 12
         }
       }
@@ -473,29 +601,41 @@ function buildPdf(doc: DocDoc, coverImg?: string | null): jsPDF {
 }
 
 export default function DocCard({ data: rawData }: { data: DocDoc }) {
-  const data = normalizeDoc(rawData)
+  const data = useMemo(() => normalizeDoc(rawData), [rawData])
   const name = cleanName(data.title)
-  const blocks = data.blocks || []
+  const blocks = documentWithSources(data).blocks || []
   const [busy, setBusy] = useState<'docx' | 'pdf' | null>(null)
+  const [error, setError] = useState('')
+  const exportLock = useRef(false)
 
   const downloadDocx = async () => {
-    if (busy) return
+    if (exportLock.current) return
+    exportLock.current = true
     setBusy('docx')
+    setError('')
     try {
-      const img = data.cover ? await coverImageBuffer(data.cover) : null
-      const blob = await Packer.toBlob(buildDocx(data, img))
+      const blob = await buildDocxBlob(data, null) // no hero cover in docs
+
       downloadBlob(blob, `${name}.docx`)
+    } catch (e) {
+      setError(`Word export failed: ${e instanceof Error ? e.message : 'Please try again.'}`)
     } finally {
+      exportLock.current = false
       setBusy(null)
     }
   }
   const downloadPdf = async () => {
-    if (busy) return
+    if (exportLock.current) return
+    exportLock.current = true
     setBusy('pdf')
+    setError('')
     try {
-      const img = data.cover ? await coverImageDataUrl(data.cover) : null
-      buildPdf(data, img).save(`${name}.pdf`)
+      downloadBlob(await buildPdfBlob(data), `${name}.pdf`)
+
+    } catch (e) {
+      setError(`PDF export failed: ${e instanceof Error ? e.message : 'Please try again.'}`)
     } finally {
+      exportLock.current = false
       setBusy(null)
     }
   }
@@ -504,11 +644,24 @@ export default function DocCard({ data: rawData }: { data: DocDoc }) {
   // charts — in a flat, minimal frame. Styled LIVE by the active Brand Kit
   // (colors + fonts from the Brand bar editor), matching the exported Word/PDF.
   const liveBrand = useBrand()
-  const bPrimary = '#' + (liveBrand?.primary || '14345A')
-  const bAccent = '#' + (liveBrand?.accent || 'AF8C56')
-  const headFont = `'${liveBrand?.headingFont || 'Playfair Display'}', Georgia, serif`
-  const bodyFont = liveBrand?.bodyFont ? `'${liveBrand.bodyFont}', Calibri, system-ui, sans-serif` : undefined
-  const bText = '#' + (liveBrand?.text || '2a2a2a')
+  const chartImages = useMemo(() => (data.blocks || []).map((block) => block.type === 'chart' && hasChartData(block.chart) ? chartDataUrl(block.chart!, 900, 480) : null), [data.blocks, liveBrand])
+  // Design language (from the engine) wins; else the live Brand Kit; else luxury default.
+  const dz = data.design
+  const L = dz?.light || {}
+  const dz_f = dz?.fonts || {}
+  const paper = dhex(L.bg, '#F7F5F1')
+  const bPrimary = dhex(L.ink, '#' + (liveBrand?.primary || '14345A'))
+  const bAccent = dhex(L.accent, '#' + (liveBrand?.accent || 'AF8C56'))
+  const bMuted = dhex(L.muted, '#8a8175')
+  const bText = dhex(L.ink, '#' + (liveBrand?.text || '2a2a2a'))
+  const headFont = dz
+    ? dstack(dz_f.display, dserif(dz_f.display, dz_f.displaySerif))
+    : `'${liveBrand?.headingFont || 'Playfair Display'}', Georgia, serif`
+  const bodyFont = dz
+    ? dstack(dz_f.body, dserif(dz_f.body, dz_f.bodySerif))
+    : liveBrand?.bodyFont
+      ? `'${liveBrand.bodyFont}', Calibri, system-ui, sans-serif`
+      : undefined
   return (
     <div className="my-4 border-y border-glass/[0.12]">
       <div className="flex items-baseline gap-3 px-1 py-2">
@@ -524,11 +677,22 @@ export default function DocCard({ data: rawData }: { data: DocDoc }) {
           {busy === 'pdf' ? 'Designing…' : 'PDF'}
         </button>
       </div>
-      <div className="max-h-[78vh] overflow-y-auto bg-[#F7F5F1] px-8 py-7 text-[13.5px] leading-relaxed" style={{ color: bText, fontFamily: bodyFont }}>
+      {error && <p role="alert" className="px-1 pb-2 text-xs text-red-400">{error}</p>}
+      <div className="max-h-[78vh] overflow-y-auto px-8 py-7 text-[13.5px] leading-relaxed" style={{ color: bText, fontFamily: bodyFont, backgroundColor: paper }}>
+        {(liveBrand?.logo || liveBrand?.logoMark) && (
+          <BrandLogo
+            src={(liveBrand?.logo || liveBrand?.logoMark) as string}
+            dark={(() => { const [r, g, b] = toRgb(paper); return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.5 })()}
+            className="mb-6 h-8 max-w-[40%] object-contain"
+            style={{ objectPosition: 'left center' }}
+          />
+        )}
         <div style={{ fontFamily: headFont, color: bPrimary }} className="text-[24px] font-semibold leading-tight">
           {data.title || 'Document'}
         </div>
-        {data.subtitle && <div className="mt-1 italic text-[#8a8175]">{data.subtitle}</div>}
+        {data.researchStatus === 'unverified' && <p className="my-3 rounded border border-amber-700/30 bg-amber-50 p-3 text-xs text-amber-900">Current facts could not be fully verified from the web. Check the stated evidence gaps before using this document.</p>}
+        {!!data.incompleteSections?.length && <p className="my-3 rounded border border-amber-700/30 bg-amber-50 p-3 text-xs text-amber-900">Incomplete: {data.incompleteSections.join(', ')} could not be generated.</p>}
+        {data.subtitle && <div className="mt-1 italic" style={{ color: bMuted }}>{data.subtitle}</div>}
         <div className="mb-5 mt-3 h-px w-16" style={{ backgroundColor: bAccent }} />
         {blocks.map((b, i) => {
           if (b.type === 'heading')
@@ -536,25 +700,26 @@ export default function DocCard({ data: rawData }: { data: DocDoc }) {
               <div
                 key={i}
                 style={{ fontFamily: headFont, color: bPrimary }}
-                className={`mt-5 font-semibold ${b.level === 1 ? 'text-[18px]' : b.level === 3 ? 'text-[14px]' : 'text-[16px]'}`}
+                role="heading" aria-level={b.level || 2}
+                className={`mt-5 font-semibold ${b.level === 1 ? 'text-[18px]' : b.level === 3 ? 'text-[14px]' : b.level === 4 ? 'text-[13.5px]' : 'text-[16px]'}`}
               >
                 {b.text}
               </div>
             )
-          if (b.type === 'paragraph') return <p key={i} className="mt-2">{b.text}</p>
+          if (b.type === 'paragraph') return <p key={i} className="mt-2"><InlineDocText text={b.text || ''} /></p>
           if (b.type === 'bullets')
             return (
               <ul key={i} className="mt-2 space-y-1 pl-1">
                 {(b.items || []).map((it, j) => (
                   <li key={j} className="flex gap-2.5">
-                    <span style={{ color: bAccent }}>—</span>
-                    <span>{it}</span>
+                    <span style={{ color: bAccent }}>·</span>
+                    <span><InlineDocText text={it} /></span>
                   </li>
                 ))}
               </ul>
             )
           if (b.type === 'chart' && hasChartData(b.chart)) {
-            const url = chartDataUrl(b.chart!, 900, 480)
+            const url = chartImages[i]
             return url ? <img key={i} src={url} alt={b.chart?.title || 'chart'} className="my-4 w-full max-w-2xl bg-white" /> : null
           }
           if (b.type === 'table')
@@ -564,7 +729,7 @@ export default function DocCard({ data: rawData }: { data: DocDoc }) {
                   <thead>
                     <tr>
                       {(b.columns || []).map((c, j) => (
-                        <th key={j} className="border-b-2 bg-transparent px-2.5 py-1.5 text-left font-semibold" style={{ borderColor: bPrimary, color: bPrimary }}>{c}</th>
+                        <th key={j} className="border-b-2 bg-transparent px-2.5 py-1.5 text-left font-semibold" style={{ borderColor: bPrimary, color: bPrimary }}><InlineDocText text={c} /></th>
                       ))}
                     </tr>
                   </thead>
@@ -572,7 +737,7 @@ export default function DocCard({ data: rawData }: { data: DocDoc }) {
                     {(b.rows || []).map((r, ri) => (
                       <tr key={ri} className={ri % 2 ? 'bg-black/[0.025]' : ''}>
                         {(b.columns || []).map((_, ci) => (
-                          <td key={ci} className="border-b border-black/10 px-2.5 py-1.5 align-top">{String(r[ci] ?? '')}</td>
+                          <td key={ci} className="border-b border-black/10 px-2.5 py-1.5 align-top"><InlineDocText text={String(r[ci] ?? '')} /></td>
                         ))}
                       </tr>
                     ))}

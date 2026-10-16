@@ -8,6 +8,9 @@ import { PaletteCard, BrandCard, BlueprintCard, LogoCard, ShoppingCard } from '.
 import type { DesignArtifact } from './types'
 
 export default function DesignArtifactCard({ art, onUpdate }: { art: DesignArtifact; onUpdate?: (art: DesignArtifact) => void }) {
+  // Early chat versions saved the HTML string directly instead of a typed
+  // artifact. Keep those saved designs viewable when the conversation reopens.
+  if (typeof art === 'string') return <DesignCard html={art} />
   switch (art.kind) {
     case 'webpage':
     case 'poster':
@@ -16,13 +19,16 @@ export default function DesignArtifactCard({ art, onUpdate }: { art: DesignArtif
     case 'board':
       return (
         <DesignCard
+          kind={art.kind}
+          motion={art.motion}
           html={art.html}
           truncated={art.truncated}
-          onUpdate={onUpdate ? (html) => onUpdate({ ...art, html, truncated: false }) : undefined}
+          quality={art.quality}
+          onUpdate={onUpdate ? (html, quality) => onUpdate({ ...art, html, quality, truncated: false }) : undefined}
         />
       )
     case 'canvas':
-      return <CanvasCard art={art} />
+      return <CanvasCard art={art} onUpdate={onUpdate ? (canvas) => onUpdate({ ...art, canvas }) : undefined} />
     case 'palette':
       return <PaletteCard art={art} />
     case 'brand':

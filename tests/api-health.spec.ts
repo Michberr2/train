@@ -10,19 +10,24 @@ test.describe('API', () => {
   // ---- cheap reachability: endpoints must exist and fail gracefully ----
   const endpoints = ['/api/doc', '/api/sheet', '/api/slides', '/api/design', '/api/image', '/api/video', '/api/chat']
   for (const ep of endpoints) {
-    test(`[health] @smoke ${ep} is reachable and never 500s on empty input`, async ({ request }) => {
+    test(`[health] @smoke ${ep} rejects empty input through its JSON handler`, async ({ request }) => {
       const res = await request.post(`${BASE_URL}${ep}`, { data: {}, timeout: 30_000 }).catch(() => null)
       // Reachable (not a network failure / 404) and not a server crash (5xx).
       expect(res, 'no response').not.toBeNull()
       const status = res!.status()
-      expect(status, `${ep} returned ${status}`).toBeLessThan(500)
+      expect([400, 401, 422], `${ep} returned ${status}; a missing route, HTML fallback or exhausted quota is not a healthy validation response`).toContain(status)
+      expect(res!.headers()['content-type']).toMatch(/application\/json/i)
+      const body = await res!.json()
+      expect(typeof body.error).toBe('string')
+      expect(body.error.length).toBeGreaterThan(0)
     })
   }
 
   test('[health] @smoke /api/data share lookup handles a bogus id without leaking', async ({ request }) => {
     const res = await request.get(`${BASE_URL}/api/data?share=__nope__${Date.now()}`)
-    expect(res.status()).toBeLessThan(500)
+    expect(res.status()).toBe(404)
     const body = await res.text()
+    expect(body).toBe('This Nalu site was not found.')
     expect(body, 'must not leak a stack trace').not.toMatch(/at \w+ \(.*:\d+:\d+\)/)
   })
 

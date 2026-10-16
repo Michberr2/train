@@ -8,8 +8,8 @@
     --color-surface: 255 255 255;
     --color-primary: 26 26 26;
     --color-secondary: 89 89 89;
-    --color-tertiary: 120 120 120;
-    --color-nav-text: 138 138 138;
+    --color-tertiary: 108 108 108;
+    --color-nav-text: 89 89 89;
     --color-accent-blue: 107 159 255;
     --color-border-gray: 229 229 229;
     --color-curve-line: 224 224 224;
@@ -32,7 +32,7 @@
     --color-surface: 26 26 26;
     --color-primary: 255 255 255;
     --color-secondary: 160 160 160;
-    --color-tertiary: 120 120 120;
+    --color-tertiary: 152 152 152;
     --color-nav-text: 176 176 176;
     --color-accent-blue: 107 159 255;
     --color-border-gray: 42 42 42;
@@ -81,6 +81,13 @@
 
 @layer utilities {
   .text-balance { text-wrap: balance; }
+
+  /* Keep white captions readable even over the brightest scenery pixels. */
+  .scenery-caption {
+    padding: 0.625rem 1rem;
+    border-radius: 1rem;
+    background-color: rgba(0, 0, 0, 0.6);
+  }
 
   .scrollbar-hide::-webkit-scrollbar { display: none; }
   .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
@@ -171,6 +178,15 @@
 @keyframes nalu-fadein { from { opacity: 0; transform: translateY(3px) } to { opacity: 1; transform: none } }
 .nalu-fadein { animation: nalu-fadein .35s ease both; }
 
+/* Streaming answer: the newest text softly fades in at the bottom edge as it
+   arrives, so responses materialize rather than snapping in. Removed the moment
+   streaming ends (class is conditional), leaving the finished text fully solid. */
+.nalu-stream-fade {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 2.4em), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 2.4em), transparent 100%);
+}
+@media (prefers-reduced-motion: reduce) { .nalu-stream-fade { -webkit-mask-image: none; mask-image: none; } }
+
 /* Thinking — the Nalu mark breathes while it works. A gentle
    scale + opacity + soft gold glow so the logo feels alive until the first token. */
 @keyframes nalu-think {
@@ -191,6 +207,15 @@
 /* No visible scrollbars anywhere — scrolling itself still works everywhere. */
 * { scrollbar-width: none; -ms-overflow-style: none; }
 *::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
+/* …EXCEPT where a wide element MUST advertise that it scrolls (e.g. the map's
+   comparison table with many columns): show a thin gold scrollbar so it's
+   obviously draggable, and keep touch/trackpad momentum scrolling. */
+.map-xscroll { scrollbar-width: thin; scrollbar-color: rgba(175,140,86,.6) transparent; overscroll-behavior-x: contain; }
+.map-xscroll::-webkit-scrollbar { height: 8px; width: 8px; display: block; }
+.map-xscroll::-webkit-scrollbar-thumb { background: rgba(175,140,86,.55); border-radius: 8px; }
+.map-xscroll::-webkit-scrollbar-thumb:hover { background: rgba(175,140,86,.8); }
+.map-xscroll::-webkit-scrollbar-track { background: transparent; }
 
 
 /* loading → artifact: a soft WAVE of light sweeps the piece into view.

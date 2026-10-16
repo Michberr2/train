@@ -11,6 +11,7 @@ export type Attachment = {
   truncated?: boolean
   dataUrl?: string // original file (for open/download); omitted for large files
   isImage?: boolean // screenshot/photo — sent to the vision model + embeddable in docs
+  storage?: { id: string; parts: number; mime: string; size: number; sha256: string }
 }
 
 const MAX_KEEP_BYTES = 6 * 1024 * 1024 // keep the original for files up to ~6MB
@@ -57,6 +58,7 @@ async function downscaleImage(file: File, maxDim = 1568): Promise<string | undef
       im.src = url
     })
     const scale = Math.min(1, maxDim / Math.max(img.width, img.height))
+    if (scale === 1 && /^image\/(png|jpeg|webp)$/i.test(file.type)) return url
     const w = Math.max(1, Math.round(img.width * scale))
     const h = Math.max(1, Math.round(img.height * scale))
     const canvas = document.createElement('canvas')
@@ -65,7 +67,9 @@ async function downscaleImage(file: File, maxDim = 1568): Promise<string | undef
     const ctx = canvas.getContext('2d')
     if (!ctx) return url
     ctx.drawImage(img, 0, 0, w, h)
-    return canvas.toDataURL('image/jpeg', 0.85)
+    // Keep alpha for transparent headshots / cutouts instead of flattening them
+    // onto JPEG's black background.
+    return canvas.toDataURL(file.type === 'image/jpeg' ? 'image/jpeg' : 'image/webp', 0.9)
   } catch {
     return undefined
   }

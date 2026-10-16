@@ -51,7 +51,7 @@ export default function NavBar({ activeIndex, setActiveIndex, onControlScreen, c
       </div>
 
       <motion.div
-        className="hidden md:block bg-border-gray/60 rounded-xl p-1 border border-border-gray"
+        className="hidden md:block bg-border-gray rounded-xl p-1 border border-border-gray"
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.2, duration: 0.5 }}
@@ -108,12 +108,12 @@ export default function NavBar({ activeIndex, setActiveIndex, onControlScreen, c
 
         {user ? (
           <div className="flex items-center gap-2">
-            <span className="hidden sm:inline-flex items-center h-11 px-3 rounded-lg bg-border-gray/60 border border-border-gray text-primary text-xs font-medium max-w-[140px] truncate">
+            <span className="hidden sm:inline-flex items-center h-11 px-3 rounded-lg bg-border-gray border border-border-gray text-primary text-xs font-medium max-w-[140px] truncate">
               {user.displayName}
             </span>
             <button
               onClick={signOut}
-              className="inline-flex items-center h-11 px-3.5 rounded-lg bg-border-gray/60 border border-border-gray text-primary text-xs font-medium hover:bg-border-gray transition-colors"
+              className="inline-flex items-center h-11 px-3.5 rounded-lg bg-border-gray border border-border-gray text-primary text-xs font-medium hover:bg-border-gray transition-colors"
             >
               Sign out
             </button>
@@ -121,7 +121,7 @@ export default function NavBar({ activeIndex, setActiveIndex, onControlScreen, c
         ) : (
           <button
             onClick={() => openAuth('signin')}
-            className="inline-flex items-center h-11 px-3.5 rounded-lg bg-border-gray/60 border border-border-gray text-primary text-xs font-medium hover:bg-border-gray transition-colors"
+            className="inline-flex items-center h-11 px-3.5 rounded-lg bg-border-gray border border-border-gray text-primary text-xs font-medium hover:bg-border-gray transition-colors"
           >
             Sign in
           </button>
@@ -130,14 +130,14 @@ export default function NavBar({ activeIndex, setActiveIndex, onControlScreen, c
         <button
           onClick={(e) => toggleTheme(e)}
           aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-          className="flex items-center justify-center w-11 h-11 rounded-lg bg-border-gray/60 border border-border-gray text-primary hover:bg-border-gray transition-colors"
+          className="flex items-center justify-center w-11 h-11 rounded-lg bg-border-gray border border-border-gray text-primary hover:bg-border-gray transition-colors"
         >
           {isDark ? <Sun size={18} strokeWidth={1.5} /> : <Moon size={18} strokeWidth={1.5} />}
         </button>
 
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="md:hidden flex items-center justify-center w-11 h-11 rounded-lg bg-border-gray/60 border border-border-gray"
+          className="md:hidden flex items-center justify-center w-11 h-11 rounded-lg bg-border-gray border border-border-gray"
           aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
           aria-expanded={mobileMenuOpen}
         >

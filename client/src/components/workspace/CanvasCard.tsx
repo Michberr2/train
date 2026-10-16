@@ -10,9 +10,10 @@ import {
   FileCode2,
   FileDown,
   Braces,
+  Save,
 } from 'lucide-react'
 
-// Fabric.js v6 (MIT) editable vector canvas — THE "Nalu Studio" headline artifact.
+// Fabric.js editable vector canvas — THE "Nalu Studio" headline artifact.
 // Seeded from the AI's design JSON (canvas.loadFromJSON), fully editable in-page
 // (drag / resize / edit text), with vector + raster export. Fabric is a heavy
 // (~300KB) lib, so this whole module is lazy()-loaded by DesignArtifactCard and
@@ -80,8 +81,11 @@ interface FabricCanvas {
   setDimensions(d: { width: number; height: number }): void
   setZoom(v: number): void
   getZoom(): number
+  getWidth(): number
+  getHeight(): number
   backgroundColor: string
-  loadFromJSON(json: unknown): Promise<FabricCanvas>
+  loadFromJSON(json: unknown, reviver?: undefined, options?: { signal: AbortSignal }): Promise<FabricCanvas>
+  on(event: string, callback: () => void): () => void
   toJSON(): unknown
   toSVG(): string
   toDataURL(opts: { format: string; multiplier: number; quality?: number }): string
@@ -97,6 +101,7 @@ interface FabricCanvas {
   dispose(): Promise<boolean> | void
 }
 interface FabricModule {
+  FabricObject: { ownDefaults: Record<string, unknown> }
   Canvas: new (el: HTMLCanvasElement, opts?: Record<string, unknown>) => FabricCanvas
   Rect: new (opts: Record<string, unknown>) => FabricObject
   Textbox: new (text: string, opts: Record<string, unknown>) => FabricObject
@@ -117,31 +122,63 @@ function triggerDownload(url: string, filename: string) {
   a.remove()
 }
 
-export default function CanvasCard({ art }: { art: CanvasArtifact }) {
+export default function CanvasCard({ art, onUpdate }: { art: CanvasArtifact; onUpdate?: (canvas: CanvasScene) => void }) {
   const elRef = useRef<HTMLCanvasElement | null>(null)
+  const stageRef = useRef<HTMLDivElement | null>(null)
   const fabricRef = useRef<FabricModule | null>(null)
   const canvasRef = useRef<FabricCanvas | null>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [availableWidth, setAvailableWidth] = useState(MAX_STAGE_W)
+  const [loadAttempt, setLoadAttempt] = useState(0)
 
   const scene = art.canvas || {}
-  const sceneW = Math.max(1, scene.width || 1080)
-  const sceneH = Math.max(1, scene.height || 1350)
+  const sceneW = Number.isFinite(scene.width) && scene.width! > 0 ? Math.max(1, Math.round(scene.width!)) : 1080
+  const sceneH = Number.isFinite(scene.height) && scene.height! > 0 ? Math.max(1, Math.round(scene.height!)) : 1350
   const bg = scene.background || '#0B1020'
   // Fit the scene into the chat column. We DO NOT CSS-transform fabric's canvas
   // (that breaks fabric's pointer→scene mapping and hit-testing). Instead the
   // backstore + CSS are sized to the fitted display size and fabric's own zoom
   // scales the high-res scene down — so clicks/drags stay pixel-accurate.
-  const fitScale = Math.min(1, MAX_STAGE_W / sceneW)
+  const fitScale = Math.min(1, Math.min(MAX_STAGE_W, availableWidth) / sceneW)
   const stageW = Math.max(1, Math.round(sceneW * fitScale))
   const stageH = Math.max(1, Math.round(sceneH * fitScale))
   const name = safeName(art.name)
+  const sceneKey = JSON.stringify(scene)
+  const sizeRef = useRef({ stageW, stageH, fitScale })
+  sizeRef.current = { stageW, stageH, fitScale }
+
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+    const resize = () => {
+      const style = getComputedStyle(stage)
+      setAvailableWidth(Math.max(1, stage.clientWidth - parseFloat(style.paddingLeft || '0') - parseFloat(style.paddingRight || '0')))
+    }
+    resize()
+    const observer = new ResizeObserver(resize)
+    observer.observe(stage)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !ready) return
+    canvas.setDimensions({ width: stageW, height: stageH })
+    canvas.setZoom(fitScale)
+    canvas.requestRenderAll()
+  }, [stageW, stageH, fitScale, ready])
 
   useEffect(() => {
     let disposed = false
+    const controller = new AbortController()
+    let ownedCanvas: FabricCanvas | undefined
+    const listeners: (() => void)[] = []
     const el = elRef.current
     if (!el) return
+    setReady(false); setError(null); setDirty(false)
 
     ;(async () => {
       try {
@@ -149,29 +186,36 @@ export default function CanvasCard({ art }: { art: CanvasArtifact }) {
         const mod = (await import('fabric')) as unknown as FabricModule
         // Guard StrictMode double-mount: bail before constructing if cleanup ran.
         if (disposed) return
+        // Saved/AI-authored scenes and editor tools use the Fabric 6 left/top
+        // coordinate contract. Fabric 7 defaults to center; restore these defaults
+        // before any object (including grouped children) is hydrated. Explicit
+        // saved originX/originY values still override the defaults normally.
+        mod.FabricObject.ownDefaults.originX = 'left'
+        mod.FabricObject.ownDefaults.originY = 'top'
         fabricRef.current = mod
 
         const c = new mod.Canvas(el, {
           preserveObjectStacking: true,
           backgroundColor: bg,
         })
+        ownedCanvas = c
         canvasRef.current = c
 
         // Display the scene at fitted size; zoom maps full-res scene → display.
-        c.setDimensions({ width: stageW, height: stageH })
-        c.setZoom(fitScale)
+        c.setDimensions({ width: sizeRef.current.stageW, height: sizeRef.current.stageH })
+        c.setZoom(sizeRef.current.fitScale)
 
         const objects = Array.isArray(scene.objects) ? scene.objects : []
         // Hydrate the AI-authored scene. Fabric v6 loadFromJSON is async/Promise-based
         // and does NOT alter canvas dimensions, so the zoom/size set above survive it.
-        await c.loadFromJSON({ background: bg, objects })
+        await c.loadFromJSON({ background: bg, objects }, undefined, { signal: controller.signal })
         if (disposed) {
-          void c.dispose()
           return
         }
         c.backgroundColor = bg
-        c.setZoom(fitScale) // re-assert in case the JSON carried a viewport transform
+        c.setZoom(sizeRef.current.fitScale)
         c.requestRenderAll()
+        for (const event of ['object:added', 'object:removed', 'object:modified', 'text:changed']) listeners.push(c.on(event, () => setDirty(true)))
         setReady(true)
       } catch (e) {
         if (!disposed) setError(e instanceof Error ? e.message : 'Failed to load canvas editor.')
@@ -180,12 +224,13 @@ export default function CanvasCard({ art }: { art: CanvasArtifact }) {
 
     return () => {
       disposed = true
-      setReady(false)
-      const c = canvasRef.current
-      canvasRef.current = null
+      controller.abort()
+      listeners.forEach(dispose => dispose())
+      const c = ownedCanvas
+      if (canvasRef.current === c) canvasRef.current = null
       if (c) {
         try {
-          void c.dispose()
+          void Promise.resolve(c.dispose()).catch(() => {})
         } catch {
           /* noop */
         }
@@ -193,7 +238,7 @@ export default function CanvasCard({ art }: { art: CanvasArtifact }) {
     }
     // Re-seed only when the underlying artifact changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [art])
+  }, [sceneKey, loadAttempt])
 
   // ---- Editing actions -------------------------------------------------------
   const addText = useCallback(() => {
@@ -248,6 +293,7 @@ export default function CanvasCard({ art }: { art: CanvasArtifact }) {
     const o = c.getActiveObject()
     if (o) {
       c.bringObjectToFront(o)
+      setDirty(true)
       c.requestRenderAll()
     }
   }, [])
@@ -258,54 +304,66 @@ export default function CanvasCard({ art }: { art: CanvasArtifact }) {
     const o = c.getActiveObject()
     if (o) {
       c.sendObjectToBack(o)
+      setDirty(true)
       c.requestRenderAll()
     }
   }, [])
 
   // ---- Exports ---------------------------------------------------------------
-  // Display zoom is fitScale; multiplier 1/fitScale recovers the TRUE scene
-  // resolution (stageW/fitScale === sceneW) regardless of how small the preview is.
-  const exportMultiplier = 1 / fitScale
+  const snapshot = useCallback((): CanvasScene => ({ ...(canvasRef.current?.toJSON() as CanvasScene), width: sceneW, height: sceneH, background: canvasRef.current?.backgroundColor || bg }), [sceneW, sceneH, bg])
+  const saveChanges = () => {
+    if (!ready || !onUpdate) return
+    try { onUpdate(snapshot()); setDirty(false) } catch { setError('The canvas changes could not be saved. Please try again.') }
+  }
+  // Export in exact scene dimensions; multiplying a rounded preview height can
+  // add/drop a pixel and SVG otherwise inherits the preview's physical size.
+  const atFullSize = useCallback(<T,>(canvas: FabricCanvas, render: () => T): T => {
+    const width = canvas.getWidth(), height = canvas.getHeight(), zoom = canvas.getZoom()
+    try { canvas.setDimensions({ width: sceneW, height: sceneH }); canvas.setZoom(1); return render() }
+    finally { canvas.setDimensions({ width, height }); canvas.setZoom(zoom); canvas.requestRenderAll() }
+  }, [sceneW, sceneH])
 
   const exportPng = useCallback(() => {
     const c = canvasRef.current
     if (!c) return
     try {
-      const url = c.toDataURL({ format: 'png', multiplier: exportMultiplier })
+      const url = atFullSize(c, () => c.toDataURL({ format: 'png', multiplier: 1 }))
       triggerDownload(url, `${name}.png`)
     } catch {
       setError('PNG export failed (a remote image may have tainted the canvas).')
     }
-  }, [name, exportMultiplier])
+  }, [name, atFullSize])
 
   const exportSvg = useCallback(() => {
     const c = canvasRef.current
     if (!c) return
-    // toSVG() emits scene-space vector geometry (zoom-independent) — full fidelity.
-    const svg = c.toSVG()
-    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }))
-    triggerDownload(url, `${name}.svg`)
-    setTimeout(() => URL.revokeObjectURL(url), 4000)
-  }, [name])
+    try {
+      const svg = atFullSize(c, () => c.toSVG())
+      const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }))
+      triggerDownload(url, `${name}.svg`)
+      setTimeout(() => URL.revokeObjectURL(url), 4000)
+    } catch { setError('SVG export failed. Please try again.') }
+  }, [name, atFullSize])
 
   const exportJson = useCallback(() => {
     const c = canvasRef.current
     if (!c) return
-    const json = JSON.stringify({ kind: 'canvas', name: art.name, canvas: c.toJSON() }, null, 2)
+    const json = JSON.stringify({ kind: 'canvas', name: art.name, canvas: snapshot() }, null, 2)
     const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
     triggerDownload(url, `${name}.json`)
     setTimeout(() => URL.revokeObjectURL(url), 4000)
-  }, [name, art.name])
+  }, [name, art.name, snapshot])
 
   const exportPdf = useCallback(async () => {
     const c = canvasRef.current
     if (!c) return
     setBusy(true)
     try {
-      const png = c.toDataURL({ format: 'png', multiplier: exportMultiplier })
+      const png = atFullSize(c, () => c.toDataURL({ format: 'png', multiplier: 1 }))
       const { jsPDF } = await import('jspdf')
+      if (canvasRef.current !== c) return
       const orientation = sceneW >= sceneH ? 'landscape' : 'portrait'
-      const pdf = new jsPDF({ orientation, unit: 'px', format: [sceneW, sceneH] })
+      const pdf = new jsPDF({ orientation, unit: 'px', format: [sceneW, sceneH], hotfixes: ['px_scaling'] })
       pdf.addImage(png, 'PNG', 0, 0, sceneW, sceneH)
       pdf.save(`${name}.pdf`)
     } catch {
@@ -313,7 +371,7 @@ export default function CanvasCard({ art }: { art: CanvasArtifact }) {
     } finally {
       setBusy(false)
     }
-  }, [name, sceneW, sceneH, exportMultiplier])
+  }, [name, sceneW, sceneH, atFullSize])
 
   const toolBtn =
     'flex items-center gap-1.5 rounded-lg bg-glass/[0.07] px-2.5 py-1.5 text-xs text-ink hover:bg-glass/[0.12] disabled:opacity-40'
@@ -321,7 +379,7 @@ export default function CanvasCard({ art }: { art: CanvasArtifact }) {
     'flex items-center gap-1.5 rounded-lg bg-fuchsia-500/20 px-2.5 py-1.5 text-xs font-medium text-fuchsia-200 hover:bg-fuchsia-500/30 disabled:opacity-40'
 
   return (
-    <div className="my-2 overflow-hidden rounded-xl border border-glass/[0.16] bg-glass/[0.04]">
+    <div role="region" aria-label={`${art.name || 'Nalu Studio'} canvas`} className="my-2 overflow-hidden rounded-xl border border-glass/[0.16] bg-glass/[0.04]">
       <div className="flex flex-wrap items-center gap-2 border-b border-glass/[0.12] px-4 py-2.5">
         <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-fuchsia-500/15 text-fuchsia-300">
           <Brush size={15} />
@@ -332,6 +390,7 @@ export default function CanvasCard({ art }: { art: CanvasArtifact }) {
             Editable canvas — {sceneW}×{sceneH}
           </div>
         </div>
+        {onUpdate && <button onClick={saveChanges} disabled={!ready || !dirty || busy} className={toolBtn}><Save size={13} /> Save changes</button>}
         <button onClick={exportPng} disabled={!ready || busy} className={exportBtn} title="Export PNG (full-res)">
           <FileImage size={13} /> PNG
         </button>
@@ -369,10 +428,11 @@ export default function CanvasCard({ art }: { art: CanvasArtifact }) {
       </div>
 
       {/* Stage */}
-      <div className="relative max-h-[34rem] overflow-auto bg-canvas p-4">
+      {dirty && <p role="status" className="px-4 py-2 text-xs text-dim">{onUpdate ? 'Unsaved canvas changes.' : 'Download JSON to keep your editable changes.'}</p>}
+      <div ref={stageRef} className="relative max-h-[34rem] overflow-auto bg-canvas p-4">
         {error && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 p-6 text-center text-xs text-red-300">
-            {error}
+          <div role="alert" className="absolute inset-0 z-10 flex items-center justify-center gap-3 bg-black/60 p-6 text-center text-xs text-red-300">
+            {error}<button onClick={() => ready ? setError(null) : setLoadAttempt(n => n + 1)} className={toolBtn}>{ready ? 'Dismiss' : 'Retry'}</button>
           </div>
         )}
         {!ready && !error && (

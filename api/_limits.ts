@@ -1,3 +1,6 @@
+import { connectionBackend } from './_connectionBackend'
+import { CloudflareStore } from './_cloudflareStore'
+import { reserveCloudflareQuota } from './_cloudflareQuota'
 // Per-subject daily usage caps for paid/limited features (video, …). Keeps a
 // viral spike from running up a surprise bill. Keyed by signed-in user when a
 // token is present, else by client IP for anonymous visitors.
@@ -71,6 +74,15 @@ export async function reserveDailyQuota(
   const anonLimit = opts?.anonPerDay ?? intEnv('NALU_FREE_VIDEO_PER_DAY', 3)
   const userLimit = opts?.userPerDay ?? intEnv('NALU_USER_VIDEO_PER_DAY', 25)
 
+  if (process.env.NALU_STORAGE_BACKEND === 'cloudflare') {
+    try {
+      const backend = connectionBackend(), uid = await backend.userId(readToken(req)), signedIn = !!uid
+      const limit = signedIn ? userLimit : anonLimit
+      if (limit <= 0) return { ok: true, used: 0, limit: 0, signedIn, release: noop }
+      const quota = await reserveCloudflareQuota(backend.client as CloudflareStore, uid ? `user:${uid}` : anonSubject(req), kind, limit)
+      return { ...quota, signedIn }
+    } catch { return { ok: true, used: 0, limit: 0, signedIn: false, release: noop } }
+  }
   let client
   try {
     client = getClient()

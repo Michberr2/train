@@ -1,3 +1,4 @@
+import WorkspaceIntro from './WorkspaceIntro'
 import { useEffect, useState } from 'react';
 import { Wand2 } from 'lucide-react';
 
@@ -89,22 +90,10 @@ export default function SkillsPanel() {
   const enabledCount = skills.filter((s) => s.enabled).length;
 
   return (
-    <div className="flex h-full flex-col bg-glass/[0.09] backdrop-blur-2xl font-sans text-ink">
-      <header className="flex items-center gap-3 border-b border-glass/[0.18] px-6 py-4">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-glass/5">
-          <Wand2 className="h-5 w-5 text-emerald-300" />
-        </div>
-        <div className="min-w-0">
-          <h1 className="text-base font-semibold text-ink">Skills</h1>
-          <p className="truncate text-sm text-dim">Give Nalu superpowers</p>
-        </div>
-        <span className="ml-auto rounded-full bg-glass/5 px-3 py-1 text-xs text-dim">
-          {enabledCount} of {skills.length} on
-        </span>
-      </header>
-
-      <div className="flex-1 overflow-y-auto px-4 py-4">
-        <ul className="mx-auto flex max-w-2xl flex-col gap-2">
+    <div className="ws-skills ws-feature-page flex flex-1 min-h-0 flex-col font-sans text-ink">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
+        <div className="mx-auto max-w-2xl"><WorkspaceIntro label="Skills" title="A little more possible." description="Give Nalu the abilities that fit your day."><span className="ws-save-status">{enabledCount} of {skills.length} skills on</span></WorkspaceIntro></div>
+        <ul className="ws-skill-cards mx-auto grid max-w-5xl gap-2">
           {skills.map((skill) => (
             <li
               key={skill.id}

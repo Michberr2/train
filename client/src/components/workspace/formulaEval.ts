@@ -12,7 +12,7 @@
 //
 // We deliberately avoid HyperFormula (GPL/commercial) — dependency-free + safe.
 
-export type Cell = string | number
+export type Cell = string | number | boolean
 export interface EvalSheet {
   name?: string
   columns?: string[]
@@ -71,10 +71,10 @@ function tokenize(src: string): Tok[] | null {
     ['colon', /^:/],
     ['str', /^"(?:[^"]|"")*"/],
     // whole-column ranges: Sheet!A:C or A:C  (must come before sref/ref/ident)
-    ['scolref', /^(?:'[^']*'|[A-Za-z_][A-Za-z0-9_.]*)!\$?[A-Za-z]{1,3}:\$?[A-Za-z]{1,3}(?![A-Za-z0-9])/],
+    ['scolref', /^(?:'(?:[^']|'')*'|[A-Za-z_][A-Za-z0-9_.]*)!\$?[A-Za-z]{1,3}:\$?[A-Za-z]{1,3}(?![A-Za-z0-9])/],
     ['colref', /^\$?[A-Za-z]{1,3}:\$?[A-Za-z]{1,3}(?![A-Za-z0-9])/],
     // Sheet!ref  (sheet name bare or 'quoted')
-    ['sref', /^(?:'[^']*'|[A-Za-z_][A-Za-z0-9_.]*)!\$?[A-Za-z]{1,3}\$?\d+/],
+    ['sref', /^(?:'(?:[^']|'')*'|[A-Za-z_][A-Za-z0-9_.]*)!\$?[A-Za-z]{1,3}\$?\d+/],
     ['ref', /^\$?[A-Za-z]{1,3}\$?\d+/],
     ['ident', /^[A-Za-z_][A-Za-z0-9_.]*/],
   ]
@@ -110,9 +110,9 @@ function refOf(tok: Tok): { sheet?: string; col: number; row: number } | null {
   let refStr = tok.v
   let sheet: string | undefined
   if (tok.t === 'sref') {
-    const bang = tok.v.indexOf('!')
+    const bang = tok.v.lastIndexOf('!')
     let sn = tok.v.slice(0, bang)
-    if (sn.startsWith("'") && sn.endsWith("'")) sn = sn.slice(1, -1)
+    if (sn.startsWith("'") && sn.endsWith("'")) sn = sn.slice(1, -1).replace(/''/g, "'")
     sheet = sn
     refStr = tok.v.slice(bang + 1)
   }
@@ -125,9 +125,9 @@ function colOf(tok: Tok): { sheet?: string; c1: number; c2: number } | null {
   let s = tok.v
   let sheet: string | undefined
   if (tok.t === 'scolref') {
-    const bang = s.indexOf('!')
+    const bang = s.lastIndexOf('!')
     let sn = s.slice(0, bang)
-    if (sn.startsWith("'") && sn.endsWith("'")) sn = sn.slice(1, -1)
+    if (sn.startsWith("'") && sn.endsWith("'")) sn = sn.slice(1, -1).replace(/''/g, "'")
     sheet = sn
     s = s.slice(bang + 1)
   }
@@ -218,7 +218,11 @@ function parse(toks: Tok[]): Node | null {
 
 export function buildEvaluator(sheets: EvalSheet[]) {
   const byName = new Map<string, EvalSheet>()
-  sheets.forEach((s) => { if (s.name) byName.set(s.name.toLowerCase(), s) })
+  const sheetIds = new Map<EvalSheet, number>()
+  sheets.forEach((s, index) => {
+    sheetIds.set(s, index)
+    if (s.name && !byName.has(s.name.toLowerCase())) byName.set(s.name.toLowerCase(), s)
+  })
   const cache = new Map<string, Value>()
   const visiting = new Set<string>()
 
@@ -231,7 +235,7 @@ export function buildEvaluator(sheets: EvalSheet[]) {
     return byName.get(name.toLowerCase()) ?? null
   }
   function evalCell(sheet: EvalSheet, excelRow: number, col: number): Value {
-    const key = `${sheet.name || ''}|${excelRow}|${col}`
+    const key = `${sheetIds.get(sheet)}|${excelRow}|${col}`
     if (cache.has(key)) return cache.get(key)!
     if (visiting.has(key)) return null // cycle guard
     const raw = rawAt(sheet, excelRow, col)
@@ -465,7 +469,7 @@ export function buildEvaluator(sheets: EvalSheet[]) {
 
   function run(formula: string, ctx: EvalSheet): Value {
     try {
-      const toks = tokenize(formula.replace(/^=/, ''))
+      const toks = tokenize(formula.trimStart().replace(/^=/, ''))
       if (!toks) return null
       const ast = parse(toks)
       return evalNode(ast, ctx)
@@ -480,7 +484,7 @@ export function buildEvaluator(sheets: EvalSheet[]) {
       const sheet = sheets[sheetIdx]
       const raw = sheet?.rows?.[dataRowIdx]?.[colIdx]
       if (!isFormula(raw)) return (raw as Cell) ?? ''
-      const v = run(raw as string, sheet)
+      const v = evalCell(sheet, dataRowIdx + 2, colIdx)
       if (v == null) return raw as string // uncomputable → show formula (rare; backend wraps in IFERROR)
       if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE'
       return v

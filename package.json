@@ -11,13 +11,42 @@
     "studio": "playwright test",
     "studio:smoke": "playwright test --grep @smoke",
     "studio:full": "STUDIO_FULL=1 playwright test",
-    "studio:report": "playwright show-report tests/.report"
+    "studio:report": "playwright show-report tests/.report",
+    "check:sync": "node scripts/check-nalu-sync.mjs",
+    "watch:sync": "node scripts/check-nalu-sync.mjs --watch",
+    "predev": "npm run check:sync",
+    "build:checked": "npm run check:sync && npm run build",
+    "check:offline": "node scripts/offline-release-checks.mjs",
+    "check:preview": "node scripts/preview-release-checks.mjs",
+    "check:release": "npm run check:offline && npm run check:sync && node --experimental-strip-types scripts/native-chat-contract-regressions.mjs"
   },
   "dependencies": {
-    "pg": "^8.21.0"
+    "@vercel/functions": "^3.9.5",
+    "acorn": "^8.18.0",
+    "nodemailer": "^10.1.1",
+    "parse5": "^7.3.0",
+    "pg": "^8.21.0",
+    "postcss": "^8.5.30",
+    "sharp": "^0.35.5",
+    "@sparticuz/chromium": "153.0.0",
+    "playwright-core": "1.64.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.3",
-    "@playwright/test": "^1.49.0"
+    "@playwright/test": "1.64.1",
+    "@types/pg": "^8.23.1"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "overrides": {
+    "uuid": "11.1.1",
+    "image-size": "2.0.4",
+    "rehype-katex": {
+      "katex": "0.19.0"
+    },
+    "micromark-extension-math": {
+      "katex": "0.19.0"
+    }
   }
 }

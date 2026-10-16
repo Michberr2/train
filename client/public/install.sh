@@ -5,7 +5,7 @@
 set -e
 
 BASE="${NALU_INSTALL_URL:-https://n4lu.com}"
-DIR="$HOME/.nalu/bin"
+DIR="${NALU_INSTALL_DIR:-$HOME/.nalu/bin}"
 
 # ── Node.js 18+ is the only requirement ──
 if ! command -v node >/dev/null 2>&1; then
@@ -29,19 +29,26 @@ fi
 
 # ── download the CLI ──
 mkdir -p "$DIR"
+DIR=$(cd "$DIR" && pwd)
 echo "Downloading Nalu CLI from $BASE/nalu.mjs …"
-curl -fsSL "$BASE/nalu.mjs" -o "$DIR/nalu.mjs.tmp"
-head -c 100 "$DIR/nalu.mjs.tmp" | grep -q "env node" || { echo "download failed: unexpected file contents"; rm -f "$DIR/nalu.mjs.tmp"; exit 1; }
-mv "$DIR/nalu.mjs.tmp" "$DIR/nalu.mjs"
+STAGING=$(mktemp -d "$DIR/.nalu-install.XXXXXX")
+trap 'rm -rf "$STAGING"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+curl -fsSL --connect-timeout 15 --max-time 60 --max-filesize 2097152 "$BASE/nalu.mjs" -o "$STAGING/nalu.mjs"
+head -c 100 "$STAGING/nalu.mjs" | grep -q "env node" || { echo "download failed: unexpected file contents"; exit 1; }
+grep -q "^const VERSION = '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*'" "$STAGING/nalu.mjs" || { echo "download failed: missing CLI version"; exit 1; }
+node --check "$STAGING/nalu.mjs" || { echo "download failed: invalid JavaScript; existing installation preserved"; exit 1; }
+chmod +x "$STAGING/nalu.mjs"
+mv "$STAGING/nalu.mjs" "$DIR/nalu.mjs"
 
-# launcher wrapper so `nalu` works everywhere
-cat > "$DIR/nalu" <<'EOF'
-#!/bin/sh
-exec node "$HOME/.nalu/bin/nalu.mjs" "$@"
-EOF
-chmod +x "$DIR/nalu"
+# Relative symlink keeps the launcher valid when the installation is moved.
+ln -s nalu.mjs "$STAGING/nalu"
+mv -f "$STAGING/nalu" "$DIR/nalu"
 
 # ── put `nalu` on PATH ──
+LINKED="$DIR/nalu"
+if [ "${NALU_NO_MODIFY_PATH:-0}" != "1" ]; then
 LINKED=""
 for TARGET in /opt/homebrew/bin /usr/local/bin; do
   if [ -d "$TARGET" ] && [ -w "$TARGET" ]; then
@@ -69,6 +76,8 @@ if [ -z "$LINKED" ]; then
       ;;
   esac
 fi
+
+fi # NALU_NO_MODIFY_PATH
 
 VER=$(node "$DIR/nalu.mjs" --version) || { echo "Install verification failed — $DIR/nalu.mjs did not run. Please retry."; exit 1; }
 echo ""

@@ -1,95 +1,190 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Download Nalu Desktop</title>
-<style>
-  :root { --ink:#F4F1EA; --dim:rgba(244,241,234,.62); --gold:#C79A5B; --line:rgba(255,255,255,.12); }
-  * { box-sizing:border-box; margin:0; padding:0; }
-  html,body { height:100%; }
-  body {
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
-    -webkit-font-smoothing:antialiased; color:var(--ink);
-    min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
-    background:#0a0c10;
-  }
-  .bg, .wash { position:fixed; inset:0; z-index:-2; }
-  .bg { background:url("/images/wolf-landscape.png") center/cover no-repeat; }
-  .wash { z-index:-1; background:
-    radial-gradient(1200px 700px at 12% -10%, rgba(58,120,255,.16), transparent 55%),
-    radial-gradient(900px 640px at 100% 0%, rgba(40,90,200,.12), transparent 55%),
-    linear-gradient(180deg, rgba(8,10,14,.62), rgba(8,10,14,.82)); }
-
-  .card {
-    width:100%; max-width:520px;
-    background:rgba(17,20,28,.55); backdrop-filter:blur(28px) saturate(140%); -webkit-backdrop-filter:blur(28px) saturate(140%);
-    border:1px solid var(--line); border-radius:28px; padding:44px 40px;
-    box-shadow:0 30px 80px -20px rgba(0,0,0,.6);
-  }
-  .logo { width:58px; height:58px; object-fit:contain; margin-bottom:18px;
-    /* the wolf mark is dark — make it crisp white on the glass card */
-    filter:brightness(0) invert(1) drop-shadow(0 2px 12px rgba(0,0,0,.5)); }
-  h1 { font-size:27px; font-weight:600; letter-spacing:-.02em; line-height:1.1; }
-  .sub { color:var(--dim); font-size:14.5px; line-height:1.55; margin-top:10px; margin-bottom:30px; max-width:400px; }
-
-  .btn { display:inline-flex; align-items:center; gap:11px; width:100%; justify-content:center;
-    background:linear-gradient(180deg,#D6AC6E,#B9884C); color:#1a1509; font-weight:650; font-size:16px;
-    padding:16px 24px; border-radius:15px; text-decoration:none; border:1px solid rgba(255,255,255,.18);
-    box-shadow:0 10px 30px -8px rgba(199,154,91,.5); transition:transform .12s, box-shadow .12s; }
-  .btn:hover { transform:translateY(-1px); box-shadow:0 16px 38px -8px rgba(199,154,91,.6); }
-  .meta { display:flex; align-items:center; justify-content:center; gap:8px; flex-wrap:wrap;
-    color:var(--dim); font-size:12.5px; margin-top:14px; }
-  .badge { display:inline-flex; align-items:center; gap:5px; color:#8fd6a0;
-    background:rgba(90,200,120,.12); border:1px solid rgba(90,200,120,.25); border-radius:999px; padding:3px 10px; font-weight:600; font-size:11.5px; }
-
-  .steps { margin-top:32px; padding-top:26px; border-top:1px solid var(--line); }
-  .steps h2 { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.14em; color:var(--gold); margin-bottom:16px; }
-  ol { list-style:none; counter-reset:s; display:flex; flex-direction:column; gap:14px; }
-  li { counter-increment:s; position:relative; padding-left:38px; font-size:14.5px; line-height:1.45; }
-  li::before { content:counter(s); position:absolute; left:0; top:-2px; width:26px; height:26px; border-radius:50%;
-    background:rgba(199,154,91,.16); border:1px solid rgba(199,154,91,.4); color:var(--gold);
-    font-size:12.5px; font-weight:700; display:flex; align-items:center; justify-content:center; }
-  li b { font-weight:650; }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Bring Nalu to your Mac. Download Nalu Desktop for Apple Silicon and Intel, or get started in your terminal." />
+  <meta name="theme-color" content="#b7d7e4" />
+  <title>Download Nalu Desktop</title>
+  <link rel="icon" href="/favicon.ico?v=2" />
+  <link rel="preload" as="image" href="/backgrounds/tech-c24a09c980-960.webp" media="(max-width: 767px)" />
+  <link rel="preload" as="image" href="/backgrounds/tech-c24a09c980-1920.webp" media="(min-width: 768px)" />
+  <script>try { if (localStorage.getItem('nalu-theme') === 'dark') document.documentElement.classList.add('dark'); } catch (_) {}</script>
+  <style>
+    @font-face { font-family:Inter; src:url('/fonts/Inter-Regular.ttf') format('truetype'); font-weight:100 500; font-style:normal; font-display:swap; }
+    @font-face { font-family:Inter; src:url('/fonts/Inter-Bold.ttf') format('truetype'); font-weight:600 900; font-style:normal; font-display:swap; }
+    :root { color-scheme:light; --ink:#1c2536; --dim:#3d4f62; --line:rgba(30,41,59,.16); --panel:rgba(255,255,255,.39); --soft:rgba(255,255,255,.23); --accent:#93c0e4; --accent-ink:#132d42; --shadow:0 18px 70px -40px rgba(23,52,69,.35); }
+    :root.dark { color-scheme:dark; --ink:#f0f2f5; --dim:#d0dae2; --line:rgba(255,255,255,.19); --panel:rgba(255,255,255,.07); --soft:rgba(255,255,255,.055); --accent:#c5a368; --accent-ink:#251d0f; --shadow:0 18px 70px -40px rgba(8,26,33,.5); }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; min-height:100svh; font:400 15px/1.6 Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; color:var(--ink); background:#b7d7e4; -webkit-font-smoothing:antialiased; }
+    a { color:inherit; }
+    button { font:inherit; color:inherit; cursor:pointer; }
+    button,a { -webkit-tap-highlight-color:transparent; }
+    :focus-visible { outline:3px solid var(--accent); outline-offset:4px; }
+    .scenery,.wash { position:fixed; inset:0; pointer-events:none; z-index:-1; }
+    .scenery { background:#7ba3a7 url('data:image/webp;base64,UklGRvwAAABXRUJQVlA4IPAAAABQBwCdASowABsAPwFyrlGrJqQiqrgMAWAgCWYAsRuBE/qMowaSoFWuw/6LdGenc4kSn8YSBVVrPioE5q/0CNCWdV1AAPxS+GfL/juRVNCUgZM6o5CIbLwr51WfrJgdiO+OxKHpWYbBDkh72bcTnThYtQV0rq9wTnbg6B8RUxi1kzT5G03Lfzsv0Jn6UWxEfHC+2++jPQecHixDXCSfHjg76qNcno+QrNcCCvcMJOX2T2YO+sRoe5oAv7JZO4+j/np0QGILgXWRcqlwi539IwvTJhMU0aWGwUhU/s1Mbkitd9CYR+JPVtD3J74b+q3sAAA=') center/cover no-repeat; }
+    .scenery img { width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .45s ease-out; }
+    .scenery img.ready { opacity:1; }
+    .wash { background:linear-gradient(180deg,rgba(239,248,251,.48),rgba(225,243,247,.22)); }
+    .dark .wash { background:linear-gradient(180deg,rgba(17,51,68,.46),rgba(13,42,44,.58)); }
+    .shell { width:min(1060px,calc(100% - 64px)); margin:auto; }
+    header { height:112px; display:flex; align-items:center; justify-content:space-between; gap:16px; }
+    .brand { display:inline-flex; align-items:center; text-decoration:none; }
+    .brand img { width:120px; height:40px; object-fit:contain; }
+    .dark .brand img { filter:brightness(0) invert(1); }
+    .nav-actions { display:flex; align-items:center; gap:12px; }
+    .quiet-button { min-height:44px; display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:10px 16px; background:var(--soft); border:1px solid var(--line); border-radius:12px; text-decoration:none; font-size:13px; transition:background .2s; }
+    .quiet-button:hover { background:var(--panel); }
+    .theme-toggle { width:44px; padding:10px; }
+    svg { width:18px; height:18px; flex-shrink:0; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+    .sun,.dark .moon { display:none; }
+    .dark .sun { display:block; }
+    .hero { text-align:center; padding:32px 12px 40px; }
+    .eyebrow { display:inline-flex; align-items:center; gap:8px; color:var(--dim); font-size:12px; letter-spacing:.1em; text-transform:uppercase; margin:0 0 18px; }
+    .eyebrow img { width:20px; height:20px; object-fit:contain; }
+    .dark .eyebrow img { filter:brightness(0) invert(1); }
+    h1 { font-size:clamp(34px,4.8vw,56px); line-height:1.14; letter-spacing:-.045em; font-weight:300; margin:0; text-wrap:balance; }
+    .intro { max-width:555px; margin:18px auto 0; color:var(--dim); font-size:16px; line-height:1.7; text-wrap:pretty; }
+    .glass { background:var(--panel); border:1px solid var(--line); border-radius:24px; backdrop-filter:blur(24px) saturate(145%); -webkit-backdrop-filter:blur(24px) saturate(145%); box-shadow:var(--shadow),inset 0 1px 0 rgba(255,255,255,.18); }
+    .download-panel { display:grid; grid-template-columns:1fr 1fr; }
+    .download { padding:34px 36px; display:flex; flex-direction:column; justify-content:center; }
+    .platform { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+    .platform-icon { width:44px; height:44px; display:grid; place-items:center; border:1px solid var(--line); border-radius:13px; background:var(--soft); }
+    .platform-icon svg { width:24px; height:24px; }
+    h2 { margin:0; font-size:21px; line-height:1.35; font-weight:500; letter-spacing:-.025em; }
+    .compatibility { font-size:12px; color:var(--dim); margin:2px 0 0; }
+    .download-copy { color:var(--dim); margin:0 0 22px; font-size:14px; max-width:360px; }
+    .download-button { min-height:54px; border-radius:12px; background:var(--accent); color:var(--accent-ink); display:flex; align-items:center; justify-content:center; gap:10px; text-decoration:none; font-size:15px; font-weight:600; border:1px solid rgba(255,255,255,.2); box-shadow:0 5px 16px -10px rgba(28,37,54,.35); transition:transform .18s,filter .18s; }
+    .download-button:hover { transform:translateY(-2px); filter:brightness(1.05); }
+    .trust { display:flex; align-items:center; justify-content:center; gap:6px; margin:12px 0 0; color:var(--dim); font-size:11px; }
+    .trust svg { width:14px; height:14px; }
+    .install { padding:34px 36px; border-left:1px solid var(--line); }
+    .install h2 { font-size:16px; }
+    ol { list-style:none; padding:0; margin:22px 0 0; display:grid; gap:18px; counter-reset:steps; }
+    li { position:relative; padding-left:40px; counter-increment:steps; }
+    li::before { content:counter(steps); position:absolute; top:1px; left:0; width:26px; height:26px; display:grid; place-items:center; border:1px solid var(--line); border-radius:50%; font-size:12px; color:var(--dim); background:var(--soft); }
+    li strong { display:block; font-size:13px; font-weight:500; }
+    li p { margin:2px 0 0; color:var(--dim); font-size:12px; line-height:1.6; }
+    .terminal { margin-top:18px; padding:26px 30px; display:grid; grid-template-columns:1fr 1.2fr; gap:24px; align-items:center; }
+    .terminal h2 { font-size:16px; display:flex; align-items:center; gap:9px; }
+    .terminal p { margin:7px 0 0; color:var(--dim); font-size:12px; }
+    .command-wrap { min-width:0; }
+    .command { display:flex; gap:12px; align-items:center; padding:13px 14px; border-radius:12px; border:1px solid var(--line); background:var(--soft); }
+    code { font:12px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .command code { flex:1; min-width:0; overflow-wrap:anywhere; }
+    .copy-button { display:inline-flex; align-items:center; justify-content:center; width:36px; height:36px; flex-shrink:0; border:1px solid var(--line); border-radius:8px; background:var(--soft); }
+    .copy-button:hover { background:var(--panel); }
+    #copy-status { min-height:20px; }
+    footer { display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:26px 2px 30px; color:var(--ink); font-size:12px; }
+    footer a { text-decoration:none; }
+    footer a:hover { text-decoration:underline; }
+    .footer-links { display:flex; gap:22px; }
+    .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
+    @media(max-width:700px) {
+      .shell { width:calc(100% - 32px); }
+      header { height:88px; }
+      .brand img { width:100px; height:34px; }
+      .nav-actions { gap:8px; }
+      .quiet-button { padding:9px 12px; }
+      .theme-toggle { padding:10px; }
+      .hero { padding:24px 6px 30px; }
+      .intro { font-size:14px; max-width:400px; }
+      .download-panel,.terminal { grid-template-columns:1fr; }
+      .download,.install { padding:26px 24px; }
+      .install { border-left:0; border-top:1px solid var(--line); }
+      .download-copy { max-width:none; }
+      .glass { border-radius:20px; }
+      .terminal { padding:24px; gap:18px; }
+      .command { gap:8px; padding:10px; }
+      .command code { font-size:11px; }
+      footer { justify-content:center; text-align:center; padding-bottom:28px; }
+    }
+    @media(max-width:380px) { .brand img { width:88px; } .nav-actions a svg { display:none; } }
+    @media(prefers-reduced-motion:reduce) { *,*::before,*::after { transition:none!important; } }
+  </style>
 </head>
 <body>
-  <div class="bg"></div><div class="wash"></div>
-
-  <div class="card">
-    <img class="logo" src="/wolf-icon.png" alt="Nalu" onerror="this.src='/nalu-logo.png';this.style.width='120px'" />
-    <h1>Nalu Desktop</h1>
-    <p class="sub">Your chats, Studio, IDE, and the computer-control agent — native on your Mac. One clean app.</p>
-
-    <a class="btn" href="https://github.com/Michberr2/nalu-desktop/releases/latest/download/Nalu-mac.dmg" download>
-      Download Nalu for Mac
-    </a>
-    <div class="meta">
-      <span class="badge">✓ Signed &amp; Notarized by Apple</span>
-      <span>Universal · Apple Silicon &amp; Intel · macOS 11+</span>
-    </div>
-
-    <div class="steps">
-      <h2>Install — takes 10 seconds</h2>
-      <ol>
-        <li>Open the downloaded <b>Nalu-mac.dmg</b>.</li>
-        <li>Drag <b>Nalu</b> onto the <b>Applications</b> folder.</li>
-        <li>Open Applications and <b>double-click Nalu</b>. That's it — it just opens.</li>
-      </ol>
-    </div>
-
-    <div class="steps">
-      <h2>Nalu in your terminal</h2>
-      <p class="sub" style="margin-bottom:14px;">A coding agent in any terminal — one model, <b>auto</b>, that routes
-      every request to the right Nalu model by itself. Needs Node.js 18+.</p>
-      <pre class="cmd"><code>curl -fsSL https://n4lu.com/install.sh | sh</code></pre>
-      <p class="sub" style="margin-top:12px; margin-bottom:0;">Then just run <b>nalu</b>. Update any time with <b>nalu update</b>.</p>
-    </div>
+  <div class="scenery" aria-hidden="true">
+    <picture><source media="(max-width:767px)" srcset="/backgrounds/tech-c24a09c980-960.webp" /><img id="scenery-image" src="/backgrounds/tech-c24a09c980-1920.webp" alt="" fetchpriority="high" decoding="async" /></picture>
   </div>
-  <style>
-    .cmd { background:rgba(0,0,0,.45); border:1px solid var(--line); border-radius:12px;
-      padding:14px 16px; overflow-x:auto; }
-    .cmd code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13.5px; color:#9fd6ff; white-space:pre; }
-  </style>
+  <div class="wash" aria-hidden="true"></div>
+  <div class="shell">
+    <header>
+      <a class="brand" href="/" aria-label="Nalu home"><img src="/nalu-logo.png" alt="Nalu" width="120" height="40" /></a>
+      <nav class="nav-actions" aria-label="Download page navigation">
+        <a class="quiet-button" href="/">Back to Nalu <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10" /></svg></a>
+        <button class="quiet-button theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark theme" aria-pressed="false">
+          <svg class="moon" aria-hidden="true" viewBox="0 0 24 24"><path d="M20.5 14.5A8.8 8.8 0 0 1 9.5 3.5a9 9 0 1 0 11 11Z" /></svg>
+          <svg class="sun" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" /></svg>
+        </button>
+      </nav>
+    </header>
+    <main>
+      <section class="hero" aria-labelledby="page-title">
+        <p class="eyebrow"><img src="/wolf-icon.png" alt="" /> Nalu Desktop</p>
+        <h1 id="page-title">Your AI. Now on your Mac.</h1>
+        <p class="intro">Bring Nalu to your desktop, with chats, a coding workspace, and the tools to get things done.</p>
+      </section>
+      <div class="glass download-panel">
+        <section class="download" aria-labelledby="mac-title">
+          <div class="platform"><div class="platform-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="13" rx="2" /><path d="M8 21h8m-4-5v5" /></svg></div><div><h2 id="mac-title">Nalu for Mac</h2><p class="compatibility">Apple Silicon &amp; Intel · macOS 13+</p></div></div>
+          <p class="download-copy">One app. Your Nalu account. Ready for wherever your work takes you.</p>
+          <a class="download-button" href="https://github.com/Michberr2/nalu-desktop/releases/latest/download/Nalu-mac.dmg" download><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4" /></svg>Download for Mac</a>
+          <p class="trust"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z" /><path d="m8 12 3 3 5-6" /></svg>Developer signed &amp; notarized by Apple</p>
+        </section>
+        <section class="install" aria-labelledby="install-title">
+          <h2 id="install-title">Make yourself at home.</h2>
+          <ol>
+            <li><strong>Open the download</strong><p>Find <b>Nalu-mac.dmg</b> in your Downloads folder.</p></li>
+            <li><strong>Move Nalu to Applications</strong><p>Drag the Nalu app into the Applications folder.</p></li>
+            <li><strong>Open Nalu and sign in</strong><p>Use your Nalu account. Future updates download automatically and install when your work is ready for a restart.</p></li>
+          </ol>
+        </section>
+      </div>
+      <section class="glass terminal" aria-labelledby="terminal-title">
+        <div><h2 id="terminal-title"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m4 6 6 6-6 6m9 0h7" /></svg>More of a terminal person?</h2><p>Get the Nalu coding agent in your terminal. Node.js 18+.</p></div>
+        <div class="command-wrap"><div class="command"><code id="install-command">curl -fsSL https://n4lu.com/install.sh | sh</code><button class="copy-button" id="copy-command" type="button" aria-label="Copy install command"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V4H4v12h4" /></svg></button></div><p id="copy-status" role="status" aria-live="polite">Then run <code>nalu</code>. Update with <code>nalu update</code>.</p></div>
+      </section>
+    </main>
+    <footer><span>Same Nalu. A little closer.</span><div class="footer-links"><a href="https://github.com/Michberr2/nalu-desktop/releases/latest" target="_blank" rel="noreferrer">Release notes ↗</a><a href="/privacy.html">Privacy</a></div></footer>
+  </div>
+  <script>
+    const root = document.documentElement;
+    const toggle = document.getElementById('theme-toggle');
+    function syncTheme() {
+      const dark = root.classList.contains('dark');
+      toggle.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
+      toggle.setAttribute('aria-pressed', String(dark));
+      document.querySelector('meta[name="theme-color"]').content = dark ? '#244853' : '#b7d7e4';
+    }
+    syncTheme();
+    toggle.addEventListener('click', () => {
+      root.classList.toggle('dark');
+      try { localStorage.setItem('nalu-theme', root.classList.contains('dark') ? 'dark' : 'light'); } catch (_) {}
+      syncTheme();
+    });
+    window.addEventListener('storage', event => {
+      if (event.key === 'nalu-theme') { root.classList.toggle('dark', event.newValue === 'dark'); syncTheme(); }
+    });
+    const scenery = document.getElementById('scenery-image');
+    function reveal() { if (scenery.naturalWidth) scenery.classList.add('ready'); }
+    scenery.addEventListener('load', reveal);
+    reveal();
+    let copiedTimer;
+    document.getElementById('copy-command').addEventListener('click', async () => {
+      const status = document.getElementById('copy-status');
+      try {
+        await navigator.clipboard.writeText(document.getElementById('install-command').textContent);
+        status.textContent = 'Copied. Paste it into your terminal to get started.';
+      } catch (_) {
+        const range = document.createRange();
+        range.selectNodeContents(document.getElementById('install-command'));
+        const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+        status.textContent = 'Command selected. Copy it, then paste into your terminal.';
+      }
+      clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => { status.innerHTML = 'Then run <code>nalu</code>. Update with <code>nalu update</code>.'; }, 5000);
+    });
+  </script>
 </body>
 </html>

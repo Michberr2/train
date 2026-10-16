@@ -1,0 +1,1712 @@
+[
+  {
+    "name": "nalu_autopilot_artifacts",
+    "source": "api/_autopilotArtifacts.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "meta",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "bytes",
+        "type": "BLOB",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "result",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_connection_media",
+    "source": "api/_connectionMedia.ts",
+    "columns": [
+      {
+        "name": "token_hash",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "attachment_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "expires_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_connection_reviews",
+    "source": "api/_connectionReviews.ts",
+    "columns": [
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 1
+      },
+      {
+        "name": "delivery_key",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 2
+      },
+      {
+        "name": "connection_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "account_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "payload",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "result",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "checked_at",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_connections",
+    "source": "api/connect.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 2
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 1
+      },
+      {
+        "name": "app",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "label",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "method",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "username",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "endpoint",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "enc_secret",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "status",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "meta",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "ingest_token",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_inbound",
+    "source": "api/connect.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "conn_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "sender",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "subject",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "body",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "meta",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "received_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_message_media",
+    "source": "api/_messageStore.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "mime",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "bytes",
+        "type": "BLOB",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_message_receipts",
+    "source": "api/_messageStore.ts",
+    "columns": [
+      {
+        "name": "carrier_id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "to_number",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "status",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "error",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_messages",
+    "source": "api/_messageStore.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "direction",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "from_number",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "to_number",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "text",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "media",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "status",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "request_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "fingerprint",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "carrier_id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "member_id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "task_id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "error",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "started_at",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_note_deliveries",
+    "source": "api/_notebookEmail.ts",
+    "columns": [
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 1
+      },
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 2
+      },
+      {
+        "name": "note_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "fingerprint",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "document",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_note_groups",
+    "source": "api/_notebook.ts",
+    "columns": [
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 1
+      },
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 2
+      },
+      {
+        "name": "document",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_note_operations",
+    "source": "api/_notebook.ts",
+    "columns": [
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 1
+      },
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 2
+      },
+      {
+        "name": "fingerprint",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_notes",
+    "source": "api/_notebook.ts",
+    "columns": [
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 1
+      },
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 2
+      },
+      {
+        "name": "document",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_oauth_states",
+    "source": "api/_oauthHandler.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "provider",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "phase",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "expires_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "return_to",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "code_verifier",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "connection_id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_outbound_calls",
+    "source": "api/_outboundCalls.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "request_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "fingerprint",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "brief",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "voice",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "member_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "state",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "sid",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "expires_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "turns",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "turn",
+        "type": "INTEGER",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "outcome",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "summary",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "evidence",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "response_xml",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "request_hash",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "cancel_requested",
+        "type": "INTEGER",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "delivery",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_password_resets",
+    "source": "api/_db.ts",
+    "columns": [
+      {
+        "name": "token_hash",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "expires_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "used",
+        "type": "INTEGER",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_phone_plan_turns",
+    "source": "api/_phonePlans.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "sid",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "status",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "input",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "snapshot",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "reply",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_pipeline_deliveries",
+    "source": "api/_pipelineDelivery.ts",
+    "columns": [
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 1
+      },
+      {
+        "name": "delivery_key",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 2
+      },
+      {
+        "name": "result",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_push_deliveries",
+    "source": "api/_push.ts",
+    "columns": [
+      {
+        "name": "device_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 1
+      },
+      {
+        "name": "event_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 2
+      },
+      {
+        "name": "status",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "attempts",
+        "type": "INTEGER",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "reason",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_push_devices",
+    "source": "api/_push.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "token",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "environment",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "enabled",
+        "type": "INTEGER",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "enabled_since",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_sessions",
+    "source": "api/_db.ts",
+    "columns": [
+      {
+        "name": "token",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_shares",
+    "source": "api/data.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "html",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_store_revisions",
+    "source": "Cloudflare",
+    "columns": [
+      {
+        "name": "scope",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "revision",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_studio_images",
+    "source": "api/_studioImages.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "request_key",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "request",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "status",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "lease_id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "lease_until",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "quota_day",
+        "type": "DATE",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "bytes",
+        "type": "BLOB",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "mime_type",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "width",
+        "type": "INT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "height",
+        "type": "INT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_task_attachment_parts",
+    "source": "api/_taskAttachments.ts",
+    "columns": [
+      {
+        "name": "attachment_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 1
+      },
+      {
+        "name": "part",
+        "type": "INTEGER",
+        "required": true,
+        "primaryKey": 2
+      },
+      {
+        "name": "bytes",
+        "type": "BLOB",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_task_attachments",
+    "source": "api/_taskAttachments.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "meta",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "ready",
+        "type": "INTEGER",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_task_jobs",
+    "source": "api/_tasks.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "request_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "kind",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "repo",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "prompt",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "target",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "flow_id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "mode",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "status",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "worker_id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "lease_token",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "lease_expires_at",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_task_notifications",
+    "source": "api/_taskCompletion.ts",
+    "columns": [
+      {
+        "name": "task_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "channel",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 2
+      },
+      {
+        "name": "status",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "carrier_id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "error",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_task_questions",
+    "source": "api/_taskQuestions.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "task_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "text",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "answer",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "status",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "answered_at",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "notification_status",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "call_sid",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "notification_error",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "phone_draft",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_task_workers",
+    "source": "api/_tasks.ts",
+    "columns": [
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 1
+      },
+      {
+        "name": "worker_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 2
+      },
+      {
+        "name": "repos",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "kinds",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "last_seen_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_tasks",
+    "source": "api/_db.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "source",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "title",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "detail",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "status",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "progress",
+        "type": "REAL",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "events",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "meta",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_team_members",
+    "source": "api/_team.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "name",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "role",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "responsibilities",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "workspace",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "extension",
+        "type": "INTEGER",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "voice",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "active",
+        "type": "INTEGER",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "request_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "fingerprint",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_usage",
+    "source": "api/_limits.ts",
+    "columns": [
+      {
+        "name": "subject",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 1
+      },
+      {
+        "name": "day",
+        "type": "DATE",
+        "required": true,
+        "primaryKey": 2
+      },
+      {
+        "name": "kind",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 3
+      },
+      {
+        "name": "count",
+        "type": "INT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_user_data",
+    "source": "api/_db.ts",
+    "columns": [
+      {
+        "name": "user_id",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 1
+      },
+      {
+        "name": "key",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 2
+      },
+      {
+        "name": "value",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "updated_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      }
+    ]
+  },
+  {
+    "name": "nalu_users",
+    "source": "api/_db.ts",
+    "columns": [
+      {
+        "name": "id",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 1
+      },
+      {
+        "name": "display_name",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "salt",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "hash",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "created_at",
+        "type": "TEXT",
+        "required": true,
+        "primaryKey": 0
+      },
+      {
+        "name": "recovery_hash",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      },
+      {
+        "name": "phone",
+        "type": "TEXT",
+        "required": false,
+        "primaryKey": 0
+      }
+    ]
+  }
+]

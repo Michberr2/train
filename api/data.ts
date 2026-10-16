@@ -1,8 +1,22 @@
+import { projectKeys, ProjectDataValidationError } from '../shared/projectMerge'
+import { writeProjectData } from './_projectData'
+import { sendIsolatedArtifact } from './_artifactIsolation'
+import { handleNotebook } from './_notebook'
+import { cloudflareData } from './_cloudflareData'
+import { syncEntries } from './_syncPayload'
+import { appendConversationTurn } from './_chatMerge'
+import { extractNotes } from './_notes'
+import { reserveDailyQuota } from './_limits'
+import { handlePushAction } from './_push'
 // Nalu per-user data store (Neon Postgres). Mirrors the Dashboard's `nalu-*`
 // localStorage keys so conversations, projects, plugins, automations, GitHub
 // PAT, settings, etc. persist server-side and sync across n4lu.ai/.com + devices.
 // POST { action: 'load'|'set'|'setMany'|'remove', token, ... }
 import { runDueCrons, runOneFlow } from './_cron'
+import { mediaLink } from './_messageMedia'
+import { ownsPhone } from './_phoneOwner'
+import { handleTaskAction } from './_tasks'
+import { writeChatData, ChatDataValidationError } from './_chatMerge'
 import { getClient, ensureSchema, userIdForToken, readToken, safeJson, newToken } from './_db'
 
 const SHARE_DDL =
@@ -15,40 +29,6 @@ const ARTIFACT_FIELDS = ['doc', 'sheet', 'deck', 'design', 'cad', 'video', 'imag
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyObj = Record<string, any>
-
-// Merge an incoming chats array with what's already stored so that NO generated
-// artifact (or non-empty answer text) is ever lost. Deletions are still honored
-// — a chat absent from `incoming` is dropped — but any chat that survives keeps
-// every artifact it ever had.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function preserveChatArtifacts(incoming: any, stored: any): any {
-  if (!Array.isArray(incoming) || !Array.isArray(stored) || !stored.length) return incoming
-  const storedById = new Map<string, AnyObj>()
-  for (const c of stored) if (c && c.id) storedById.set(String(c.id), c)
-  return incoming.map((chat: AnyObj) => {
-    const old = chat && chat.id ? storedById.get(String(chat.id)) : null
-    if (!old || !Array.isArray(old.messages) || !Array.isArray(chat.messages)) return chat
-    const oldMsgs: AnyObj[] = old.messages
-    const messages = chat.messages.map((m: AnyObj, i: number) => {
-      const om = oldMsgs[i]
-      if (!om || om.role !== m.role) return m
-      const out: AnyObj = { ...m }
-      for (const f of ARTIFACT_FIELDS) if (out[f] == null && om[f] != null) out[f] = om[f]
-      if ((!out.content || String(out.content).length === 0) && om.content) out.content = om.content
-      if (out.reasoning == null && om.reasoning != null) out.reasoning = om.reasoning
-      return out
-    })
-    // if the incoming chat somehow has FEWER messages, append the stored tail
-    if (oldMsgs.length > chat.messages.length) messages.push(...oldMsgs.slice(chat.messages.length))
-    return { ...chat, messages }
-  })
-}
-
-const asArray = (v: unknown): AnyObj[] | null => {
-  if (Array.isArray(v)) return v as AnyObj[]
-  if (typeof v === 'string') { const p = safeJson(v); return Array.isArray(p) ? p : null }
-  return null
-}
 
 // Robustly unwrap a value that may be JSON-string-encoded MORE THAN ONCE. The
 // sync layer + setMany can double-encode arrays (a JSON string of a JSON string),
@@ -71,7 +51,7 @@ const STUDIO_KIND: Record<string, string> = {
   doc: 'Document', deck: 'Presentation', sheet: 'Spreadsheet',
   design: 'Website', video: 'Video', cad: 'CAD model', image: 'Image',
 }
-function deriveChatActivity(chatsVal: unknown): AnyObj[] {
+export function deriveChatActivity(chatsVal: unknown): AnyObj[] {
   const chats = deepParseArray(chatsVal)
   if (!chats) return []
   const items: AnyObj[] = []
@@ -110,7 +90,7 @@ const SCHED_LABEL: Record<string, string> = {
   manual: 'Manual', hourly: 'Hourly', daily: 'Daily', weekly: 'Weekly',
   continuous: 'Continuous', members: 'Daily',
 }
-function deriveFlowActivity(flowsVal: unknown): AnyObj[] {
+export function deriveFlowActivity(flowsVal: unknown): AnyObj[] {
   const flows = deepParseArray(flowsVal)
   if (!flows) return []
   const items: AnyObj[] = []
@@ -120,17 +100,20 @@ function deriveFlowActivity(flowsVal: unknown): AnyObj[] {
     const run = (f.run && typeof f.run === 'object' ? f.run : {}) as AnyObj
     const st = String(run.status || '')
     const status = st === 'running' ? 'running'
+      : st === 'awaiting' ? 'waiting'
       : st === 'error' || st === 'stuck' ? 'failed'
       : st === 'stopped' ? 'cancelled'
       : f.lastRun ? 'done' : 'queued'
     const total = Number(run.total) || nodeCount
     const step = Number(run.step) || 0
-    const progress = total ? Math.max(0, Math.min(1, step / total)) : (f.lastRun ? 1 : 0)
+    const progress = total ? Math.max(0, Math.min(status === 'waiting' ? 0.99 : 1, step / total)) : (status === 'waiting' ? 0 : f.lastRun ? 1 : 0)
     const sched = SCHED_LABEL[String(f.schedule || 'manual')] || 'Manual'
+    const approvalLabel = String(run.nodeLabel || 'Approval').slice(0, 160)
     // "Where things are at": while running, show the current agent + step; else
     // the schedule + size.
     const where = status === 'running'
       ? `${run.nodeLabel ? String(run.nodeLabel).slice(0, 40) + ' · ' : ''}step ${step}/${total || '?'}`
+      : status === 'waiting' ? `Waiting for your approval: ${approvalLabel}`
       : `${sched}${f.enabled === false ? ' · paused' : ''} · ${nodeCount} agent${nodeCount === 1 ? '' : 's'}`
     const ts = Number(run.updatedAt) || Number(f.lastRun) || 0
     const iso = ts ? new Date(ts).toISOString() : new Date(0).toISOString()
@@ -151,6 +134,7 @@ function deriveFlowActivity(flowsVal: unknown): AnyObj[] {
         schedule: f.schedule || 'manual',
         enabled: f.enabled !== false,
         nodeCount,
+        ...(status === 'waiting' ? { pendingApproval: { nodeId: typeof run.node === 'string' ? run.node : null, nodeLabel: approvalLabel } } : {}),
         resumable: (st === 'stopped' || st === 'error' || st === 'stuck' || st === 'running') && step > 0 && step < total,
       },
       created_at: iso,
@@ -160,51 +144,32 @@ function deriveFlowActivity(flowsVal: unknown): AnyObj[] {
   return items
 }
 
-// Read a stored id-array (e.g. a tombstone list) as a Set of strings.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function readIdSet(client: any, userId: string, key: string): Promise<Set<string>> {
-  const r = await client.query('SELECT value FROM nalu_user_data WHERE user_id = $1 AND key = $2', [userId, key])
-  const arr = asArray(r.rows[0]?.value) || []
-  return new Set(arr.map((x) => String((x as AnyObj)?.id ?? x)))
-}
-
 async function writeGuarded(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any, userId: string, key: string, value: unknown,
-): Promise<void> {
-  let toWrite = value
-
-  // Tombstone lists are APPEND-ONLY: union incoming with what's stored so a
-  // delete can NEVER be undone by a stale client that lacks the tombstone.
-  if (key === 'nalu-deleted-chats' || key === 'nalu-deleted-projects') {
-    const incoming = (asArray(value) || []).map((x) => String((x as AnyObj)?.id ?? x))
-    const stored = [...(await readIdSet(client, userId, key))]
-    const union = Array.from(new Set([...stored, ...incoming]))
-    toWrite = typeof value === 'string' ? JSON.stringify(union) : union
+): Promise<Record<string, unknown> | void> {
+  if (projectKeys(key)) return writeProjectData(client, userId, key, value)
+  if (key === 'nalu-chats' || key === 'nalu-deleted-chats') {
+    // The handler owns this dedicated pg.Client. Chat history and tombstones
+    // share a short transaction so simultaneous devices cannot lose each other.
+    await writeChatData(client, userId, key, value)
+    return
   }
+  const toWrite = value
 
-  // Chats: preserve artifacts AND enforce tombstones — a chat the user deleted
-  // is never re-stored, even if a stale device re-uploads it.
-  else if (key === 'nalu-chats') {
-    const incoming = asArray(value) // sync sends a JSON STRING; 'set' may send an array
-    if (incoming) {
-      const prev = await client.query('SELECT value FROM nalu_user_data WHERE user_id = $1 AND key = $2', [userId, key])
-      const stored = asArray(prev.rows[0]?.value)
-      let merged = stored ? preserveChatArtifacts(incoming, stored) : incoming
-      const dead = await readIdSet(client, userId, 'nalu-deleted-chats')
-      if (dead.size) merged = (merged as AnyObj[]).filter((c) => !dead.has(String(c?.id)))
-      toWrite = typeof value === 'string' ? JSON.stringify(merged) : merged
-    }
-  }
-
-  // Projects: enforce the project tombstones the same way.
-  else if (key === 'nalu-chat-projects') {
-    const incoming = asArray(value)
-    if (incoming) {
-      const dead = await readIdSet(client, userId, 'nalu-deleted-projects')
-      const filtered = dead.size ? incoming.filter((p) => !dead.has(String((p as AnyObj)?.id))) : incoming
-      toWrite = typeof value === 'string' ? JSON.stringify(filtered) : filtered
-    }
+  // Preserve browser-run results in the task ledger before a fresh run can
+  // replace flow.results. The phone can export every historical run separately.
+  if(key==='nalu-agent-flows')for(const flow of deepParseArray(toWrite)||[]) {
+    const startedAt=Number(flow?.run?.startedAt)
+    if(!flow?.id || !Number.isFinite(startedAt) || startedAt<=0 || !flow.results || typeof flow.results!=='object')continue
+    const id=`flow_${flow.id}_${startedAt}`
+    const status=flow.run.status==='done'?'done':flow.run.status==='running'?'running':flow.run.status==='awaiting'?'waiting':flow.run.status==='stopped'?'cancelled':'failed'
+    await client.query(`INSERT INTO nalu_tasks(id,user_id,source,title,status,meta,updated_at)
+      VALUES($1,$2,'pipeline',$3,$4,$5::jsonb,NOW()) ON CONFLICT(id) DO UPDATE SET
+      meta=nalu_tasks.meta || jsonb_build_object('results',COALESCE(nalu_tasks.meta->'results','{}'::jsonb)||(EXCLUDED.meta->'results')),
+      status=CASE WHEN nalu_tasks.status IN ('done','failed','cancelled') THEN nalu_tasks.status ELSE EXCLUDED.status END,
+      updated_at=NOW() WHERE nalu_tasks.user_id=$2`,
+      [id,userId,String(flow.name||'AutoPilot').slice(0,300),status,JSON.stringify({results:flow.results,flowId:flow.id})])
   }
 
   await client.query(
@@ -217,6 +182,7 @@ async function writeGuarded(
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default async function handler(req: any, res: any) {
+  if (process.env.NALU_STORAGE_BACKEND === 'cloudflare') return cloudflareData(req, res)
   // Public GET — serve a shared website by id, no auth (a clickable share link).
   if (req.method === 'GET') {
     const id = String((req.query && req.query.share) || '').replace(/[^a-zA-Z0-9_-]/g, '')
@@ -233,9 +199,7 @@ export default async function handler(req: any, res: any) {
         res.status(404).send('This Nalu site was not found.')
         return
       }
-      res.setHeader('Content-Type', 'text/html; charset=utf-8')
-      res.setHeader('Cache-Control', 'public, max-age=600')
-      res.status(200).send(r.rows[0].html)
+      sendIsolatedArtifact(res, r.rows[0].html)
     } catch {
       res.status(500).send('Error loading site.')
     } finally {
@@ -273,13 +237,39 @@ export default async function handler(req: any, res: any) {
     const userId = await userIdForToken(client, readToken(req))
     if (!userId) return res.status(401).json({ error: 'not authenticated' })
 
+    if(action==='notes-transcribe') {
+      const quota=await reserveDailyQuota(req,'notes-audio',{anonPerDay:0,userPerDay:1200})
+      if(!quota.ok)return res.status(429).json({error:'Daily transcription limit reached. Your audio stays on this phone and will retry tomorrow.'})
+    }
+    if (await handleNotebook(client,userId,body,res)) return
+
+    if (action === 'conversation-turn') {
+      const {chatId,turnId,user,assistant,source}=body
+      if (!['voice','desktop'].includes(source) || typeof chatId!=='string' || !/^(voice|desktop)-[a-f0-9-]{36}$/i.test(chatId) || typeof turnId!=='string' || !/^[a-f0-9-]{36}$/i.test(turnId) ||
+          typeof user!=='string' || !user.trim() || user.length>16000 || typeof assistant!=='string' || !assistant.trim() || assistant.length>32000) return res.status(400).json({error:'Invalid conversation turn.'})
+      const saved=await appendConversationTurn(client,userId,{chatId,turnId,user,assistant,source})
+      return res.status(200).json({ok:true,saved})
+    }
+
+    if (action === 'notes-analyze') {
+      if (typeof body.transcript !== 'string' || !body.transcript.trim() || body.transcript.length > 8000) return res.status(400).json({ error: 'Transcript must contain 1–8000 characters.' })
+      const quota = await reserveDailyQuota(req, 'notes', { anonPerDay: 0, userPerDay: 200 })
+      if (!quota.ok) return res.status(429).json({ error: 'Daily notes limit reached. Your transcript is saved; try again tomorrow.' })
+      try { return res.status(200).json(await extractNotes(body.transcript)) }
+      catch { await quota.release(); return res.status(502).json({ error: 'Could not extract action items. Your transcript is saved; try again.' }) }
+    }
+
+    if (await handlePushAction(client, userId, body, res)) return
+    if (await handleTaskAction(client, userId, body, res)) return
+
     // Publish a generated website and get a shareable link.
     if (action === 'share') {
       const html = String(body.html || '')
       if (!html) return res.status(400).json({ error: 'html required' })
+      if (html.length > 800000) return res.status(413).json({ error: 'This website is too large to publish as a link. Download the complete HTML instead.' })
       await client.query(SHARE_DDL)
       const id = newToken().slice(0, 14)
-      await client.query('INSERT INTO nalu_shares (id, html) VALUES ($1, $2)', [id, html.slice(0, 800000)])
+      await client.query('INSERT INTO nalu_shares (id, html) VALUES ($1, $2)', [id, html])
       return res.status(200).json({ ok: true, id, url: `/api/data?share=${id}` })
     }
 
@@ -293,21 +283,24 @@ export default async function handler(req: any, res: any) {
     if (action === 'set') {
       const key = String(body.key || '')
       if (!key) return res.status(400).json({ error: 'key required' })
-      await writeGuarded(client, userId, key, body.value ?? null)
-      return res.status(200).json({ ok: true })
+      const data = await writeGuarded(client, userId, key, body.value ?? null)
+      return res.status(200).json({ ok: true, ...(data ? { data } : {}) })
     }
 
     if (action === 'setMany') {
-      const entries = (body.entries && typeof body.entries === 'object' ? body.entries : {}) as Record<string, unknown>
+      let entries: Record<string, unknown>
+      try { entries = syncEntries(body) } catch { return res.status(400).json({ error: 'Saved data could not be decoded. The local copy has been kept.' }) }
       const keys = Object.keys(entries)
+      const data: Record<string, unknown> = {}
       for (const key of keys) {
-        await writeGuarded(client, userId, key, entries[key] ?? null)
+        Object.assign(data, await writeGuarded(client, userId, key, entries[key] ?? null))
       }
-      return res.status(200).json({ ok: true, count: keys.length })
+      return res.status(200).json({ ok: true, count: keys.length, ...(Object.keys(data).length ? { data } : {}) })
     }
 
     if (action === 'remove') {
       const key = String(body.key || '')
+      if (projectKeys(key)) throw new ProjectDataValidationError('Delete projects by ID. Project tombstones cannot be removed.')
       if (key) await client.query('DELETE FROM nalu_user_data WHERE user_id = $1 AND key = $2', [userId, key])
       return res.status(200).json({ ok: true })
     }
@@ -319,6 +312,7 @@ export default async function handler(req: any, res: any) {
     // never touched (ON CONFLICT ... WHERE user_id = caller).
     if (action === 'task-log') {
       const id = String(body.id || '') || `t_${newToken().slice(0, 18)}`
+      if (id.startsWith('remote_')) return res.status(409).json({ error: 'remote tasks require a worker lease; use task-update' })
       const source = String(body.source || 'cli').slice(0, 24)
       const title = String(body.title || '').slice(0, 300)
       const detail = body.detail != null ? String(body.detail).slice(0, 4000) : null
@@ -346,7 +340,8 @@ export default async function handler(req: any, res: any) {
          RETURNING id, source, title, detail, status, progress, events, meta, created_at, updated_at`,
         [id, userId, source, title, detail, status, progress, event, meta],
       )
-      return res.status(200).json({ ok: true, task: r.rows[0] ?? { id } })
+      if (!r.rows[0]) return res.status(409).json({ error: 'task id is already in use' })
+      return res.status(200).json({ ok: true, task: r.rows[0] })
     }
 
     // activity: the FULL AutoPilot picture — the live task ledger PLUS everything
@@ -371,7 +366,7 @@ export default async function handler(req: any, res: any) {
       }
       const chatItems = deriveChatActivity(chatsVal)
       const flowItems = deriveFlowActivity(flowsVal)
-      return res.status(200).json({ tasks: tRes.rows, chats: chatItems, pipelines: flowItems, now: new Date().toISOString() })
+      return res.status(200).json({ tasks: decorateTaskMedia(tRes.rows,userId), chats: chatItems, pipelines: flowItems, now: new Date().toISOString() })
     }
 
     // task-feed: the AutoPilot history — every task for this user, newest first.
@@ -387,7 +382,7 @@ export default async function handler(req: any, res: any) {
           LIMIT $3`,
         [userId, since, limit],
       )
-      return res.status(200).json({ tasks: r.rows, now: new Date().toISOString() })
+      return res.status(200).json({ tasks: decorateTaskMedia(r.rows,userId), now: new Date().toISOString() })
     }
 
     // flow-run: START ('run'), CONTINUE ('resume'), or STOP ('stop') one of this
@@ -404,7 +399,11 @@ export default async function handler(req: any, res: any) {
     // task-clear: remove one task (id) or all of this user's finished tasks.
     if (action === 'task-clear') {
       const id = String(body.id || '')
-      if (id) await client.query('DELETE FROM nalu_tasks WHERE user_id = $1 AND id = $2', [userId, id])
+      if (id) {
+        const active = await client.query("SELECT id FROM nalu_tasks WHERE user_id=$1 AND id=$2 AND status IN ('queued','running','waiting')", [userId, id])
+        if (active.rows.length) return res.status(409).json({ error: 'cancel the task before clearing it' })
+        await client.query('DELETE FROM nalu_tasks WHERE user_id = $1 AND id = $2', [userId, id])
+      }
       else await client.query(`DELETE FROM nalu_tasks WHERE user_id = $1 AND status IN ('done','failed','cancelled')`, [userId])
       return res.status(200).json({ ok: true })
     }
@@ -412,8 +411,13 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ error: 'unknown action' })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
-    return res.status(500).json({ error: message })
+    return res.status((err instanceof ChatDataValidationError || err instanceof ProjectDataValidationError) ? 400 : 500).json({ error: message })
   } finally {
     await client.end().catch(() => {})
   }
+}
+
+export function decorateTaskMedia(rows: any[], userId: string) {
+  return rows.map(task => ownsPhone(userId) && /^media_[a-f0-9]{40}$/.test(task.meta?.mediaId||'')
+    ? {...task,meta:{...task.meta,artifactUrl:mediaLink(userId,task.meta.mediaId)}} : task)
 }
