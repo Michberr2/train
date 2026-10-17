@@ -114,6 +114,7 @@ try {
   const privateValue = 'PRIVATE_PROMPT_VALUE_MUST_NOT_APPEAR_IN_DIAGNOSTICS'
   const badJourney = { ...runtimeTests[0], steps: [{ action: 'evaluate', target: { label: privateValue }, value: privateValue }], expect: [{ type: 'count', target: { selector: 'button' }, value: '1' }] }
   const rejectedPlan = JSON.stringify({ direction: privateValue, pages: [{ name: privateValue }], runtimeTests: [runtimeTests[0], badJourney] })
+  assert.deepEqual(extractWebsitePlanJson(`${validPlan}\nFinal:\n${rejectedPlan}`), JSON.parse(rejectedPlan), 'a final JSON plan with invalid journeys must reach schema rejection, never fall back to an earlier valid plan')
   for (const fixture of [
     { name: 'missing', content: JSON.stringify({ direction: 'Worksheet', pages: [] }), finishReason: 'stop', result: 'invalid-journeys', issue: /runtimeTests: expected 1-4/ },
     { name: 'malformed', content: rejectedPlan, finishReason: 'stop', result: 'invalid-journeys', issue: /runtimeTests\[1\]\.steps\[0\]\.action/ },
