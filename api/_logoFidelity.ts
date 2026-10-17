@@ -13,7 +13,7 @@ export function logoRequestText(body: Record<string, unknown>, prompt: string): 
 export function enforceLogoName(payload: Record<string, unknown>, request: string): Record<string, unknown> {
   // A directly supplied title/name is source text, even when the model omitted
   // it. Stop before audience/style instructions; never infer from "for unicorns".
-  const named = [...request.matchAll(/\b(?:called|named|titled|(?:brand|logo|book) name(?: is|:))\s+["“]([^"”\n]{1,100})["”]|\b(?:called|named|titled|(?:brand|logo|book) name(?: is|:))\s+([^\n.!?]{1,100}?)(?=\s+(?:for|with|in|using)\b|[.!?\n]|$)/gi)].at(-1)
+  const named = [...request.matchAll(/\b(?:called|named|titled|(?:brand|logo|book) name(?: is|:))\s+["“]([^"”\n]{1,100})["”]|\b(?:called|named|titled|(?:brand|logo|book) name(?: is|:))\s+([^\n.!?]{1,100}?)(?=\s+(?:for|with|in|using)\b|[.!?\n]|$)/gi)].slice(-1)[0]
   const explicitName = (named?.[1] || named?.[2] || '').trim()
   const name = explicitName || (typeof payload.name === 'string' ? payload.name.trim() : '')
   // The name must be a verbatim span of the user's own text. Missing names stay
