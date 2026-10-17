@@ -8,7 +8,7 @@ const originalNow = Date.now
 try {
   const bundle = await build({ entryPoints: ['api/_websiteGeneration.ts'], bundle: true, platform: 'node', format: 'esm', packages: 'external', write: false, plugins: [{ name: 'fixture-provider', setup(b) {
     b.onResolve({ filter: /^\.\/_websiteRuntime$/ }, () => ({ path: 'runtime', namespace: 'runtime-fixture' }))
-    b.onLoad({ filter: /.*/, namespace: 'runtime-fixture' }, () => ({ contents: `export const WEBSITE_RUNTIME_TEST_SCHEMA='';export const parseRuntimeTests=()=>[];export const reviewWebsiteRuntime=async()=>({status:'passed',widths:[1440,390],checks:[],issues:[],limitations:['Mocked in parser/provider unit tests; real browser covered by studio-runtime-regressions.mjs']})` }))
+    b.onLoad({ filter: /.*/, namespace: 'runtime-fixture' }, () => ({ contents: `export const WEBSITE_RUNTIME_TEST_SCHEMA='';export const parseRuntimeTests=value=>Array.isArray(value)?value:[];export const reviewWebsiteRuntime=async()=>({status:'passed',widths:[1440,390],checks:[],issues:[],limitations:['Mocked in parser/provider unit tests; real browser covered by studio-runtime-regressions.mjs']})` }))
     b.onResolve({ filter: /^\.\/_llm$/ }, () => ({ path: 'llm', namespace: 'fixture' }))
     b.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: `export const providerChain=model=>[{label:'primary',model,base:'https://provider.test'},{label:'fallback',model:'fallback',base:'https://fallback.test'}];export async function chatComplete(messages,options){return globalThis.websiteFixture.complete(messages,options)}` }))
   } }] })
@@ -25,7 +25,8 @@ try {
   assert.ok(reviewWebsite(valid.replace('href="#income"', 'href="#"')).issues.some(i => i.code === 'empty-link'))
   assert.ok(reviewWebsite(valid.replace('</html>', '')).issues.some(i => i.code === 'incomplete'))
   assert.ok(reviewWebsite(valid.replace('<label for="income">Income</label>', '')).issues.some(i => i.code === 'input-label'))
-  const fixtures = [JSON.stringify({ purpose: 'Budget tool', direction: 'Useful financial worksheet', pages: [{ name: 'Budget' }], acceptance: ['Income 1000 produces 200'] }), valid.replace('*0.2', '*'), valid.match(/<script>([\s\S]*)<\/script>/)[1]]
+  const runtimeTests = [{ name: 'Calculate budget', steps: [{ action: 'fill', target: { label: 'Income' }, value: '1000' }, { action: 'click', target: { role: 'button', name: 'Calculate' } }], expect: [{ type: 'text', target: { selector: '#result' }, value: '200' }] }]
+  const fixtures = [JSON.stringify({ runtimeTests, purpose: 'Budget tool', direction: 'Useful financial worksheet', pages: [{ name: 'Budget' }], acceptance: ['Income 1000 produces 200'] }), valid.replace('*0.2', '*'), valid.match(/<script>([\s\S]*)<\/script>/)[1]]
   let time = 0; const calls = []
   Date.now = () => time
   globalThis.websiteFixture = { complete: async (messages, options) => { calls.push({ messages, options, at: time }); time += 2000; return fixtures.shift() || '' } }
@@ -77,7 +78,7 @@ try {
   globalThis.websiteFixture.complete=async(messages,options)=>{
     calls.push({messages,options,at:time})
     const provider=options.providers[0]
-    if(options.json){assert.equal(provider.model,'planner');return JSON.stringify({direction:'Useful worksheet',pages:[{name:'Budget'}]})}
+    if(options.json){assert.equal(provider.model,'planner');return JSON.stringify({runtimeTests,direction:'Useful worksheet',pages:[{name:'Budget'}]})}
     if(provider.model==='builder'){time+=options.timeoutMs;throw new Error('Builder timed out')}
     assert.equal(provider.model,'backup');return valid
   }
@@ -88,7 +89,7 @@ try {
   time=0;calls.length=0
   globalThis.websiteFixture.complete=async(messages,options)=>{
     calls.push({messages,options})
-    if(options.json)return JSON.stringify({direction:'Useful worksheet',pages:[{name:'Budget'}]})
+    if(options.json)return JSON.stringify({runtimeTests,direction:'Useful worksheet',pages:[{name:'Budget'}]})
     if(calls.length===2)return valid.replace('*0.2','*')
     if(options.providers[0].model==='builder'){time+=options.timeoutMs;throw new Error('Primary repair failed')}
     assert.equal(options.providers[0].model,'backup','the tested secondary builder must precede the generic provider fallback')

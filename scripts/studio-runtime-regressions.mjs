@@ -5,16 +5,56 @@ import { build } from 'esbuild'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { join } from 'node:path'
+import { chromium } from 'playwright-core'
+import serverlessChromium from '@sparticuz/chromium'
 
 const directory = await mkdtemp(join(process.cwd(), 'scripts/.runtime-regression-'))
+const lifecycles = []
+globalThis.runtimeLaunch = async options => {
+  const browser = await chromium.launch(options)
+  const lifecycle = { contexts: 0, pages: 0, contextDisposals: 0, widths: [], openPagesAtBrowserClose: null }
+  lifecycles.push(lifecycle)
+  const newContext = browser.newContext.bind(browser)
+  browser.newContext = async options => {
+    lifecycle.contexts++
+    const context = await newContext(options)
+    const newPage = context.newPage.bind(context)
+    context.newPage = async () => {
+      lifecycle.pages++
+      const page = await newPage()
+      const resize = page.setViewportSize.bind(page)
+      page.setViewportSize = size => { lifecycle.widths.push(size.width); return resize(size) }
+      return page
+    }
+    // Reproduce the documented serverless context-disposal hang while still
+    // executing every page/interaction in real Chromium. The pre-fix runner
+    // finishes desktop then stalls here until its 22s watchdog expires.
+    context.close = () => { lifecycle.contextDisposals++; return new Promise(() => {}) }
+    return context
+  }
+  const close = browser.close.bind(browser)
+  browser.close = () => {
+    lifecycle.openPagesAtBrowserClose = browser.contexts().flatMap(context => context.pages()).filter(page => !page.isClosed()).length
+    return close()
+  }
+  return browser
+}
 try {
   const bundle = await build({ stdin: { contents: "export * from './api/_websiteRuntime'; export * from './api/_websiteGeneration'", resolveDir: process.cwd() }, bundle: true, write: false, platform: 'node', format: 'esm', packages: 'external', plugins: [{ name: 'synthetic-model', setup(build) {
     build.onResolve({ filter: /^\.\/_llm$/ }, () => ({ path: 'llm', namespace: 'fixture' }))
     build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export const providerChain=()=>[{label:"primary",model:"fixture"}];export const chatComplete=(messages,options)=>globalThis.runtimeModel(messages,options)' }))
+    build.onResolve({ filter: /^playwright-core$/ }, () => ({ path: 'browser', namespace: 'lifecycle' }))
+    build.onLoad({ filter: /.*/, namespace: 'lifecycle' }, () => ({ contents: 'export const chromium={launch:options=>globalThis.runtimeLaunch(options)}' }))
   } }] })
   const modulePath = join(directory, 'runtime.mjs')
   await writeFile(modulePath, bundle.outputFiles[0].text)
-  const { reviewWebsiteRuntime, parseRuntimeTests, reviewWebsite, generateWebsite } = await import(pathToFileURL(modulePath))
+  const { reviewWebsiteRuntime, parseRuntimeTests, reviewWebsite, generateWebsite, websiteBrowserArgs } = await import(pathToFileURL(modulePath))
+  const linuxArgs = websiteBrowserArgs(serverlessChromium.args)
+  for (const unsafe of ['--disable-web-security', '--disable-site-isolation-trials', '--allow-running-insecure-content']) assert.ok(!linuxArgs.includes(unsafe), `Untrusted renderer must not use ${unsafe}`)
+  const disabledFeatures = linuxArgs.filter(arg => arg.startsWith('--disable-features=')).flatMap(arg => arg.slice('--disable-features='.length).split(','))
+  assert.ok(!disabledFeatures.includes('IsolateOrigins'))
+  assert.ok(!disabledFeatures.includes('site-per-process'))
+  for (const required of ['--single-process', '--no-zygote', '--no-sandbox']) assert.ok(linuxArgs.includes(required), `Keep documented Lambda flag ${required}`)
   const script = `document.getElementById('calculator').addEventListener('submit',e=>{e.preventDefault();const income=Number(document.getElementById('income').value);document.getElementById('result').textContent=income<0?'Use a positive amount':String(income*0.2)});let n=0;document.getElementById('add').onclick=()=>document.getElementById('count').textContent=String(++n);document.getElementById('menu').onclick=()=>document.querySelector('nav').classList.toggle('open');`
   const html = `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width"><title>Budget</title><style>body{font:16px sans-serif;margin:16px}input,button{max-width:100%;padding:12px}main{max-width:800px}@media(min-width:600px){#menu{display:none}}@media(max-width:599px){nav:not(.open){display:none}}</style></head><body><main><h1>Budget worksheet</h1><form id="calculator"><label for="income">Income</label><input id="income" type="number"><button>Calculate</button><output id="result" aria-label="Result">0</output></form><button id="add">Add</button><output id="count" aria-label="Count">0</output><button id="menu">Menu</button><nav><a href="#about">About</a></nav><section id="about"><h2>How it works</h2><p>Calculate twenty percent of the income.</p></section></main><script>${script}</script></body></html>`
   const tests = parseRuntimeTests([
@@ -31,6 +71,9 @@ try {
   assert.deepEqual(good.widths, [1440, 390])
   assert.equal(good.checks.filter(check => !check.passed).length, 0)
   assert.equal(good.checks.length, 12)
+  assert.deepEqual(lifecycles[0], { contexts: 1, pages: 1, contextDisposals: 0, widths: [1440, 390], openPagesAtBrowserClose: 0 }, 'Both widths finish in one request-owned context/page; close pages before the browser without the hanging context boundary')
+  assert.ok(good.timings.some(timing => timing.stage === 'journey' && timing.width === 390))
+  assert.ok(good.timings.every(timing => timing.durationMs >= 0))
 
   const broken = html.replace("getElementById('calculator')", "getElementById('missing')")
   assert.deepEqual(reviewWebsite(broken).issues, [], 'reproduce the original static-validator false acceptance')
@@ -67,6 +110,27 @@ try {
   assert.equal(calls.length, 3, 'known runtime failure triggers a bounded repair before success')
   assert.deepEqual(fixed.review.runtime.checks.filter(check => !check.passed), [])
 
+  const correctedPlans = []
+  for (const incompleteTests of [undefined, [{ ...tests[0], steps: Array(9).fill(tests[0].steps[0]) }]]) {
+    calls = []
+    globalThis.runtimeModel = async (messages, options) => {
+      calls.push({ messages, options })
+      if (calls.length === 1) return JSON.stringify({ direction: 'Useful worksheet', pages: [{ name: 'Budget' }], runtimeTests: incompleteTests })
+      if (calls.length === 2) {
+        assert.match(messages.at(-1).content, /runtimeTests were missing or outside/)
+        assert.ok(options.timeoutMs <= 22000, 'correction uses the original bounded planning window')
+        return JSON.stringify({ direction: 'Useful worksheet', pages: [{ name: 'Budget' }], runtimeTests: tests })
+      }
+      assert.match(messages.at(-1).content, /Income 1000|runtimeTests/)
+      return html
+    }
+    const corrected = await generateWebsite({ model: 'fixture', user: 'Build a budget calculator, counter and About navigation', prompt: 'Calculate twenty percent. Reject negative amounts. Add increments a count.', deadlineMs: Date.now() + 100000 })
+    assert.equal(calls.length, 3, 'single-provider missing/malformed plans get one correction, then one build')
+    assert.equal(corrected.review.runtime.status, 'passed', JSON.stringify(corrected.review.runtime))
+    assert.equal(corrected.review.runtime.checks.length, 12)
+    correctedPlans.push({ initial: incompleteTests ? 'malformed' : 'missing', runtime: corrected.review.runtime })
+  }
+
   calls = []
   globalThis.runtimeModel = async (messages, options) => { calls.push({ messages, options }); return JSON.stringify({ edits: [{ search: '<h1>Budget worksheet</h1>', replace: '<h1>Family budget</h1>' }], runtimeTests: tests }) }
   const edited = await generateWebsite({ model: 'fixture', user: 'Rename the heading to Family budget', prompt: 'Rename the heading to Family budget', previous: html, deadlineMs: Date.now() + 100000 })
@@ -87,10 +151,11 @@ try {
   await assert.rejects(reviewWebsiteRuntime(looping, [], { deadlineMs: Date.now() + 22000, signal: controller.signal }), error => error.name === 'AbortError')
   clearTimeout(cancelTimer)
   assert.ok(Date.now() - cancelStart < 2000, 'caller cancellation must interrupt browser checks without waiting for the runtime deadline')
-  const report = { at: new Date().toISOString(), modelCalls: 'synthetic only', normal: good, crash: bad, incorrectCalculation: wrong, partial, isolation: isolated, repaired: fixed.review.runtime, sourcePreservingEdit: edited.review.runtime, deadline: timed, browserCancellationMs: Date.now() - cancelStart }
+  const report = { at: new Date().toISOString(), modelCalls: 'synthetic only', lifecycle: lifecycles[0], linuxArgs, normal: good, crash: bad, incorrectCalculation: wrong, partial, isolation: isolated, repaired: fixed.review.runtime, correctedPlans, sourcePreservingEdit: edited.review.runtime, deadline: timed, browserCancellationMs: Date.now() - cancelStart }
   if (process.env.OUTPUT_DIR) { const { mkdir } = await import('node:fs/promises'); await mkdir(process.env.OUTPUT_DIR, { recursive: true }); await writeFile(join(process.env.OUTPUT_DIR, 'studio-runtime.json'), JSON.stringify(report, null, 2)) }
   console.log('Studio runtime regressions passed: real desktop/mobile load, calculation, validation, counter, navigation, null-DOM repair, frozen assertions, faithful edit, opaque parent/network isolation and infinite-script deadline.')
 } finally {
   delete globalThis.runtimeModel
+  delete globalThis.runtimeLaunch
   await rm(directory, { recursive: true, force: true })
 }
