@@ -120,12 +120,16 @@ try {
     { name: 'malformed', content: rejectedPlan, finishReason: 'stop', result: 'invalid-journeys', issue: /runtimeTests\[1\]\.steps\[0\]\.action/ },
     { name: 'truncated', content: '{"direction":"Worksheet","pages":[', finishReason: 'length', result: 'invalid-json', issue: /complete JSON object/ },
     { name: 'design', content: JSON.stringify({ runtimeTests, direction: 'Worksheet' }), finishReason: 'stop', result: 'invalid-design', issue: /pages: expected/ },
+    { name: 'select requires value field', content: JSON.stringify({ direction: 'Worksheet', pages: [], runtimeTests: [{ ...runtimeTests[0], steps: [{ action: 'select', target: { label: 'Category' }, option: 'food' }] }] }), finishReason: 'stop', result: 'invalid-journeys', issue: /runtimeTests\[0\]\.steps\[0\]\.value: expected a string/ },
+    { name: 'select rejects object value', content: JSON.stringify({ direction: 'Worksheet', pages: [], runtimeTests: [{ ...runtimeTests[0], steps: [{ action: 'select', target: { label: 'Category' }, value: { label: 'Food' } }] }] }), finishReason: 'stop', result: 'invalid-journeys', issue: /runtimeTests\[0\]\.steps\[0\]\.value: expected a string/ },
   ]) {
     time = 0; calls.length = 0
     globalThis.websiteFixture.complete = async (messages, options) => {
       calls.push({ messages, options, at: time })
       if (calls.length === 1) { time += 20000; return { content: fixture.content, finishReason: fixture.finishReason } }
       if (calls.length === 2) {
+        assert.match(messages[0].content, /Every fill, select or press step requires a string field named value/)
+        assert.ok(messages[0].content.includes('{"action":"select","target":{"label":"Category"},"value":"food"}'), 'select syntax is shown as the actual accepted JSON shape')
         assert.equal(options.providers[0].label, 'primary', 'format/schema correction stays with the responding provider, even when the fallback is quota-blocked')
         assert.match(messages.at(-1).content, fixture.issue, 'correction includes the actual validation field path')
         assert.equal(options.timeoutMs, 15000, '20s first attempt leaves only 15s of the original planning window')

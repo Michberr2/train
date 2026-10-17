@@ -1931,7 +1931,7 @@ async function handleDesign(req: any, res: any) {
     }
     if (kind === 'webpage') {
       const repairIssues = Array.isArray(body.previewIssues) ? body.previewIssues.filter((issue): issue is string => typeof issue === 'string').slice(0, 6) : undefined
-      const onPlanRaw = createStudioPlanTrace(req, body, { prompt, identity, hasResearch: !!grounding || !!evidence?.sources?.length })
+      const onPlanRaw = createStudioPlanTrace(req, body, { prompt, identity, hasResearch: !!grounding || !!evidence?.sources?.length, onStatus: status => res.setHeader('X-Nalu-Studio-Trace', status) })
       const result = await generateWebsite({ model: prevHtml ? WEBSITE_EDIT_MODEL : WEBSITE_MODEL, plannerModel: LLM_MODEL, fallbackModel: prevHtml ? LLM_MODEL : WEBSITE_FALLBACK_MODEL, user, prompt, previous: prevHtml, repairIssues, deadlineMs: requestStarted + 275000, signal, onPlanRaw })
       if (!result) {
         send(502, { error: 'The website did not pass its build checks. Please retry; your existing design is preserved.' })

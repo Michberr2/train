@@ -130,6 +130,47 @@ try {
           assert.equal(new Set(parts.map(part => part.traceId)).size, 1)
         } else assert.deepEqual(traceLogs, [], item.name + ' must never write a raw trace')
       }
+      // Use the same exact synthetic product brief as the live acceptance run.
+      // Reading its literal does not import or execute the browser-bearing script.
+      const liveSource = await fs.readFile(new URL('./nalu-studio-web-live.mjs', import.meta.url), 'utf8')
+      const liveBrief = liveSource.match(/getByLabel\('Your idea',\{exact:true\}\)\.fill\('([^']+)'\)/)?.[1]
+      assert.ok(liveBrief, 'live synthetic fixture remains discoverable')
+      const diagnosticPrompt = 'Build this complete website or web app, honoring the requested functionality: ' + liveBrief
+      const diagnosticHash = createHash('sha256').update(diagnosticPrompt).digest('hex')
+      assert.equal(diagnosticHash, 'dd4d0d989a6cf360e3c53f1c5212c0e3e395f075278d4b824c0eb6c577a8e1ed')
+      for (const item of [
+        { status: 'enabled', raw: true, header: true },
+        { status: 'env-missing', hash: '' },
+        { status: 'env-invalid', hash: 'not-a-digest' },
+        { status: 'env-mismatch', hash: '0'.repeat(64) },
+        { status: 'denied-auth-context', headers: { Authorization: 'Bearer PRIVATE_HEADER' }, header: true },
+        { status: 'denied-auth-context', identity: { id: 'PRIVATE_IDENTITY' }, header: true },
+        { status: 'denied-auth-context', auth: { id: 'PRIVATE_AUTH' }, header: true },
+        { status: 'denied-extra-input', extra: { analysis: 'PRIVATE_CONTEXT' }, header: true },
+        { status: 'denied-research', research: { text: 'PRIVATE_RESEARCH', sources: [] }, header: true },
+        { status: undefined, prompt: diagnosticPrompt + ' PRIVATE_CHANGE' },
+        { status: undefined, prompt: ' ' + diagnosticPrompt },
+      ]) {
+        process.env.NALU_STUDIO_PLAN_TRACE_SHA256 = item.hash ?? diagnosticHash
+        globalThis.handlerIdentity = item.identity
+        globalThis.handlerResearch = item.research
+        traceLogs.length = 0
+        globalThis.handlerFixture = async options => {
+          assert.equal(typeof options.onPlanRaw === 'function', !!item.raw)
+          options.onPlanRaw?.(rawPlan, { attempt: 1, provider: 'primary', finishReason: 'stop' })
+          return { html: tiny, review: { issues: [], scripts: 0, links: 0, controls: 0 }, repaired: false }
+        }
+        const traceRes = { code: 0, headers: {}, setHeader(name, value) { this.headers[name] = value }, status(code) { this.code = code; return this }, json(payload) { this.payload = payload } }
+        await handler({ method: 'POST', headers: item.headers || {}, auth: item.auth, body: { kind: 'webpage', prompt: item.prompt ?? diagnosticPrompt, ...item.extra } }, traceRes)
+        assert.equal(traceRes.code, 200)
+        const gateLogs = traceLogs.filter(line => line.startsWith('nalu-studio-plan-trace-gate '))
+        assert.deepEqual(gateLogs, item.status ? ['nalu-studio-plan-trace-gate ' + JSON.stringify({ status: item.status })] : [])
+        assert.equal(traceRes.headers['X-Nalu-Studio-Trace'], item.header ? item.status : undefined, 'response diagnostic requires exact synthetic env opt-in')
+        assert.doesNotMatch(JSON.stringify({ payload: traceRes.payload, headers: traceRes.headers, gateLogs }), /PRIVATE_|RAW_SYNTHETIC_PLAN/, 'fixed status metadata contains no private or generated values')
+        const rawLogs = traceLogs.filter(line => line.startsWith('nalu-studio-plan-trace '))
+        if (item.raw) assert.equal(rawLogs.map(line => JSON.parse(line.slice('nalu-studio-plan-trace '.length)).raw).join(''), rawPlan)
+        else assert.deepEqual(rawLogs, [], 'diagnostic markers never enable raw tracing')
+      }
     } finally {
       console.info = originalInfo
       if (originalTraceHash === undefined) delete process.env.NALU_STUDIO_PLAN_TRACE_SHA256
