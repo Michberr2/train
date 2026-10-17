@@ -1,10 +1,10 @@
 import { parse as parseHtml } from 'parse5'
 import { parse as parseJavaScript } from 'acorn'
 import postcss from 'postcss'
-import { chatComplete, providerChain } from './_llm'
+import { chatComplete, chatCompleteEx, providerChain, type CompleteResult } from './_llm'
 import { applyWebsiteEdits, prepareWebsiteEdit, WEBSITE_EDIT_SYSTEM } from './_websiteEdits'
 import { cancellationSignal, throwIfCancelled } from './_requestCancellation'
-import { parseRuntimeTests, reviewWebsiteRuntime, WEBSITE_RUNTIME_TEST_SCHEMA, type WebsiteRuntimeReview, type WebsiteRuntimeTest } from './_websiteRuntime'
+import { inspectRuntimeTests, parseRuntimeTests, reviewWebsiteRuntime, WEBSITE_RUNTIME_TEST_SCHEMA, type WebsitePlanningAttempt, type WebsiteRuntimeReview, type WebsiteRuntimeTest } from './_websiteRuntime'
 
 export const WEBSITE_SYSTEM = `You are an experienced product designer, editor, and front-end engineer. Deliver a complete, distinctive website in ONE standalone HTML file. Start with <!doctype html>, end with </html>, no fences or commentary.
 
@@ -173,7 +173,7 @@ export async function generateWebsite(options: { model: string; plannerModel?: s
   // A compact plan does not need the builder's long reasoning pass. Keep the
   // planner independent while all stages share the same request deadline.
   const planningProviders = options.plannerModel ? providerChain(options.plannerModel) : providers
-  const complete = (messages: { role: 'system' | 'user' | 'assistant'; content: string }[], maxTokens: number, cap: number, providerIndex = 0, json = false, effort: 'medium' | 'high' = json ? 'medium' : 'high', chain = providers) => {
+  const complete = (messages: { role: 'system' | 'user' | 'assistant'; content: string }[], maxTokens: number, cap: number, providerIndex = 0, json = false, effort: 'medium' | 'high' = json ? 'medium' : 'high', chain = providers, onResult?: (result: CompleteResult) => void) => {
     active()
     // Keep time for the real browser after the LAST model attempt. A provider
     // must not consume the verification window and then claim a checked build.
@@ -183,7 +183,8 @@ export async function generateWebsite(options: { model: string; plannerModel?: s
     // Tinker's standard Inkling has 64K context. Large source edits use the
     // documented 256K variant, preserving every source section in the request.
     if (provider.model === 'thinkingmachines/Inkling' && messages.reduce((n, m) => n + m.content.length, 0) > 100000) provider = { ...provider, model: 'thinkingmachines/Inkling:peft:262144' }
-    return chatComplete(messages, { model: options.model, providers: [provider], maxTokens, timeoutMs: Math.min(cap, available), maxAttempts: 1, retryPrimary: false, temperature: 0.4, reasoningEffort: effort, signal, ...(json ? { json: true } : {}) })
+    const completionOptions = { model: options.model, providers: [provider], maxTokens, timeoutMs: Math.min(cap, available), maxAttempts: 1, retryPrimary: false, temperature: 0.4, reasoningEffort: effort, signal, ...(json ? { json: true } : {}) }
+    return onResult ? chatCompleteEx(messages, completionOptions).then(result => { onResult(result); return result.content }) : chatComplete(messages, completionOptions)
   }
   let runtimeTests: WebsiteRuntimeTest[] = []
   let testsFrozen = false
@@ -202,20 +203,54 @@ export async function generateWebsite(options: { model: string; plannerModel?: s
   }
   let plan: unknown = null
   let planDiagnostic = ''
+  let previousPlanResponse = ''
+  let previousPlanIssues: string[] = []
+  const planningAttempts: WebsitePlanningAttempt[] = []
   const planningDeadline = Date.now() + 35000
   for (let attempt = 0; !options.previous && (!plan || !runtimeTests.length) && attempt < Math.min(2, planningProviders.length + 1) && remaining() > 60000 && Date.now() < planningDeadline - 1000; attempt++) {
+    const started = Date.now()
+    const label = planningProviders[Math.min(attempt, planningProviders.length - 1)]?.label
+    const diagnostic: WebsitePlanningAttempt = { attempt: attempt + 1, provider: label === 'primary' || label === 'fallback' || label === 'emergency' ? label : 'other', elapsedMs: 0, result: 'provider-error', issues: [] }
     try {
       // A visually valid plan without executable journeys is incomplete. Give
       // it one bounded correction within the ORIGINAL 35s planning window,
       // including when only one planner provider is configured.
-      const correction = plan ? `\nCURRENT DESIGN PLAN:\n${JSON.stringify(plan)}\nThe runtimeTests were missing or outside the required schema. Keep the design and return the complete corrected plan with 2-3 compact runtimeTests. Each must have at most 8 steps and 3 assertions. Split longer flows into independent journeys; use only the listed actions/target/assertion types. Preserve the user's requirements and calculate expected outputs independently. Do not replace a requested behavior with a static heading check.` : ''
-      const raw = await complete([{ role: 'system', content: PLAN_SYSTEM }, { role: 'user', content: context + correction }], 4000, Math.min(22000, planningDeadline - Date.now()), attempt, true, 'medium', planningProviders)
-      const json = raw.match(/\{[\s\S]*\}/)?.[0]
+      const correction = previousPlanIssues.length ? `\nPREVIOUS PLAN (data to correct):\n${plan ? JSON.stringify(plan) : previousPlanResponse.slice(0, 24000)}\nPLAN VALIDATION ERRORS:\n${previousPlanIssues.join('\n')}\nThe runtimeTests were missing or outside the required schema, or the plan was not complete JSON. Keep the design and return the complete corrected plan with 2-3 compact runtimeTests. Each must have at most 8 steps and 3 assertions. Split longer flows into independent journeys; use only the listed actions/target/assertion types. Preserve the user's requirements and calculate expected outputs independently. Do not replace a requested behavior with a static heading check.` : ''
+      const raw = await complete([{ role: 'system', content: PLAN_SYSTEM }, { role: 'user', content: context + correction }], 4000, Math.min(22000, planningDeadline - Date.now()), attempt, true, 'medium', planningProviders, result => { diagnostic.finishReason = result.finishReason === 'stop' || result.finishReason === 'length' ? result.finishReason : 'other'; diagnostic.contentChars = result.content.length })
       active()
-      if (json) { const parsed = JSON.parse(json); if (Array.isArray(parsed.pages) && parsed.pages.length <= 6 && typeof parsed.direction === 'string') { plan = parsed; runtimeTests = parseRuntimeTests(parsed.runtimeTests) } }
+      previousPlanResponse = raw
+      // Reasoning braces must not become part of the JSON payload. Builders
+      // already strip these blocks; apply the same normalization to planning.
+      const json = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim().match(/\{[\s\S]*\}/)?.[0]
+      let parsed: any
+      try { parsed = json ? JSON.parse(json) : null } catch { /* fixed diagnostics below never expose raw JSON or reasoning */ }
+      if (!parsed || typeof parsed !== 'object') { diagnostic.result = 'invalid-json'; diagnostic.issues = ['plan: expected a complete JSON object'] }
+      else if (!Array.isArray(parsed.pages) || parsed.pages.length > 6 || typeof parsed.direction !== 'string') {
+        diagnostic.result = 'invalid-design'
+        if (!Array.isArray(parsed.pages) || parsed.pages.length > 6) diagnostic.issues.push('pages: expected an array of at most 6 pages')
+        if (typeof parsed.direction !== 'string') diagnostic.issues.push('direction: expected a string')
+      } else {
+        plan = parsed
+        const inspected = inspectRuntimeTests(parsed.runtimeTests)
+        runtimeTests = inspected.tests
+        diagnostic.result = runtimeTests.length ? 'valid' : 'invalid-journeys'
+        diagnostic.issues = inspected.issues
+      }
+      previousPlanIssues = diagnostic.issues
+    } catch (error) {
+      active()
+      const failure = (error as { completionFailure?: { category?: string; finishReason?: string } })?.completionFailure
+      const category = failure?.category
+      diagnostic.failureCategory = ['timeout', 'rate_limit', 'quota', 'input_limit', 'provider_http', 'empty_response', 'unavailable'].includes(category || '') ? category : 'unavailable'
+      if (failure?.finishReason) diagnostic.finishReason = failure.finishReason === 'length' || failure.finishReason === 'stop' ? failure.finishReason : 'other'
+      diagnostic.issues = ['planner: completion unavailable within the bounded planning attempt']
+      options.onDiagnostic?.('plan', error)
+    } finally {
+      diagnostic.elapsedMs = Date.now() - started
+      planningAttempts.push(diagnostic)
       planDiagnostic = runtimeTests.length ? '' : 'The planner did not supply a complete valid interaction plan after bounded planning.'
-      options.onDiagnostic?.('plan-runtime', { attempt: attempt + 1, validJourneys: runtimeTests.length, hasDesignPlan: !!plan, elapsedMs: Date.now() - (planningDeadline - 35000) })
-    } catch (error) { active(); options.onDiagnostic?.('plan', error) }
+      options.onDiagnostic?.('plan-runtime', diagnostic)
+    }
   }
   const system = WEBSITE_SYSTEM + `\nToday is ${new Date().toISOString().slice(0, 10)}. Use the current year for a copyright footer, or omit it; do not insert a stale hardcoded year.` + (options.previous ? '\nEDIT REQUEST: Revise the supplied CURRENT PAGE faithfully. Preserve design, content, images, routes, and functionality outside the requested change. Do not redesign unrelated parts.' : '')
   const user = context + (plan ? `\nDESIGN AND IMPLEMENTATION PLAN (user instructions and evidence take priority):\n${JSON.stringify(plan)}` : '')
@@ -252,6 +287,7 @@ export async function generateWebsite(options: { model: string; plannerModel?: s
     if (!checked.issues.some(issue => issue.severity === 'error')) {
       testsFrozen = true
       checked.runtime = await reviewWebsiteRuntime(candidate, runtimeTests, { deadlineMs: options.deadlineMs - 1500, signal })
+      if (planningAttempts.length) checked.runtime.planning = { attempts: planningAttempts }
       if (!runtimeTests.length && planDiagnostic) checked.runtime.limitations.push(planDiagnostic)
       active()
       if (checked.runtime.status === 'unavailable') throw new WebsiteRuntimeUnavailableError(checked.runtime)

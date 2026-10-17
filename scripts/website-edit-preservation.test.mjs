@@ -6,9 +6,9 @@ const directory = await fs.mkdtemp(new URL('./.edit-check-', import.meta.url).pa
 try {
   const bundle = await build({ stdin: { contents: "export * from './api/_websiteEdits'; export { generateWebsite } from './api/_websiteGeneration'", resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'esm', packages: 'external', write: false, plugins: [{ name: 'provider', setup(b) {
     b.onResolve({ filter: /^\.\/_websiteRuntime$/ }, () => ({ path: 'runtime', namespace: 'runtime-fixture' }))
-    b.onLoad({ filter: /.*/, namespace: 'runtime-fixture' }, () => ({ contents: `export const WEBSITE_RUNTIME_TEST_SCHEMA='';export const parseRuntimeTests=()=>[];export const reviewWebsiteRuntime=async()=>({status:'passed',widths:[1440,390],checks:[],issues:[],limitations:['Mocked in parser/provider unit tests; real browser covered by studio-runtime-regressions.mjs']})` }))
+    b.onLoad({ filter: /.*/, namespace: 'runtime-fixture' }, () => ({ resolveDir: process.cwd(), contents: `export {WEBSITE_RUNTIME_TEST_SCHEMA,parseRuntimeTests,inspectRuntimeTests} from '${process.cwd()}/api/_websiteRuntime.ts';export const reviewWebsiteRuntime=async()=>({status:'passed',widths:[1440,390],checks:[],issues:[],limitations:['Mocked in parser/provider unit tests; real browser covered by studio-runtime-regressions.mjs']})` }))
     b.onResolve({ filter: /^\.\/_llm$/ }, () => ({ path: 'llm', namespace: 'fixture' }))
-    b.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: `export const providerChain=()=>[{model:'thinkingmachines/Inkling'}];export async function chatComplete(messages,options){return globalThis.editFixture(messages,options)}` }))
+    b.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: `export const providerChain=()=>[{model:'thinkingmachines/Inkling'}];export async function chatComplete(messages,options){return globalThis.editFixture(messages,options)};export async function chatCompleteEx(messages,options){const result=await chatComplete(messages,options);return typeof result==='string'?{content:result,finishReason:'stop'}:result}` }))
   } }] })
   await fs.writeFile(directory + '/edits.mjs', bundle.outputFiles[0].text)
   const { prepareWebsiteEdit, applyWebsiteEdits, generateWebsite } = await import(pathToFileURL(directory + '/edits.mjs'))

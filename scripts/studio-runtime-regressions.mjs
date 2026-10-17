@@ -42,7 +42,7 @@ globalThis.runtimeLaunch = async options => {
 try {
   const bundle = await build({ stdin: { contents: "export * from './api/_websiteRuntime'; export * from './api/_websiteGeneration'", resolveDir: process.cwd() }, bundle: true, write: false, platform: 'node', format: 'esm', packages: 'external', plugins: [{ name: 'synthetic-model', setup(build) {
     build.onResolve({ filter: /^\.\/_llm$/ }, () => ({ path: 'llm', namespace: 'fixture' }))
-    build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export const providerChain=()=>[{label:"primary",model:"fixture"}];export const chatComplete=(messages,options)=>globalThis.runtimeModel(messages,options)' }))
+    build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export const providerChain=()=>[{label:"primary",model:"fixture"}];export const chatComplete=(messages,options)=>globalThis.runtimeModel(messages,options);export const chatCompleteEx=async(messages,options)=>{const result=await chatComplete(messages,options);return typeof result==="string"?{content:result,finishReason:"stop"}:result}' }))
     build.onResolve({ filter: /^playwright-core$/ }, () => ({ path: 'browser', namespace: 'lifecycle' }))
     build.onLoad({ filter: /.*/, namespace: 'lifecycle' }, () => ({ contents: 'export const chromium={launch:options=>globalThis.runtimeLaunch(options)}' }))
   } }] })
@@ -118,6 +118,7 @@ try {
       if (calls.length === 1) return JSON.stringify({ direction: 'Useful worksheet', pages: [{ name: 'Budget' }], runtimeTests: incompleteTests })
       if (calls.length === 2) {
         assert.match(messages.at(-1).content, /runtimeTests were missing or outside/)
+        assert.match(messages.at(-1).content, incompleteTests ? /runtimeTests\[0\]\.steps: expected at most 8 steps/ : /runtimeTests: expected 1-4 independent journeys/)
         assert.ok(options.timeoutMs <= 22000, 'correction uses the original bounded planning window')
         return JSON.stringify({ direction: 'Useful worksheet', pages: [{ name: 'Budget' }], runtimeTests: tests })
       }
@@ -128,6 +129,7 @@ try {
     assert.equal(calls.length, 3, 'single-provider missing/malformed plans get one correction, then one build')
     assert.equal(corrected.review.runtime.status, 'passed', JSON.stringify(corrected.review.runtime))
     assert.equal(corrected.review.runtime.checks.length, 12)
+    assert.deepEqual(corrected.review.runtime.planning.attempts.map(attempt => attempt.result), ['invalid-journeys', 'valid'])
     correctedPlans.push({ initial: incompleteTests ? 'malformed' : 'missing', runtime: corrected.review.runtime })
   }
 

@@ -5,6 +5,16 @@ type Target = { label?: string; role?: string; name?: string; selector?: string 
 type Step = { action: 'click' | 'fill' | 'select' | 'check' | 'uncheck' | 'press'; target: Target; value?: string; viewport?: 'mobile' | 'desktop' }
 type Expectation = { type: 'text' | 'value' | 'visible' | 'hidden' | 'count' | 'checked' | 'hash' | 'download'; target?: Target; value?: string | number | boolean }
 export type WebsiteRuntimeTest = { name: string; steps: Step[]; expect: Expectation[] }
+export type WebsitePlanningAttempt = {
+  attempt: number
+  provider: 'primary' | 'fallback' | 'emergency' | 'other'
+  elapsedMs: number
+  finishReason?: 'stop' | 'length' | 'other'
+  contentChars?: number
+  result: 'valid' | 'invalid-json' | 'invalid-design' | 'invalid-journeys' | 'provider-error'
+  issues: string[]
+  failureCategory?: string
+}
 export type WebsiteRuntimeReview = {
   status: 'passed' | 'partial' | 'failed' | 'unavailable'
   widths: number[]
@@ -12,6 +22,7 @@ export type WebsiteRuntimeReview = {
   issues: { code: string; detail: string; severity: 'error' | 'warning' }[]
   limitations: string[]
   timings?: { stage: string; durationMs: number; width?: number }[]
+  planning?: { attempts: WebsitePlanningAttempt[] }
 }
 
 export const WEBSITE_RUNTIME_TEST_SCHEMA = `Include runtimeTests: up to 4 short, independent journeys, each {"name":"user requirement being checked","steps":[{"action":"fill","target":{"label":"exact accessible field label"},"value":"1000"},{"action":"click","target":{"role":"button","name":"Calculate"}}],"expect":[{"type":"text","target":{"selector":"#result"},"value":"200"}]}. Each journey starts with a fresh page. Max 8 steps and 3 assertions per journey. Actions: click, fill, select (option value), check, uncheck, press (Enter/Escape/Tab/ArrowDown/ArrowUp). A step may specify viewport:"mobile" or viewport:"desktop" when a responsive control (such as the mobile menu) exists only at that width; otherwise every step runs at both widths. Targets use exact label, role+name, or simple CSS selector. Assertions: text (exact visible normalized text, including units/currency), value (exact input value), visible, hidden, count, checked, hash (exact), download (filename contains). Use specific computed expectations derived from the user's request, including a working calculation/form/data change or route when requested; an unchanged heading is not an interaction test. Include an invalid-input case when applicable. Avoid external network and real submissions. For a static page test its requested content/navigation. These tests are run in a real opaque sandbox at desktop and mobile widths. They cannot execute arbitrary JavaScript. Preserve the named controls/selectors when building; do not weaken assertions to match a broken implementation.`
@@ -24,16 +35,41 @@ function validTarget(value: any): value is Target {
     typeof value.selector === 'string' && value.selector.length > 0 && value.selector.length <= 160 && !value.selector.includes('>>')
   )
 }
-export function parseRuntimeTests(value: unknown): WebsiteRuntimeTest[] {
-  if (!Array.isArray(value) || value.length > 4) return []
-  const valid = value.filter((test): test is WebsiteRuntimeTest => {
-    if (!test || typeof test.name !== 'string' || !test.name || test.name.length > 160 || !Array.isArray(test.steps) || test.steps.length > 8 || !Array.isArray(test.expect) || !test.expect.length || test.expect.length > 3) return false
-    return test.steps.every((step: any) => ['click', 'fill', 'select', 'check', 'uncheck', 'press'].includes(step?.action) && validTarget(step.target) && (step.viewport === undefined || ['mobile', 'desktop'].includes(step.viewport)) && (['fill', 'select', 'press'].includes(step.action) ? typeof step.value === 'string' && step.value.length <= 500 && (step.action !== 'press' || ['Enter', 'Escape', 'Tab', 'ArrowDown', 'ArrowUp'].includes(step.value)) : true)) &&
-      test.expect.every((expect: any) => ['text', 'value', 'visible', 'hidden', 'count', 'checked', 'hash', 'download'].includes(expect?.type) && (['hash', 'download'].includes(expect.type) || validTarget(expect.target)) && (['visible', 'hidden'].includes(expect.type) || expect.type === 'count' && Number.isInteger(expect.value) && expect.value >= 0 && expect.value <= 10000 || expect.type === 'checked' && typeof expect.value === 'boolean' || typeof expect.value === 'string' && expect.value.length <= 500))
+export function inspectRuntimeTests(value: unknown): { tests: WebsiteRuntimeTest[]; issues: string[] } {
+  const issues: string[] = []
+  const add = (path: string, detail: string) => { if (issues.length < 12) issues.push(`${path}: ${detail}`) }
+  const target = (value: unknown, path: string) => { if (!validTarget(value)) add(path, 'use an exact label (1-120 characters), allowed role+exact name (1-120), or CSS selector (1-160, no >>). Allowed roles: button, link, textbox, spinbutton, combobox, checkbox, radio, tab, menuitem, heading, status, dialog, option') }
+  if (!Array.isArray(value) || !value.length || value.length > 4) return { tests: [], issues: ['runtimeTests: expected 1-4 independent journeys'] }
+  value.forEach((test: any, index) => {
+    const path = `runtimeTests[${index}]`
+    if (!test || typeof test !== 'object') { add(path, 'expected a journey object'); return }
+    if (typeof test.name !== 'string' || !test.name || test.name.length > 160) add(`${path}.name`, 'expected a nonempty string of at most 160 characters')
+    if (!Array.isArray(test.steps) || test.steps.length > 8) add(`${path}.steps`, 'expected at most 8 steps; split longer flows into independent journeys')
+    else test.steps.forEach((step: any, index: number) => {
+      const stepPath = `${path}.steps[${index}]`
+      if (!['click', 'fill', 'select', 'check', 'uncheck', 'press'].includes(step?.action)) add(`${stepPath}.action`, 'expected click, fill, select, check, uncheck or press')
+      target(step?.target, `${stepPath}.target`)
+      if (step?.viewport !== undefined && !['mobile', 'desktop'].includes(step.viewport)) add(`${stepPath}.viewport`, 'expected mobile or desktop, or omit for both')
+      if (['fill', 'select', 'press'].includes(step?.action) && (typeof step.value !== 'string' || step.value.length > 500)) add(`${stepPath}.value`, 'expected a string of at most 500 characters; select uses an option value')
+      if (step?.action === 'press' && !['Enter', 'Escape', 'Tab', 'ArrowDown', 'ArrowUp'].includes(step.value)) add(`${stepPath}.value`, 'expected Enter, Escape, Tab, ArrowDown or ArrowUp')
+    })
+    if (!Array.isArray(test.expect) || !test.expect.length || test.expect.length > 3) add(`${path}.expect`, 'expected 1-3 assertions')
+    else test.expect.forEach((expect: any, index: number) => {
+      const expectedPath = `${path}.expect[${index}]`
+      if (!['text', 'value', 'visible', 'hidden', 'count', 'checked', 'hash', 'download'].includes(expect?.type)) add(`${expectedPath}.type`, 'expected text, value, visible, hidden, count, checked, hash or download')
+      if (!['hash', 'download'].includes(expect?.type)) target(expect?.target, `${expectedPath}.target`)
+      if (expect?.type === 'count') { if (!Number.isInteger(expect.value) || expect.value < 0 || expect.value > 10000) add(`${expectedPath}.value`, 'expected an integer from 0 to 10000') }
+      else if (expect?.type === 'checked') { if (typeof expect.value !== 'boolean') add(`${expectedPath}.value`, 'expected a boolean') }
+      else if (!['visible', 'hidden'].includes(expect?.type) && (typeof expect?.value !== 'string' || expect.value.length > 500)) add(`${expectedPath}.value`, 'expected a string of at most 500 characters; text/value must match exactly, including units')
+    })
   })
-  // A malformed journey cannot disappear while the remaining subset is
-  // reported as a fully executed plan. Fall back to explicitly partial smoke.
-  return valid.length === value.length ? valid : []
+  // Reject the entire invalid plan: never discard a failing journey while
+  // reporting the remaining subset as fully verified. Issues contain schema
+  // paths and fixed messages only, not generated text or user values.
+  return { tests: issues.length ? [] : value as WebsiteRuntimeTest[], issues }
+}
+export function parseRuntimeTests(value: unknown): WebsiteRuntimeTest[] {
+  return inspectRuntimeTests(value).tests
 }
 
 // Lambda's single-process/no-zygote flags are retained, but origin isolation

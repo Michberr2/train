@@ -8,9 +8,9 @@ const originalNow = Date.now
 try {
   const bundle = await build({ entryPoints: ['api/_websiteGeneration.ts'], bundle: true, platform: 'node', format: 'esm', packages: 'external', write: false, plugins: [{ name: 'fixture-provider', setup(b) {
     b.onResolve({ filter: /^\.\/_websiteRuntime$/ }, () => ({ path: 'runtime', namespace: 'runtime-fixture' }))
-    b.onLoad({ filter: /.*/, namespace: 'runtime-fixture' }, () => ({ contents: `export const WEBSITE_RUNTIME_TEST_SCHEMA='';export const parseRuntimeTests=value=>Array.isArray(value)?value:[];export const reviewWebsiteRuntime=async()=>({status:'passed',widths:[1440,390],checks:[],issues:[],limitations:['Mocked in parser/provider unit tests; real browser covered by studio-runtime-regressions.mjs']})` }))
+    b.onLoad({ filter: /.*/, namespace: 'runtime-fixture' }, () => ({ resolveDir: process.cwd(), contents: `export {WEBSITE_RUNTIME_TEST_SCHEMA,parseRuntimeTests,inspectRuntimeTests} from '${process.cwd()}/api/_websiteRuntime.ts';export const reviewWebsiteRuntime=async()=>({status:'passed',widths:[1440,390],checks:[],issues:[],limitations:['Mocked in parser/provider unit tests; real browser covered by studio-runtime-regressions.mjs']})` }))
     b.onResolve({ filter: /^\.\/_llm$/ }, () => ({ path: 'llm', namespace: 'fixture' }))
-    b.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: `export const providerChain=model=>[{label:'primary',model,base:'https://provider.test'},{label:'fallback',model:'fallback',base:'https://fallback.test'}];export async function chatComplete(messages,options){return globalThis.websiteFixture.complete(messages,options)}` }))
+    b.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: `export const providerChain=model=>[{label:'primary',model,base:'https://provider.test'},{label:'fallback',model:'fallback',base:'https://fallback.test'}];export async function chatComplete(messages,options){return globalThis.websiteFixture.complete(messages,options)};export async function chatCompleteEx(messages,options){const result=await chatComplete(messages,options);return typeof result==='string'?{content:result,finishReason:'stop'}:result}` }))
   } }] })
   const path = join(temp, 'website.mjs'); await writeFile(path, bundle.outputFiles[0].text)
   const { reviewWebsite, generateWebsite } = await import(pathToFileURL(path))
@@ -104,5 +104,57 @@ try {
   const faithful=await generateWebsite({model:'editor',plannerModel:'unused-planner',fallbackModel:'backup',prompt:'Rename the action',user:'Use Estimate',previous:valid,deadlineMs:275000})
   assert.equal(faithful.html,labelEdit.html)
   assert.deepEqual(calls.map(c=>c.options.providers[0].model),['editor'],'source edits must not plan or rebuild with the website builder')
+  const validPlan = JSON.stringify({ direction: 'Useful worksheet', pages: [{ name: 'Budget' }], runtimeTests })
+  const privateValue = 'PRIVATE_PROMPT_VALUE_MUST_NOT_APPEAR_IN_DIAGNOSTICS'
+  const badJourney = { ...runtimeTests[0], steps: [{ action: 'evaluate', target: { label: privateValue }, value: privateValue }], expect: [{ type: 'count', target: { selector: 'button' }, value: '1' }] }
+  const rejectedPlan = JSON.stringify({ direction: privateValue, pages: [{ name: privateValue }], runtimeTests: [runtimeTests[0], badJourney] })
+  for (const fixture of [
+    { name: 'missing', content: JSON.stringify({ direction: 'Worksheet', pages: [] }), finishReason: 'stop', result: 'invalid-journeys', issue: /runtimeTests: expected 1-4/ },
+    { name: 'malformed', content: rejectedPlan, finishReason: 'stop', result: 'invalid-journeys', issue: /runtimeTests\[1\]\.steps\[0\]\.action/ },
+    { name: 'truncated', content: '{"direction":"Worksheet","pages":[', finishReason: 'length', result: 'invalid-json', issue: /complete JSON object/ },
+    { name: 'design', content: JSON.stringify({ runtimeTests, direction: 'Worksheet' }), finishReason: 'stop', result: 'invalid-design', issue: /pages: expected/ },
+  ]) {
+    time = 0; calls.length = 0
+    globalThis.websiteFixture.complete = async (messages, options) => {
+      calls.push({ messages, options, at: time })
+      if (calls.length === 1) { time += 20000; return { content: fixture.content, finishReason: fixture.finishReason } }
+      if (calls.length === 2) {
+        assert.match(messages.at(-1).content, fixture.issue, 'correction includes the actual validation field path')
+        assert.equal(options.timeoutMs, 15000, '20s first attempt leaves only 15s of the original planning window')
+        time += 5000
+        return validPlan
+      }
+      return valid
+    }
+    const corrected = await generateWebsite({ model: 'fixture', prompt: privateValue, user: privateValue, deadlineMs: 275000 })
+    const diagnostics = corrected.review.runtime.planning.attempts
+    assert.equal(calls.length, 3)
+    assert.equal(diagnostics[0].result, fixture.result)
+    assert.equal(diagnostics[0].finishReason, fixture.finishReason)
+    assert.equal(diagnostics[0].contentChars, fixture.content.length)
+    assert.match(diagnostics[0].issues.join('\n'), fixture.issue)
+    assert.equal(diagnostics[1].result, 'valid')
+    assert.doesNotMatch(JSON.stringify(diagnostics), new RegExp(privateValue), 'response diagnostics contain no raw plan, prompt, reasoning or generated values')
+  }
+  time = 0; calls.length = 0
+  globalThis.websiteFixture.complete = async (messages, options) => {
+    calls.push({ messages, options })
+    return calls.length === 1 ? `<think>{${privateValue}}</think>\n\`\`\`json\n${validPlan}\n\`\`\`` : valid
+  }
+  const reasoned = await generateWebsite({ model: 'fixture', prompt: privateValue, user: privateValue, deadlineMs: 275000 })
+  assert.equal(calls.length, 2, 'reasoning braces do not invalidate complete JSON or require a retry')
+  assert.equal(reasoned.review.runtime.planning.attempts[0].result, 'valid')
+  assert.doesNotMatch(JSON.stringify(reasoned.review.runtime.planning), new RegExp(privateValue))
+  time = 0; calls.length = 0
+  globalThis.websiteFixture.complete = async (messages, options) => {
+    calls.push({ messages, options })
+    if (options.json) throw Object.assign(new Error(privateValue), { completionFailure: { category: 'empty_response', finishReason: 'length' } })
+    return valid
+  }
+  const unavailablePlan = await generateWebsite({ model: 'fixture', prompt: privateValue, user: privateValue, deadlineMs: 275000 })
+  const failures = unavailablePlan.review.runtime.planning.attempts
+  assert.equal(failures.length, 2, 'provider failures remain bounded to two planning attempts')
+  assert.ok(failures.every(attempt => attempt.result === 'provider-error' && attempt.failureCategory === 'empty_response' && attempt.finishReason === 'length'))
+  assert.doesNotMatch(JSON.stringify(failures), new RegExp(privateValue), 'provider errors are categorized without exposing their message')
   console.log('PASS: actual HTML/JS parsing, broken link/label detection, targeted repair, shared request deadline, and preservation during edits.')
 } finally { Date.now = originalNow; delete globalThis.websiteFixture; await rm(temp, { recursive: true, force: true }) }
