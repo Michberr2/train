@@ -2,7 +2,7 @@
 // fixtures. No provider/account calls, external navigation or saved user data.
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { join } from 'node:path'
 import { chromium } from 'playwright-core'
@@ -88,6 +88,33 @@ try {
   const partial = await run(html, [])
   assert.equal(partial.status, 'partial', 'generic control smoke must not masquerade as user-specific verification')
 
+  // Actual captured planner journeys assumed state survived between tests.
+  // Correcting only select syntax must not make those false expectations pass.
+  const captured = JSON.parse(await readFile(new URL('./fixtures/studio-planner-output.json', import.meta.url), 'utf8'))
+  const dependentTests = JSON.parse(captured.invalidSelectPlan).runtimeTests
+  for (const test of dependentTests) for (const step of test.steps) if (step.action === 'select') { step.value = step.optionValue; delete step.optionValue }
+  assert.equal(parseRuntimeTests(dependentTests).length, 3)
+  const expenseHtml = `<!doctype html><html><head><meta name="viewport" content="width=device-width"><style>body{font:16px sans-serif;margin:12px}input,select,button{display:block;max-width:100%;margin:8px 0}li{overflow-wrap:anywhere}</style></head><body><main><h1>Expense fixture</h1><form><label>Description<input id="description" required></label><label>Amount<input id="amount" type="number" min="0.01" step="0.01" required></label><label>Category<select id="category"><option>Food</option><option>Transport</option><option>Other</option></select></label><button>Add expense</button></form><label>Filter category<select id="filter"><option>All</option><option>Food</option><option>Transport</option><option>Other</option></select></label><output aria-label="Total spent">0.00</output><ul></ul><button id="export">Export CSV</button></main><script>
+const rows=[];const field=id=>document.getElementById(id);function render(){const list=document.querySelector('ul');list.replaceChildren();document.querySelector('output').textContent=(rows.reduce((sum,row)=>sum+row.cents,0)/100).toFixed(2);for(const row of rows){if(field('filter').value!=='All'&&field('filter').value!==row.category)continue;const item=document.createElement('li');item.append(row.description);const remove=document.createElement('button');remove.textContent='Delete';remove.onclick=()=>{rows.splice(rows.indexOf(row),1);render()};item.append(remove);list.append(item)}}document.querySelector('form').onsubmit=event=>{event.preventDefault();const description=field('description').value.trim(),amount=Number(field('amount').value);if(!description||!Number.isFinite(amount)||amount<=0)return;rows.push({description,cents:Math.round(amount*100),category:field('category').value});event.target.reset();render()};field('filter').onchange=render;field('export').onclick=()=>{const link=document.createElement('a');link.href=URL.createObjectURL(new Blob(['description,amount,category\\n'+rows.map(row=>[row.description,(row.cents/100).toFixed(2),row.category].map(value=>'"'+value.replaceAll('"','""')+'"').join(',')).join('\\n')],{type:'text/csv'}));link.download='pocket-ledger.csv';link.click()};
+</script></body></html>`
+  assert.deepEqual(reviewWebsite(expenseHtml).issues, [])
+  const dependent = await run(expenseHtml, dependentTests)
+  assert.equal(dependent.status, 'failed', 'a valid app cannot satisfy plans that invent carry-over state')
+  assert.deepEqual(dependent.widths, [1440, 390])
+  assert.equal(dependent.checks.filter(check => !check.passed).length, 4, 'filter/delete dependencies fail at both widths')
+  assert.ok(dependent.checks.some(check => !check.passed && check.detail?.includes('8.00') && check.detail?.includes('3.00')))
+  const setup = dependentTests[0].steps
+  const independentTests = parseRuntimeTests([
+    { ...dependentTests[0], steps: [...setup, { action: 'fill', target: { label: 'Description' }, value: 'Invalid zero amount' }, { action: 'fill', target: { label: 'Amount' }, value: '0' }, { action: 'click', target: { role: 'button', name: 'Add expense' } }] },
+    { ...dependentTests[1], steps: [...setup.filter(step => step.action !== 'select'), ...dependentTests[1].steps.slice(1), dependentTests[1].steps[0]], expect: [...dependentTests[1].expect, { type: 'count', target: { selector: 'li' }, value: 1 }] },
+    { ...dependentTests[2], steps: [...setup, ...dependentTests[2].steps], expect: [{ ...dependentTests[2].expect[0], value: '0.00' }, dependentTests[2].expect[1]] },
+  ])
+  assert.equal(independentTests.length, 3)
+  const independent = await run(expenseHtml, independentTests)
+  assert.equal(independent.status, 'passed', JSON.stringify(independent))
+  assert.deepEqual(independent.widths, [1440, 390])
+  assert.equal(independent.checks.length, 10, 'fresh setup verifies add/invalid input, global totals through filtering, delete and CSV download')
+
   const security = html.replace(`<script>${script}</script>`, `<script>let parentBlocked=false;try{parent.document.body.innerHTML='escaped'}catch{parentBlocked=true}document.getElementById('result').textContent=parentBlocked&&typeof RTCPeerConnection==='undefined'&&typeof WebTransport==='undefined'?'opaque':'escaped';fetch('https://example.com/no-network').then(()=>document.getElementById('count').textContent='escaped').catch(()=>document.getElementById('count').textContent='blocked')</script>`)
   const isolated = await run(security, [{ name: 'Opaque parent and denied network', steps: [], expect: [{ type: 'text', target: { selector: '#result' }, value: 'opaque' }, { type: 'text', target: { selector: '#count' }, value: 'blocked' }] }])
   assert.equal(isolated.status, 'passed', JSON.stringify(isolated))
@@ -153,7 +180,7 @@ try {
   await assert.rejects(reviewWebsiteRuntime(looping, [], { deadlineMs: Date.now() + 22000, signal: controller.signal }), error => error.name === 'AbortError')
   clearTimeout(cancelTimer)
   assert.ok(Date.now() - cancelStart < 2000, 'caller cancellation must interrupt browser checks without waiting for the runtime deadline')
-  const report = { at: new Date().toISOString(), modelCalls: 'synthetic only', lifecycle: lifecycles[0], linuxArgs, normal: good, crash: bad, incorrectCalculation: wrong, partial, isolation: isolated, repaired: fixed.review.runtime, correctedPlans, sourcePreservingEdit: edited.review.runtime, deadline: timed, browserCancellationMs: Date.now() - cancelStart }
+  const report = { at: new Date().toISOString(), modelCalls: 'synthetic only', lifecycle: lifecycles[0], linuxArgs, normal: good, crash: bad, incorrectCalculation: wrong, partial, capturedDependentJourneys: dependent, independentJourneys: independent, isolation: isolated, repaired: fixed.review.runtime, correctedPlans, sourcePreservingEdit: edited.review.runtime, deadline: timed, browserCancellationMs: Date.now() - cancelStart }
   if (process.env.OUTPUT_DIR) { const { mkdir } = await import('node:fs/promises'); await mkdir(process.env.OUTPUT_DIR, { recursive: true }); await writeFile(join(process.env.OUTPUT_DIR, 'studio-runtime.json'), JSON.stringify(report, null, 2)) }
   console.log('Studio runtime regressions passed: real desktop/mobile load, calculation, validation, counter, navigation, null-DOM repair, frozen assertions, faithful edit, opaque parent/network isolation and infinite-script deadline.')
 } finally {

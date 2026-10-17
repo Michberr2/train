@@ -71,6 +71,7 @@ boundaries, not an exhaustive list of every optional provider setting:
 | PostgreSQL account/data backend | `DATABASE_URL`; backend selected when `NALU_STORAGE_BACKEND` is not `cloudflare` |
 | Cloudflare account/data backend | `NALU_STORAGE_BACKEND=cloudflare`, `CLOUDFLARE_DATA_URL`, `CLOUDFLARE_DATA_SECRET`; the worker requires matching secret, D1 and R2 bindings |
 | Primary model | `TINKER_API_KEY`; optional `TINKER_BASE_URL`, `NALU_DEFAULT_MODEL` |
+| Website planning | Optional `NALU_WEBSITE_PLANNER_MODEL` selects only the server-side planner; defaults to `NALU_DESIGN_MODEL` or `thinkingmachines/Inkling`. It does not change the website builder, editor or fallback model, and cannot be selected in request data. |
 | Model fallback | `NALU_FALLBACK_API_KEY` or `HUGGINGFACE_API_TOKEN`, optional fallback URL/model; Gemini emergency provider where configured |
 | Studio images | Gemini/FAL or configured image provider keys; inspect `api/_imageGeneration.ts` for supported settings |
 | Email and scheduled tasks | `RESEND_API_KEY`, `CRON_SECRET`; only configured schedulers should invoke cron routes |

@@ -17,9 +17,9 @@ import { chatComplete, primaryProvider, fallbackProvider } from './_llm'
 import { research } from './web'
 import { groundResearch } from './_grounding'
 import { generateWebsite, WEBSITE_SYSTEM, WebsiteRuntimeUnavailableError } from './_websiteGeneration'
-import { createStudioPlanTrace } from './_studioPlanTrace'
 import { cancellationSignal, throwIfCancelled, waitWithCancellation, withRequestCancellation } from './_requestCancellation'
 import { identityForRequest, identityBlock } from './_db'
+import { logWebsiteDiagnostic } from './_websiteDiagnostics'
 import { reserveStudioQuota, studioLimitMessage } from './_limits'
 import { generateMotion, motionBrandHint, motionSpec, motionSystem } from './_motionGeneration'
 import { generateMotionScene, motionSceneBrandHint, motionSceneSystem } from './_motionSceneGeneration'
@@ -35,6 +35,7 @@ const LLM_MODEL = env('NALU_DESIGN_MODEL') || 'thinkingmachines/Inkling'
 // The comparison favored Inkling's latency and completed-output quality;
 // Kimi provides another capable builder when generation or repair fails.
 const WEBSITE_MODEL = env('NALU_WEBSITE_MODEL') || LLM_MODEL
+const WEBSITE_PLANNER_MODEL = env('NALU_WEBSITE_PLANNER_MODEL') || LLM_MODEL
 const WEBSITE_FALLBACK_MODEL = env('NALU_WEBSITE_FALLBACK_MODEL') || 'moonshotai/Kimi-K2.6:peft:131072'
 const WEBSITE_EDIT_MODEL = env('NALU_WEBSITE_EDIT_MODEL') || LLM_MODEL
 // A SINGLE provider per call so timeoutMs is a TRUE hard cap. The default chain
@@ -1896,8 +1897,7 @@ async function handleDesign(req: any, res: any) {
       ? body.prevBlueprint.slice(0, 60000)
       : ''
   throwIfCancelled(signal)
-  const identity = kind === 'logo' ? null : await identityForRequest(req).catch(() => null)
-  const whoLine = kind === 'logo' ? '' : identityBlock(identity)
+  const whoLine = kind === 'logo' ? '' : identityBlock(await identityForRequest(req).catch(() => null))
   const user =
     (whoLine ? whoLine + '\n\n----\n' : '') +
     (grounding ? grounding + '\n\n----\n\nThe request:\n' : '') +
@@ -1931,8 +1931,7 @@ async function handleDesign(req: any, res: any) {
     }
     if (kind === 'webpage') {
       const repairIssues = Array.isArray(body.previewIssues) ? body.previewIssues.filter((issue): issue is string => typeof issue === 'string').slice(0, 6) : undefined
-      const onPlanRaw = createStudioPlanTrace(req, body, { prompt, identity, hasResearch: !!grounding || !!evidence?.sources?.length, onStatus: status => res.setHeader('X-Nalu-Studio-Trace', status) })
-      const result = await generateWebsite({ model: prevHtml ? WEBSITE_EDIT_MODEL : WEBSITE_MODEL, plannerModel: LLM_MODEL, fallbackModel: prevHtml ? LLM_MODEL : WEBSITE_FALLBACK_MODEL, user, prompt, previous: prevHtml, repairIssues, deadlineMs: requestStarted + 275000, signal, onPlanRaw })
+      const result = await generateWebsite({ model: prevHtml ? WEBSITE_EDIT_MODEL : WEBSITE_MODEL, plannerModel: WEBSITE_PLANNER_MODEL, fallbackModel: prevHtml ? LLM_MODEL : WEBSITE_FALLBACK_MODEL, user, prompt, previous: prevHtml, repairIssues, deadlineMs: requestStarted + 275000, signal, onDiagnostic: logWebsiteDiagnostic })
       if (!result) {
         send(502, { error: 'The website did not pass its build checks. Please retry; your existing design is preserved.' })
         return

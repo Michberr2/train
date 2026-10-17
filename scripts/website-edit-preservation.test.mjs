@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import { build } from 'esbuild'
 import { pathToFileURL } from 'node:url'
-import { createHash } from 'node:crypto'
 const directory = await fs.mkdtemp(new URL('./.edit-check-', import.meta.url).pathname)
 try {
   const bundle = await build({ stdin: { contents: "export * from './api/_websiteEdits'; export { generateWebsite } from './api/_websiteGeneration'", resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'esm', packages: 'external', write: false, plugins: [{ name: 'provider', setup(b) {
@@ -52,9 +51,9 @@ try {
     b.onResolve({ filter: /^\.\/(?:_websiteGeneration|_db|_limits|_grounding|web)$/ }, args => ({ path: args.path, namespace: 'service' }))
     b.onLoad({ filter: /.*/, namespace: 'service' }, ({ path }) => ({ contents:
       path === './_websiteGeneration' ? 'export class WebsiteRuntimeUnavailableError extends Error{};export const WEBSITE_SYSTEM="fixture";export const generateWebsite=options=>globalThis.handlerFixture(options);' :
-      path === './_db' ? 'export const identityForRequest=async()=>globalThis.handlerIdentity||null;export const identityBlock=()=>"";' :
+      path === './_db' ? 'export const identityForRequest=async()=>null;export const identityBlock=()=>"";' :
       path === './_limits' ? 'export const reserveStudioQuota=async()=>({ok:true,release:async()=>{globalThis.quotaReleased++}});export const studioLimitMessage=()=>"limit";' :
-      path === './web' ? 'export const research=async()=>null;' : 'export const groundResearch=async()=>globalThis.handlerResearch||({text:"",sources:[]});',
+      path === './web' ? 'export const research=async()=>null;' : 'export const groundResearch=async()=>({text:"",sources:[]});',
     }))
   } }] })
   await fs.writeFile(directory + '/handler.mjs', handlerBundle.outputFiles[0].text)
@@ -80,103 +79,59 @@ try {
     assert.equal(res.code, 502)
     assert.equal(globalThis.quotaReleased, 1, 'failed edits refund their generation quota')
     assert.match(res.payload.error, /existing design is preserved/)
-    const originalTraceHash = process.env.NALU_STUDIO_PLAN_TRACE_SHA256
     const originalInfo = console.info
-    const tracePrompt = 'Build this complete website or web app, honoring the requested functionality: Synthetic trace calculator'
-    const traceHash = createHash('sha256').update(tracePrompt).digest('hex')
-    const rawPlan = 'RAW_SYNTHETIC_PLAN\n' + 'quoted "data" {braces} \\path '.repeat(100)
-    const traceLogs = []
-    const traceCases = [
-      { name: 'exact anonymous synthetic prompt', allowed: true },
-      { name: 'disabled environment', hash: '' },
-      { name: 'wrong hash', hash: '0'.repeat(64) },
-      { name: 'changed prompt', prompt: tracePrompt + ' with private data' },
-      { name: 'leading whitespace differs from exact prompt', prompt: ' ' + tracePrompt },
-      { name: 'bearer header', headers: { authorization: 'Bearer synthetic' } },
-      { name: 'mixed case auth header', headers: { AuThOrIzAtIoN: 'Bearer synthetic' } },
-      { name: 'cookie header', headers: { Cookie: 'private=synthetic' } },
-      { name: 'body auth', extra: { token: 'synthetic' } },
-      { name: 'brand context', extra: { brand: { name: 'Private brand' } } },
-      { name: 'analysis context', extra: { analysis: 'Private image description' } },
-      { name: 'previous page', extra: { prevHtml: tiny } },
-      { name: 'empty extra key also denied', extra: { analysis: '' } },
-      { name: 'unknown future context', extra: { context: 'Private project data' } },
-      { name: 'resolved identity', identity: { id: 'synthetic' } },
-      { name: 'framework auth', auth: { id: 'synthetic' } },
-      { name: 'grounding text', research: { text: 'Private context', sources: [] } },
-      { name: 'grounding sources', research: { text: '', sources: [{ url: 'https://example.com' }] } },
-    ]
+    const diagnosticLogs = []
     try {
-      console.info = line => traceLogs.push(line)
-      for (const item of traceCases) {
-        process.env.NALU_STUDIO_PLAN_TRACE_SHA256 = item.hash ?? traceHash
-        globalThis.handlerIdentity = item.identity
-        globalThis.handlerResearch = item.research
-        traceLogs.length = 0
-        globalThis.handlerFixture = async options => {
-          assert.equal(typeof options.onPlanRaw === 'function', !!item.allowed, item.name)
-          options.onPlanRaw?.(rawPlan, { attempt: 1, provider: 'primary', finishReason: 'stop' })
-          return { html: tiny, review: { issues: [], scripts: 0, links: 0, controls: 0 }, repaired: false }
-        }
-        const traceRes = { code: 0, setHeader() {}, status(code) { this.code = code; return this }, json(payload) { this.payload = payload } }
-        await handler({ method: 'POST', headers: item.headers || {}, auth: item.auth, body: { kind: 'webpage', prompt: item.prompt ?? tracePrompt, ...item.extra } }, traceRes)
-        assert.equal(traceRes.code, 200, 'trace gating does not block normal generation')
-        assert.doesNotMatch(JSON.stringify(traceRes.payload), /RAW_SYNTHETIC_PLAN/, 'raw planning never enters the API response')
-        if (item.allowed) {
-          assert.ok(traceLogs.length > 1, 'large completions use bounded log chunks')
-          const parts = traceLogs.map(line => JSON.parse(line.replace(/^nalu-studio-plan-trace /, '')))
-          assert.equal(parts.map(part => part.raw).join(''), rawPlan)
-          assert.ok(parts.every(part => part.raw.length <= 1600 && !part.truncated))
-          assert.equal(new Set(parts.map(part => part.traceId)).size, 1)
-        } else assert.deepEqual(traceLogs, [], item.name + ' must never write a raw trace')
+      console.info = line => diagnosticLogs.push(JSON.parse(line.replace(/^nalu-studio /, '')))
+      globalThis.handlerFixture = async options => {
+        const privateValue = 'PRIVATE_PROMPT_PLAN_PROVIDER_CREDENTIAL'
+        options.onDiagnostic('build', Object.assign(new Error(privateValue), { completionFailure: { category: 'quota', status: 429, finishReason: 'length', body: privateValue }, cause: privateValue }))
+        options.onDiagnostic('plan-runtime', { attempt: 1, provider: 'primary', result: 'invalid-journeys', elapsedMs: 23, contentChars: 456, finishReason: 'stop', issues: [privateValue], prompt: privateValue })
+        options.onDiagnostic('review', JSON.stringify([{ detail: privateValue }]))
+        options.onDiagnostic(privateValue, { completionFailure: { category: privateValue, status: privateValue, finishReason: privateValue } })
+        return null
       }
-      // Use the same exact synthetic product brief as the live acceptance run.
-      // Reading its literal does not import or execute the browser-bearing script.
-      const liveSource = await fs.readFile(new URL('./nalu-studio-web-live.mjs', import.meta.url), 'utf8')
-      const liveBrief = liveSource.match(/getByLabel\('Your idea',\{exact:true\}\)\.fill\('([^']+)'\)/)?.[1]
-      assert.ok(liveBrief, 'live synthetic fixture remains discoverable')
-      const diagnosticPrompt = 'Build this complete website or web app, honoring the requested functionality: ' + liveBrief
-      const diagnosticHash = createHash('sha256').update(diagnosticPrompt).digest('hex')
-      assert.equal(diagnosticHash, 'dd4d0d989a6cf360e3c53f1c5212c0e3e395f075278d4b824c0eb6c577a8e1ed')
-      for (const item of [
-        { status: 'enabled', raw: true, header: true },
-        { status: 'env-missing', hash: '' },
-        { status: 'env-invalid', hash: 'not-a-digest' },
-        { status: 'env-mismatch', hash: '0'.repeat(64) },
-        { status: 'denied-auth-context', headers: { Authorization: 'Bearer PRIVATE_HEADER' }, header: true },
-        { status: 'denied-auth-context', identity: { id: 'PRIVATE_IDENTITY' }, header: true },
-        { status: 'denied-auth-context', auth: { id: 'PRIVATE_AUTH' }, header: true },
-        { status: 'denied-extra-input', extra: { analysis: 'PRIVATE_CONTEXT' }, header: true },
-        { status: 'denied-research', research: { text: 'PRIVATE_RESEARCH', sources: [] }, header: true },
-        { status: undefined, prompt: diagnosticPrompt + ' PRIVATE_CHANGE' },
-        { status: undefined, prompt: ' ' + diagnosticPrompt },
-      ]) {
-        process.env.NALU_STUDIO_PLAN_TRACE_SHA256 = item.hash ?? diagnosticHash
-        globalThis.handlerIdentity = item.identity
-        globalThis.handlerResearch = item.research
-        traceLogs.length = 0
-        globalThis.handlerFixture = async options => {
-          assert.equal(typeof options.onPlanRaw === 'function', !!item.raw)
-          options.onPlanRaw?.(rawPlan, { attempt: 1, provider: 'primary', finishReason: 'stop' })
-          return { html: tiny, review: { issues: [], scripts: 0, links: 0, controls: 0 }, repaired: false }
+      const res = { code: 0, setHeader() {}, status(code) { this.code = code; return this }, json(payload) { this.payload = payload } }
+      await handler({ method: 'POST', headers: {}, body: { kind: 'webpage', prompt: 'Synthetic diagnostic check' } }, res)
+      assert.equal(res.code, 502, 'failed generation still emits safe operational facts')
+      assert.deepEqual(diagnosticLogs, [
+        { stage: 'build', category: 'quota', status: 429, finishReason: 'length' },
+        { stage: 'plan-runtime', result: 'invalid-journeys', provider: 'primary', finishReason: 'stop', attempt: 1, elapsedMs: 23, contentChars: 456, issueCount: 1 },
+        { stage: 'review', category: 'validation' },
+        { stage: 'other', category: 'unknown' },
+      ])
+      assert.doesNotMatch(JSON.stringify({ diagnosticLogs, response: res.payload }), /PRIVATE_/)
+      console.info = () => { throw new Error('logging unavailable') }
+      await handler({ method: 'POST', headers: {}, body: { kind: 'webpage', prompt: 'Synthetic diagnostic check' } }, res)
+      assert.equal(res.code, 502, 'logging failure cannot change generation behavior')
+    } finally { console.info = originalInfo }
+    const modelKeys = ['NALU_DESIGN_MODEL', 'NALU_WEBSITE_MODEL', 'NALU_WEBSITE_PLANNER_MODEL', 'NALU_WEBSITE_EDIT_MODEL', 'NALU_WEBSITE_FALLBACK_MODEL']
+    const savedModels = Object.fromEntries(modelKeys.map(key => [key, process.env[key]]))
+    try {
+      const configurations = [
+        { env: {}, planner: 'thinkingmachines/Inkling', builder: 'thinkingmachines/Inkling', editor: 'thinkingmachines/Inkling' },
+        { env: { NALU_DESIGN_MODEL: 'configured-design' }, planner: 'configured-design', builder: 'configured-design', editor: 'configured-design' },
+        { env: { NALU_WEBSITE_PLANNER_MODEL: 'configured-planner', NALU_WEBSITE_MODEL: 'configured-builder', NALU_WEBSITE_EDIT_MODEL: 'configured-editor' }, planner: 'configured-planner', builder: 'configured-builder', editor: 'configured-editor' },
+        { env: { NALU_WEBSITE_PLANNER_MODEL: '   ' }, planner: 'thinkingmachines/Inkling', builder: 'thinkingmachines/Inkling', editor: 'thinkingmachines/Inkling' },
+      ]
+      for (const [index, item] of configurations.entries()) {
+        for (const key of modelKeys) delete process.env[key]
+        Object.assign(process.env, item.env)
+        const { default: configuredHandler } = await import(pathToFileURL(directory + '/handler.mjs').href + '?model-config=' + index)
+        for (const editing of [false, true]) {
+          globalThis.handlerFixture = async options => {
+            assert.equal(options.plannerModel, item.planner, 'only server environment selects the planner')
+            assert.equal(options.model, editing ? item.editor : item.builder, 'planner override preserves builder/editor selection')
+            assert.equal(options.fallbackModel, editing ? item.env.NALU_DESIGN_MODEL || 'thinkingmachines/Inkling' : 'moonshotai/Kimi-K2.6:peft:131072', 'planner override preserves fallback selection')
+            return { html: tiny, review: { issues: [], scripts: 0, links: 0, controls: 0 }, repaired: false }
+          }
+          const res = { code: 0, setHeader() {}, status(code) { this.code = code; return this }, json(payload) { this.payload = payload } }
+          await configuredHandler({ method: 'POST', headers: {}, body: { kind: 'webpage', prompt: 'Synthetic planner contract', plannerModel: 'untrusted-request-model', NALU_WEBSITE_PLANNER_MODEL: 'untrusted-request-model', ...(editing ? { prevHtml: tiny } : {}) } }, res)
+          assert.equal(res.code, 200)
         }
-        const traceRes = { code: 0, headers: {}, setHeader(name, value) { this.headers[name] = value }, status(code) { this.code = code; return this }, json(payload) { this.payload = payload } }
-        await handler({ method: 'POST', headers: item.headers || {}, auth: item.auth, body: { kind: 'webpage', prompt: item.prompt ?? diagnosticPrompt, ...item.extra } }, traceRes)
-        assert.equal(traceRes.code, 200)
-        const gateLogs = traceLogs.filter(line => line.startsWith('nalu-studio-plan-trace-gate '))
-        assert.deepEqual(gateLogs, item.status ? ['nalu-studio-plan-trace-gate ' + JSON.stringify({ status: item.status })] : [])
-        assert.equal(traceRes.headers['X-Nalu-Studio-Trace'], item.header ? item.status : undefined, 'response diagnostic requires exact synthetic env opt-in')
-        assert.doesNotMatch(JSON.stringify({ payload: traceRes.payload, headers: traceRes.headers, gateLogs }), /PRIVATE_|RAW_SYNTHETIC_PLAN/, 'fixed status metadata contains no private or generated values')
-        const rawLogs = traceLogs.filter(line => line.startsWith('nalu-studio-plan-trace '))
-        if (item.raw) assert.equal(rawLogs.map(line => JSON.parse(line.slice('nalu-studio-plan-trace '.length)).raw).join(''), rawPlan)
-        else assert.deepEqual(rawLogs, [], 'diagnostic markers never enable raw tracing')
       }
     } finally {
-      console.info = originalInfo
-      if (originalTraceHash === undefined) delete process.env.NALU_STUDIO_PLAN_TRACE_SHA256
-      else process.env.NALU_STUDIO_PLAN_TRACE_SHA256 = originalTraceHash
-      delete globalThis.handlerIdentity
-      delete globalThis.handlerResearch
+      for (const key of modelKeys) { if (savedModels[key] === undefined) delete process.env[key]; else process.env[key] = savedModels[key] }
     }
   } finally { if (originalKey === undefined) delete process.env.TINKER_API_KEY; else process.env.TINKER_API_KEY = originalKey }
   console.log('PASS: tiny edits, large source and tail preservation, duplicated embedded assets, literal Unicode/replacement bytes, atomic rejection, and extended-context routing')

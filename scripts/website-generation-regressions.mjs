@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 import { join } from 'node:path'
 const temp = await mkdtemp(join(process.cwd(), 'scripts/.website-check-'))
@@ -115,6 +115,40 @@ try {
   const badJourney = { ...runtimeTests[0], steps: [{ action: 'evaluate', target: { label: privateValue }, value: privateValue }], expect: [{ type: 'count', target: { selector: 'button' }, value: '1' }] }
   const rejectedPlan = JSON.stringify({ direction: privateValue, pages: [{ name: privateValue }], runtimeTests: [runtimeTests[0], badJourney] })
   assert.deepEqual(extractWebsitePlanJson(`${validPlan}\nFinal:\n${rejectedPlan}`), JSON.parse(rejectedPlan), 'a final JSON plan with invalid journeys must reach schema rejection, never fall back to an earlier valid plan')
+  const captured = JSON.parse(await readFile(new URL('./fixtures/studio-planner-output.json', import.meta.url), 'utf8'))
+  assert.equal(extractWebsitePlanJson(captured.malformedPlanAndBuildPrefix), null, 'actual malformed planner JSON followed by a premature HTML build remains rejected')
+  assert.deepEqual(extractWebsitePlanJson(captured.invalidSelectPlan), JSON.parse(captured.invalidSelectPlan), 'actual second completion reaches strict journey validation without syntax or field rewriting')
+  for (const fixture of [
+    { content: captured.malformedPlanAndBuildPrefix, result: 'invalid-json', paths: ['plan: expected a complete JSON object'] },
+    { content: captured.invalidSelectPlan, result: 'invalid-journeys', paths: ['runtimeTests[0].steps[2].value', 'runtimeTests[1].steps[0].value', 'runtimeTests[1].steps[3].value'] },
+  ]) {
+    time = 0; calls.length = 0
+    const productBrief = 'Build this complete website or web app now: a calculator with "Income" and Calculate. Start empty. Preserve all requested behavior; no clarifying questions.'
+    globalThis.websiteFixture.complete = async (messages, options) => {
+      calls.push({ messages, options })
+      if (options.json) {
+        assert.match(messages[0].content, /separate builder will implement your plan later/)
+        assert.ok(messages[1].content.startsWith('PLANNING PHASE ONLY.'))
+        const encoded = messages[1].content.split('PRODUCT BRIEF (JSON string):\n')[1].split('\nEND PRODUCT BRIEF.')[0]
+        assert.ok(JSON.parse(encoded).startsWith(productBrief), 'the full original product requirements survive phase framing byte-for-byte')
+        assert.match(messages[1].content, /includes its own setup actions/)
+        assert.match(messages[1].content, /computes its expected values from the product's requested initial state plus only that journey's actions/)
+        assert.match(messages[1].content, /Do not add unrequested seed data or change the requested initial state/)
+        if (calls.length === 1) { time += 20000; return fixture.content }
+        assert.equal(options.providers[0].label, 'primary')
+        assert.equal(options.timeoutMs, 15000, 'captured-output correction stays within original 35s window')
+        for (const path of fixture.paths) assert.ok(messages[1].content.includes(path))
+        return validPlan
+      }
+      assert.ok(messages[1].content.startsWith(productBrief), 'builder still receives its original build request')
+      assert.ok(!messages[1].content.startsWith('PLANNING PHASE ONLY.'))
+      return valid
+    }
+    const result = await generateWebsite({ model: 'fixture', prompt: productBrief, user: productBrief, deadlineMs: 275000 })
+    assert.equal(calls.length, 3)
+    assert.deepEqual(result.review.runtime.planning.attempts.map(attempt => attempt.result), [fixture.result, 'valid'])
+    assert.doesNotMatch(JSON.stringify(result.review.runtime.planning), /Pocket Ledger|optionValue|I'll build/, 'raw captured text never enters returned diagnostics')
+  }
   for (const fixture of [
     { name: 'missing', content: JSON.stringify({ direction: 'Worksheet', pages: [] }), finishReason: 'stop', result: 'invalid-journeys', issue: /runtimeTests: expected 1-4/ },
     { name: 'malformed', content: rejectedPlan, finishReason: 'stop', result: 'invalid-journeys', issue: /runtimeTests\[1\]\.steps\[0\]\.action/ },
@@ -185,17 +219,5 @@ try {
   const fallbackPlan = await generateWebsite({ model: 'fixture', prompt: 'A calculator', user: 'A calculator', deadlineMs: 275000 })
   assert.deepEqual(fallbackPlan.review.runtime.planning.attempts.map(attempt => attempt.result), ['provider-error', 'valid'])
   assert.equal(calls.length, 3)
-  time = 0; calls.length = 0
-  const rawTrace = []
-  globalThis.websiteFixture.complete = async (messages, options) => {
-    calls.push({ messages, options })
-    return options.json ? { content: `<think>${privateValue}</think>${validPlan}`, finishReason: 'stop' } : valid
-  }
-  const traced = await generateWebsite({ model: 'fixture', prompt: 'Synthetic only', user: 'Synthetic only', deadlineMs: 275000, onPlanRaw: (raw, metadata) => { rawTrace.push({ raw, metadata }); throw new Error('Synthetic logging failure') } })
-  assert.equal(calls.length, 2, 'a private logging failure does not change provider routing or trigger a retry')
-  assert.equal(rawTrace.length, 1)
-  assert.match(rawTrace[0].raw, new RegExp(privateValue), 'opted-in callback receives the original text before normalization')
-  assert.deepEqual(rawTrace[0].metadata, { attempt: 1, provider: 'primary', finishReason: 'stop' })
-  assert.doesNotMatch(JSON.stringify(traced.review), new RegExp(privateValue), 'raw trace text is never included in returned quality')
   console.log('PASS: actual HTML/JS parsing, broken link/label detection, targeted repair, shared request deadline, and preservation during edits.')
 } finally { Date.now = originalNow; delete globalThis.websiteFixture; await rm(temp, { recursive: true, force: true }) }

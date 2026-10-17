@@ -43,7 +43,7 @@ try {
     let builds = 0
     globalThis.fetch = async (url, init) => {
       const data = init.body ? JSON.parse(init.body) : null
-      let stage = !data?.messages ? 'research' : data.messages[0].content.startsWith('Plan a website') ? 'plan' : /maintain an existing standalone website/.test(data.messages[0].content) ? mode === 'repair' ? 'repair' : 'edit' : /file was cut off/.test(data.messages.at(-1).content) ? 'continuation' : 'build'
+      let stage = !data?.messages ? 'research' : data.messages[1]?.content.startsWith('PLANNING PHASE ONLY.') ? 'plan' : /maintain an existing standalone website/.test(data.messages[0].content) ? mode === 'repair' ? 'repair' : 'edit' : /file was cut off/.test(data.messages.at(-1).content) ? 'continuation' : 'build'
       if (stage === 'build') { builds++; if (builds > 1) stage = 'fallback' }
       fixture.calls.push({ stage, signal: !!init.signal, model: data?.model })
       assert.equal(fixture.cleanupWaits.length, 1, 'register Vercel cleanup lifetime before starting provider/research calls')
