@@ -155,6 +155,44 @@ function cleanHtml(text: string): string {
   return start < 0 ? '' : clean.slice(start, end >= 0 ? end + 7 : undefined)
 }
 
+/** Find a complete JSON plan without interpreting model-authored code or
+ * repairing JSON syntax. Braces/escaped quotes inside strings are data. The
+ * final plan-shaped object wins over earlier drafts; an invalid final draft
+ * must not silently fall back to an earlier, potentially weaker test plan. */
+export function extractWebsitePlanJson(raw: string): any | null {
+  const source = raw.replace(/<think>[\s\S]*?<\/think>/gi, '')
+  const planKeys = ['direction', 'pages', 'runtimeTests']
+  const looksLikePlan = (text: string) => /"(?:direction|pages|runtimeTests)"\s*:/.test(text)
+  let start = -1, depth = 0, quoted = false, escaped = false
+  let selected: any = null, lastObject: any = null, hasPlan = false
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index]
+    if (start < 0) { if (char === '{') { start = index; depth = 1; quoted = false; escaped = false }; continue }
+    if (quoted) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') quoted = false
+      continue
+    }
+    if (char === '"') { quoted = true; continue }
+    if (char === '{') { depth++; continue }
+    if (char !== '}') continue
+    depth--
+    if (depth !== 0) continue
+    const candidate = source.slice(start, index + 1)
+    start = -1
+    try {
+      const parsed = JSON.parse(candidate)
+      lastObject = parsed
+      if (planKeys.some(key => Object.prototype.hasOwnProperty.call(parsed, key))) { selected = parsed; hasPlan = true }
+    } catch {
+      if (looksLikePlan(candidate)) { selected = null; hasPlan = true }
+    }
+  }
+  if (start >= 0 && looksLikePlan(source.slice(start))) return null
+  return hasPlan ? selected : lastObject
+}
+
 export class WebsiteRuntimeUnavailableError extends Error {
   constructor(public review: WebsiteRuntimeReview) { super('The website was generated, but isolated browser checks could not finish. Please retry; your existing design is preserved.'); this.name = 'WebsiteRuntimeUnavailableError' }
 }
@@ -206,24 +244,21 @@ export async function generateWebsite(options: { model: string; plannerModel?: s
   let previousPlanResponse = ''
   let previousPlanIssues: string[] = []
   const planningAttempts: WebsitePlanningAttempt[] = []
+  let planningProvider = 0
   const planningDeadline = Date.now() + 35000
   for (let attempt = 0; !options.previous && (!plan || !runtimeTests.length) && attempt < Math.min(2, planningProviders.length + 1) && remaining() > 60000 && Date.now() < planningDeadline - 1000; attempt++) {
     const started = Date.now()
-    const label = planningProviders[Math.min(attempt, planningProviders.length - 1)]?.label
+    const label = planningProviders[planningProvider]?.label
     const diagnostic: WebsitePlanningAttempt = { attempt: attempt + 1, provider: label === 'primary' || label === 'fallback' || label === 'emergency' ? label : 'other', elapsedMs: 0, result: 'provider-error', issues: [] }
     try {
       // A visually valid plan without executable journeys is incomplete. Give
       // it one bounded correction within the ORIGINAL 35s planning window,
       // including when only one planner provider is configured.
-      const correction = previousPlanIssues.length ? `\nPREVIOUS PLAN (data to correct):\n${plan ? JSON.stringify(plan) : previousPlanResponse.slice(0, 24000)}\nPLAN VALIDATION ERRORS:\n${previousPlanIssues.join('\n')}\nThe runtimeTests were missing or outside the required schema, or the plan was not complete JSON. Keep the design and return the complete corrected plan with 2-3 compact runtimeTests. Each must have at most 8 steps and 3 assertions. Split longer flows into independent journeys; use only the listed actions/target/assertion types. Preserve the user's requirements and calculate expected outputs independently. Do not replace a requested behavior with a static heading check.` : ''
-      const raw = await complete([{ role: 'system', content: PLAN_SYSTEM }, { role: 'user', content: context + correction }], 4000, Math.min(22000, planningDeadline - Date.now()), attempt, true, 'medium', planningProviders, result => { diagnostic.finishReason = result.finishReason === 'stop' || result.finishReason === 'length' ? result.finishReason : 'other'; diagnostic.contentChars = result.content.length })
+      const correction = previousPlanIssues.length ? `\nPREVIOUS PLAN (data to correct):\n${plan ? JSON.stringify(plan) : previousPlanResponse.slice(0, 24000)}\nPLAN VALIDATION ERRORS:\n${previousPlanIssues.join('\n')}\nThe runtimeTests were missing or outside the required schema, or the plan was not complete JSON. Keep the design and return the complete corrected plan with 2-3 compact runtimeTests. Return just ONE JSON object, no prose, comments or trailing commas. Escape quotes and newlines inside JSON strings. Each journey must have at most 8 steps and 3 assertions. Split longer flows into independent journeys; use only the listed actions/target/assertion types. Preserve the user's requirements and calculate expected outputs independently. Do not replace a requested behavior with a static heading check.` : ''
+      const raw = await complete([{ role: 'system', content: PLAN_SYSTEM }, { role: 'user', content: context + correction }], 4000, Math.min(22000, planningDeadline - Date.now()), planningProvider, true, 'medium', planningProviders, result => { diagnostic.finishReason = result.finishReason === 'stop' || result.finishReason === 'length' ? result.finishReason : 'other'; diagnostic.contentChars = result.content.length })
       active()
       previousPlanResponse = raw
-      // Reasoning braces must not become part of the JSON payload. Builders
-      // already strip these blocks; apply the same normalization to planning.
-      const json = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim().match(/\{[\s\S]*\}/)?.[0]
-      let parsed: any
-      try { parsed = json ? JSON.parse(json) : null } catch { /* fixed diagnostics below never expose raw JSON or reasoning */ }
+      const parsed = extractWebsitePlanJson(raw)
       if (!parsed || typeof parsed !== 'object') { diagnostic.result = 'invalid-json'; diagnostic.issues = ['plan: expected a complete JSON object'] }
       else if (!Array.isArray(parsed.pages) || parsed.pages.length > 6 || typeof parsed.direction !== 'string') {
         diagnostic.result = 'invalid-design'
@@ -244,6 +279,10 @@ export async function generateWebsite(options: { model: string; plannerModel?: s
       diagnostic.failureCategory = ['timeout', 'rate_limit', 'quota', 'input_limit', 'provider_http', 'empty_response', 'unavailable'].includes(category || '') ? category : 'unavailable'
       if (failure?.finishReason) diagnostic.finishReason = failure.finishReason === 'length' || failure.finishReason === 'stop' ? failure.finishReason : 'other'
       diagnostic.issues = ['planner: completion unavailable within the bounded planning attempt']
+      // A responding model corrects its own formatting/schema within the same
+      // attempt budget. Advance providers only when the completion failed;
+      // malformed JSON is not evidence that the provider is unavailable.
+      planningProvider = Math.min(planningProvider + 1, planningProviders.length - 1)
       options.onDiagnostic?.('plan', error)
     } finally {
       diagnostic.elapsedMs = Date.now() - started

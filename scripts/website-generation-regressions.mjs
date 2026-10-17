@@ -13,7 +13,7 @@ try {
     b.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: `export const providerChain=model=>[{label:'primary',model,base:'https://provider.test'},{label:'fallback',model:'fallback',base:'https://fallback.test'}];export async function chatComplete(messages,options){return globalThis.websiteFixture.complete(messages,options)};export async function chatCompleteEx(messages,options){const result=await chatComplete(messages,options);return typeof result==='string'?{content:result,finishReason:'stop'}:result}` }))
   } }] })
   const path = join(temp, 'website.mjs'); await writeFile(path, bundle.outputFiles[0].text)
-  const { reviewWebsite, generateWebsite } = await import(pathToFileURL(path))
+  const { reviewWebsite, generateWebsite, extractWebsitePlanJson } = await import(pathToFileURL(path))
   const valid = `<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Budget</title></head><body><main><h1>Plan your budget</h1><form><label for="income">Income</label><input id="income" type="number"><button type="submit">Calculate</button><output id="result"></output></form><a href="#income">Edit income</a></main><script>document.querySelector('form').addEventListener('submit',e=>{e.preventDefault();document.querySelector('output').textContent=Number(document.querySelector('input').value)*0.2})</script></body></html>`
   assert.deepEqual(reviewWebsite(valid).issues, [])
   assert.ok(reviewWebsite(valid.replace('</script>', `;const state={incomes:[],expenses:[]};function add(type){state[type].push(1)};add('expense');</script>`)).issues.some(issue => issue.code === 'state-key'))
@@ -105,6 +105,12 @@ try {
   assert.equal(faithful.html,labelEdit.html)
   assert.deepEqual(calls.map(c=>c.options.providers[0].model),['editor'],'source edits must not plan or rebuild with the website builder')
   const validPlan = JSON.stringify({ direction: 'Useful worksheet', pages: [{ name: 'Budget' }], runtimeTests })
+  const escapedPlan = { ...JSON.parse(validPlan), direction: 'Keep "quoted" text and {literal braces} with \\paths', runtimeTests: [{ ...runtimeTests[0], expect: [{ type: 'text', target: { selector: '[aria-label="Cost {USD}"]' }, value: 'A "quote" and } brace' }] }] }
+  assert.deepEqual(extractWebsitePlanJson(`A draft {not JSON}.\n\`\`\`json\n${JSON.stringify(escapedPlan)}\n\`\`\`\nNotes {no more objects}.`), escapedPlan, 'quoted braces and escaped quotes cannot split a valid JSON object')
+  assert.deepEqual(extractWebsitePlanJson(`Draft:\n${validPlan}\nFinal:\n${JSON.stringify(escapedPlan)}\nMetadata: {"note":"complete"}`), escapedPlan, 'select the final complete plan, not a draft or trailing metadata object')
+  assert.equal(extractWebsitePlanJson(`${validPlan}\nFinal: {"direction":"Final","pages":[]`), null, 'a truncated final plan cannot silently fall back to an earlier draft')
+  assert.equal(extractWebsitePlanJson(`${validPlan}\nFinal: {"direction":"Final" "pages":[]}`), null, 'do not repair missing commas or accept an earlier draft over an invalid final plan')
+  assert.equal(extractWebsitePlanJson('{direction:"Unquoted property names are not JSON"}'), null)
   const privateValue = 'PRIVATE_PROMPT_VALUE_MUST_NOT_APPEAR_IN_DIAGNOSTICS'
   const badJourney = { ...runtimeTests[0], steps: [{ action: 'evaluate', target: { label: privateValue }, value: privateValue }], expect: [{ type: 'count', target: { selector: 'button' }, value: '1' }] }
   const rejectedPlan = JSON.stringify({ direction: privateValue, pages: [{ name: privateValue }], runtimeTests: [runtimeTests[0], badJourney] })
@@ -119,6 +125,7 @@ try {
       calls.push({ messages, options, at: time })
       if (calls.length === 1) { time += 20000; return { content: fixture.content, finishReason: fixture.finishReason } }
       if (calls.length === 2) {
+        assert.equal(options.providers[0].label, 'primary', 'format/schema correction stays with the responding provider, even when the fallback is quota-blocked')
         assert.match(messages.at(-1).content, fixture.issue, 'correction includes the actual validation field path')
         assert.equal(options.timeoutMs, 15000, '20s first attempt leaves only 15s of the original planning window')
         time += 5000
@@ -134,6 +141,7 @@ try {
     assert.equal(diagnostics[0].contentChars, fixture.content.length)
     assert.match(diagnostics[0].issues.join('\n'), fixture.issue)
     assert.equal(diagnostics[1].result, 'valid')
+    assert.deepEqual(diagnostics.map(attempt => attempt.provider), ['primary', 'primary'])
     assert.doesNotMatch(JSON.stringify(diagnostics), new RegExp(privateValue), 'response diagnostics contain no raw plan, prompt, reasoning or generated values')
   }
   time = 0; calls.length = 0
@@ -155,6 +163,22 @@ try {
   const failures = unavailablePlan.review.runtime.planning.attempts
   assert.equal(failures.length, 2, 'provider failures remain bounded to two planning attempts')
   assert.ok(failures.every(attempt => attempt.result === 'provider-error' && attempt.failureCategory === 'empty_response' && attempt.finishReason === 'length'))
+  assert.deepEqual(failures.map(attempt => attempt.provider), ['primary', 'fallback'], 'completion failures still advance to the next provider')
   assert.doesNotMatch(JSON.stringify(failures), new RegExp(privateValue), 'provider errors are categorized without exposing their message')
+  time = 0; calls.length = 0
+  globalThis.websiteFixture.complete = async (messages, options) => {
+    calls.push({ messages, options, at: time })
+    if (calls.length === 1) { time += options.timeoutMs; throw Object.assign(new Error('timeout'), { completionFailure: { category: 'timeout' } }) }
+    if (calls.length === 2) {
+      assert.equal(options.providers[0].label, 'fallback')
+      assert.equal(options.timeoutMs, 13000, 'a 22s failed primary leaves only 13s in the original planning window')
+      time += 1000
+      return validPlan
+    }
+    return valid
+  }
+  const fallbackPlan = await generateWebsite({ model: 'fixture', prompt: 'A calculator', user: 'A calculator', deadlineMs: 275000 })
+  assert.deepEqual(fallbackPlan.review.runtime.planning.attempts.map(attempt => attempt.result), ['provider-error', 'valid'])
+  assert.equal(calls.length, 3)
   console.log('PASS: actual HTML/JS parsing, broken link/label detection, targeted repair, shared request deadline, and preservation during edits.')
 } finally { Date.now = originalNow; delete globalThis.websiteFixture; await rm(temp, { recursive: true, force: true }) }
