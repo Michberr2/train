@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import { build } from 'esbuild'
 import { pathToFileURL } from 'node:url'
+import { createHash } from 'node:crypto'
 const directory = await fs.mkdtemp(new URL('./.edit-check-', import.meta.url).pathname)
 try {
   const bundle = await build({ stdin: { contents: "export * from './api/_websiteEdits'; export { generateWebsite } from './api/_websiteGeneration'", resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'esm', packages: 'external', write: false, plugins: [{ name: 'provider', setup(b) {
@@ -51,9 +52,9 @@ try {
     b.onResolve({ filter: /^\.\/(?:_websiteGeneration|_db|_limits|_grounding|web)$/ }, args => ({ path: args.path, namespace: 'service' }))
     b.onLoad({ filter: /.*/, namespace: 'service' }, ({ path }) => ({ contents:
       path === './_websiteGeneration' ? 'export class WebsiteRuntimeUnavailableError extends Error{};export const WEBSITE_SYSTEM="fixture";export const generateWebsite=options=>globalThis.handlerFixture(options);' :
-      path === './_db' ? 'export const identityForRequest=async()=>null;export const identityBlock=()=>"";' :
+      path === './_db' ? 'export const identityForRequest=async()=>globalThis.handlerIdentity||null;export const identityBlock=()=>"";' :
       path === './_limits' ? 'export const reserveStudioQuota=async()=>({ok:true,release:async()=>{globalThis.quotaReleased++}});export const studioLimitMessage=()=>"limit";' :
-      path === './web' ? 'export const research=async()=>null;' : 'export const groundResearch=async()=>({text:"",sources:[]});',
+      path === './web' ? 'export const research=async()=>null;' : 'export const groundResearch=async()=>globalThis.handlerResearch||({text:"",sources:[]});',
     }))
   } }] })
   await fs.writeFile(directory + '/handler.mjs', handlerBundle.outputFiles[0].text)
@@ -79,6 +80,63 @@ try {
     assert.equal(res.code, 502)
     assert.equal(globalThis.quotaReleased, 1, 'failed edits refund their generation quota')
     assert.match(res.payload.error, /existing design is preserved/)
+    const originalTraceHash = process.env.NALU_STUDIO_PLAN_TRACE_SHA256
+    const originalInfo = console.info
+    const tracePrompt = 'Build this complete website or web app, honoring the requested functionality: Synthetic trace calculator'
+    const traceHash = createHash('sha256').update(tracePrompt).digest('hex')
+    const rawPlan = 'RAW_SYNTHETIC_PLAN\n' + 'quoted "data" {braces} \\path '.repeat(100)
+    const traceLogs = []
+    const traceCases = [
+      { name: 'exact anonymous synthetic prompt', allowed: true },
+      { name: 'disabled environment', hash: '' },
+      { name: 'wrong hash', hash: '0'.repeat(64) },
+      { name: 'changed prompt', prompt: tracePrompt + ' with private data' },
+      { name: 'leading whitespace differs from exact prompt', prompt: ' ' + tracePrompt },
+      { name: 'bearer header', headers: { authorization: 'Bearer synthetic' } },
+      { name: 'mixed case auth header', headers: { AuThOrIzAtIoN: 'Bearer synthetic' } },
+      { name: 'cookie header', headers: { Cookie: 'private=synthetic' } },
+      { name: 'body auth', extra: { token: 'synthetic' } },
+      { name: 'brand context', extra: { brand: { name: 'Private brand' } } },
+      { name: 'analysis context', extra: { analysis: 'Private image description' } },
+      { name: 'previous page', extra: { prevHtml: tiny } },
+      { name: 'empty extra key also denied', extra: { analysis: '' } },
+      { name: 'unknown future context', extra: { context: 'Private project data' } },
+      { name: 'resolved identity', identity: { id: 'synthetic' } },
+      { name: 'framework auth', auth: { id: 'synthetic' } },
+      { name: 'grounding text', research: { text: 'Private context', sources: [] } },
+      { name: 'grounding sources', research: { text: '', sources: [{ url: 'https://example.com' }] } },
+    ]
+    try {
+      console.info = line => traceLogs.push(line)
+      for (const item of traceCases) {
+        process.env.NALU_STUDIO_PLAN_TRACE_SHA256 = item.hash ?? traceHash
+        globalThis.handlerIdentity = item.identity
+        globalThis.handlerResearch = item.research
+        traceLogs.length = 0
+        globalThis.handlerFixture = async options => {
+          assert.equal(typeof options.onPlanRaw === 'function', !!item.allowed, item.name)
+          options.onPlanRaw?.(rawPlan, { attempt: 1, provider: 'primary', finishReason: 'stop' })
+          return { html: tiny, review: { issues: [], scripts: 0, links: 0, controls: 0 }, repaired: false }
+        }
+        const traceRes = { code: 0, setHeader() {}, status(code) { this.code = code; return this }, json(payload) { this.payload = payload } }
+        await handler({ method: 'POST', headers: item.headers || {}, auth: item.auth, body: { kind: 'webpage', prompt: item.prompt ?? tracePrompt, ...item.extra } }, traceRes)
+        assert.equal(traceRes.code, 200, 'trace gating does not block normal generation')
+        assert.doesNotMatch(JSON.stringify(traceRes.payload), /RAW_SYNTHETIC_PLAN/, 'raw planning never enters the API response')
+        if (item.allowed) {
+          assert.ok(traceLogs.length > 1, 'large completions use bounded log chunks')
+          const parts = traceLogs.map(line => JSON.parse(line.replace(/^nalu-studio-plan-trace /, '')))
+          assert.equal(parts.map(part => part.raw).join(''), rawPlan)
+          assert.ok(parts.every(part => part.raw.length <= 1600 && !part.truncated))
+          assert.equal(new Set(parts.map(part => part.traceId)).size, 1)
+        } else assert.deepEqual(traceLogs, [], item.name + ' must never write a raw trace')
+      }
+    } finally {
+      console.info = originalInfo
+      if (originalTraceHash === undefined) delete process.env.NALU_STUDIO_PLAN_TRACE_SHA256
+      else process.env.NALU_STUDIO_PLAN_TRACE_SHA256 = originalTraceHash
+      delete globalThis.handlerIdentity
+      delete globalThis.handlerResearch
+    }
   } finally { if (originalKey === undefined) delete process.env.TINKER_API_KEY; else process.env.TINKER_API_KEY = originalKey }
   console.log('PASS: tiny edits, large source and tail preservation, duplicated embedded assets, literal Unicode/replacement bytes, atomic rejection, and extended-context routing')
 } finally { delete globalThis.editFixture; delete globalThis.handlerFixture; delete globalThis.quotaReleased; await fs.rm(directory, { recursive: true, force: true }) }

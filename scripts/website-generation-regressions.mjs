@@ -181,5 +181,17 @@ try {
   const fallbackPlan = await generateWebsite({ model: 'fixture', prompt: 'A calculator', user: 'A calculator', deadlineMs: 275000 })
   assert.deepEqual(fallbackPlan.review.runtime.planning.attempts.map(attempt => attempt.result), ['provider-error', 'valid'])
   assert.equal(calls.length, 3)
+  time = 0; calls.length = 0
+  const rawTrace = []
+  globalThis.websiteFixture.complete = async (messages, options) => {
+    calls.push({ messages, options })
+    return options.json ? { content: `<think>${privateValue}</think>${validPlan}`, finishReason: 'stop' } : valid
+  }
+  const traced = await generateWebsite({ model: 'fixture', prompt: 'Synthetic only', user: 'Synthetic only', deadlineMs: 275000, onPlanRaw: (raw, metadata) => { rawTrace.push({ raw, metadata }); throw new Error('Synthetic logging failure') } })
+  assert.equal(calls.length, 2, 'a private logging failure does not change provider routing or trigger a retry')
+  assert.equal(rawTrace.length, 1)
+  assert.match(rawTrace[0].raw, new RegExp(privateValue), 'opted-in callback receives the original text before normalization')
+  assert.deepEqual(rawTrace[0].metadata, { attempt: 1, provider: 'primary', finishReason: 'stop' })
+  assert.doesNotMatch(JSON.stringify(traced.review), new RegExp(privateValue), 'raw trace text is never included in returned quality')
   console.log('PASS: actual HTML/JS parsing, broken link/label detection, targeted repair, shared request deadline, and preservation during edits.')
 } finally { Date.now = originalNow; delete globalThis.websiteFixture; await rm(temp, { recursive: true, force: true }) }

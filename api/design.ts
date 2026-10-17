@@ -17,6 +17,7 @@ import { chatComplete, primaryProvider, fallbackProvider } from './_llm'
 import { research } from './web'
 import { groundResearch } from './_grounding'
 import { generateWebsite, WEBSITE_SYSTEM, WebsiteRuntimeUnavailableError } from './_websiteGeneration'
+import { createStudioPlanTrace } from './_studioPlanTrace'
 import { cancellationSignal, throwIfCancelled, waitWithCancellation, withRequestCancellation } from './_requestCancellation'
 import { identityForRequest, identityBlock } from './_db'
 import { reserveStudioQuota, studioLimitMessage } from './_limits'
@@ -1895,7 +1896,8 @@ async function handleDesign(req: any, res: any) {
       ? body.prevBlueprint.slice(0, 60000)
       : ''
   throwIfCancelled(signal)
-  const whoLine = kind === 'logo' ? '' : identityBlock(await identityForRequest(req).catch(() => null))
+  const identity = kind === 'logo' ? null : await identityForRequest(req).catch(() => null)
+  const whoLine = kind === 'logo' ? '' : identityBlock(identity)
   const user =
     (whoLine ? whoLine + '\n\n----\n' : '') +
     (grounding ? grounding + '\n\n----\n\nThe request:\n' : '') +
@@ -1929,7 +1931,8 @@ async function handleDesign(req: any, res: any) {
     }
     if (kind === 'webpage') {
       const repairIssues = Array.isArray(body.previewIssues) ? body.previewIssues.filter((issue): issue is string => typeof issue === 'string').slice(0, 6) : undefined
-      const result = await generateWebsite({ model: prevHtml ? WEBSITE_EDIT_MODEL : WEBSITE_MODEL, plannerModel: LLM_MODEL, fallbackModel: prevHtml ? LLM_MODEL : WEBSITE_FALLBACK_MODEL, user, prompt, previous: prevHtml, repairIssues, deadlineMs: requestStarted + 275000, signal })
+      const onPlanRaw = createStudioPlanTrace(req, body, { prompt, identity, hasResearch: !!grounding || !!evidence?.sources?.length })
+      const result = await generateWebsite({ model: prevHtml ? WEBSITE_EDIT_MODEL : WEBSITE_MODEL, plannerModel: LLM_MODEL, fallbackModel: prevHtml ? LLM_MODEL : WEBSITE_FALLBACK_MODEL, user, prompt, previous: prevHtml, repairIssues, deadlineMs: requestStarted + 275000, signal, onPlanRaw })
       if (!result) {
         send(502, { error: 'The website did not pass its build checks. Please retry; your existing design is preserved.' })
         return

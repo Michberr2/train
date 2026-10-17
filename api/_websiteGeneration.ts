@@ -5,6 +5,7 @@ import { chatComplete, chatCompleteEx, providerChain, type CompleteResult } from
 import { applyWebsiteEdits, prepareWebsiteEdit, WEBSITE_EDIT_SYSTEM } from './_websiteEdits'
 import { cancellationSignal, throwIfCancelled } from './_requestCancellation'
 import { inspectRuntimeTests, parseRuntimeTests, reviewWebsiteRuntime, WEBSITE_RUNTIME_TEST_SCHEMA, type WebsitePlanningAttempt, type WebsiteRuntimeReview, type WebsiteRuntimeTest } from './_websiteRuntime'
+import type { WebsitePlanTrace } from './_studioPlanTrace'
 
 export const WEBSITE_SYSTEM = `You are an experienced product designer, editor, and front-end engineer. Deliver a complete, distinctive website in ONE standalone HTML file. Start with <!doctype html>, end with </html>, no fences or commentary.
 
@@ -197,7 +198,7 @@ export class WebsiteRuntimeUnavailableError extends Error {
   constructor(public review: WebsiteRuntimeReview) { super('The website was generated, but isolated browser checks could not finish. Please retry; your existing design is preserved.'); this.name = 'WebsiteRuntimeUnavailableError' }
 }
 
-export async function generateWebsite(options: { model: string; plannerModel?: string; fallbackModel?: string; user: string; prompt: string; previous?: string; repairIssues?: string[]; deadlineMs: number; signal?: AbortSignal; onDiagnostic?: (stage: string, error: unknown) => void; onCandidate?: (html: string) => void }): Promise<{ html: string; review: WebsiteReview; plan: unknown; repaired: boolean } | null> {
+export async function generateWebsite(options: { model: string; plannerModel?: string; fallbackModel?: string; user: string; prompt: string; previous?: string; repairIssues?: string[]; deadlineMs: number; signal?: AbortSignal; onDiagnostic?: (stage: string, error: unknown) => void; onCandidate?: (html: string) => void; onPlanRaw?: WebsitePlanTrace }): Promise<{ html: string; review: WebsiteReview; plan: unknown; repaired: boolean } | null> {
   const signal = cancellationSignal(options.signal)
   const active = () => throwIfCancelled(signal)
   active()
@@ -257,6 +258,9 @@ export async function generateWebsite(options: { model: string; plannerModel?: s
       const correction = previousPlanIssues.length ? `\nPREVIOUS PLAN (data to correct):\n${plan ? JSON.stringify(plan) : previousPlanResponse.slice(0, 24000)}\nPLAN VALIDATION ERRORS:\n${previousPlanIssues.join('\n')}\nThe runtimeTests were missing or outside the required schema, or the plan was not complete JSON. Keep the design and return the complete corrected plan with 2-3 compact runtimeTests. Return just ONE JSON object, no prose, comments or trailing commas. Escape quotes and newlines inside JSON strings. Each journey must have at most 8 steps and 3 assertions. Split longer flows into independent journeys; use only the listed actions/target/assertion types. Preserve the user's requirements and calculate expected outputs independently. Do not replace a requested behavior with a static heading check.` : ''
       const raw = await complete([{ role: 'system', content: PLAN_SYSTEM }, { role: 'user', content: context + correction }], 4000, Math.min(22000, planningDeadline - Date.now()), planningProvider, true, 'medium', planningProviders, result => { diagnostic.finishReason = result.finishReason === 'stop' || result.finishReason === 'length' ? result.finishReason : 'other'; diagnostic.contentChars = result.content.length })
       active()
+      // Only the API's strict synthetic-prompt gate can install this callback.
+      // Observability failure must not change provider routing or the result.
+      try { options.onPlanRaw?.(raw, { attempt: diagnostic.attempt, provider: diagnostic.provider, finishReason: diagnostic.finishReason }) } catch { options.onDiagnostic?.('plan-trace', 'Private diagnostic logging failed') }
       previousPlanResponse = raw
       const parsed = extractWebsitePlanJson(raw)
       if (!parsed || typeof parsed !== 'object') { diagnostic.result = 'invalid-json'; diagnostic.issues = ['plan: expected a complete JSON object'] }
