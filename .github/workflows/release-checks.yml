@@ -55,9 +55,13 @@ jobs:
           cache-dependency-path: train/package-lock.json
       - run: npm ci
         working-directory: train
+      - run: npx playwright install --with-deps chromium
+        working-directory: train
       - run: node scripts/check-nalu-sync.mjs
         working-directory: train
       - run: node --experimental-strip-types scripts/native-chat-contract-regressions.mjs
+        working-directory: train
+      - run: node scripts/flow-cross-client-integration.mjs
         working-directory: train
 
   preview:

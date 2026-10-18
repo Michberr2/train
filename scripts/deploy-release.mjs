@@ -61,6 +61,7 @@ export async function release({ cwd = root, target, publish, run = runProcess, f
   call(process.execPath, ['scripts/offline-release-checks.mjs'])
   call(process.execPath, ['scripts/check-nalu-sync.mjs'])
   call(process.execPath, ['--experimental-strip-types', 'scripts/native-chat-contract-regressions.mjs'])
+  call(process.execPath, ['scripts/flow-cross-client-integration.mjs'])
   assert.equal(call('git', ['status', '--porcelain']).trim(), '', 'Checks changed tracked or untracked source; inspect it before release')
   assert.equal(call('git', ['rev-parse', 'HEAD']).trim(), commit, 'Source commit changed while checks ran')
   const cli = (args) => call('vercel', [...args, '--scope', project.orgId, ...(process.env.VERCEL_TOKEN ? ['--token', process.env.VERCEL_TOKEN] : [])])
