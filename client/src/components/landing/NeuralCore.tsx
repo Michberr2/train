@@ -99,7 +99,7 @@ export default function NeuralCore({ container, reduced }: { container: RefObjec
     query.addEventListener('change', update)
     return () => query.removeEventListener('change', update)
   }, [])
-  const { scrollYProgress } = useScroll({ container, target: section, offset: ['start start', 'end end'] })
+  const { scrollYProgress } = useScroll({ container, target: section, layoutEffect: false, offset: ['start start', 'end end'] })
   const progress = useSpring(scrollYProgress, { stiffness: 100, damping: 30, restDelta: .001 })
   useMotionValueEvent(scrollYProgress, 'change', value => { if (!staticMode) setActive(Math.min(3, Math.max(0, Math.floor(value * 4)))) })
   const selectStep = (index: number) => {

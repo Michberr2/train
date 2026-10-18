@@ -20,7 +20,7 @@ export default function Capabilities({ container, reduced }: { container: RefObj
   const [active, setActive] = useState(0)
   const [compact, setCompact] = useState(() => window.matchMedia('(max-height: 700px) and (max-width: 900px)').matches)
   const staticMode = reduced || compact
-  const { scrollYProgress } = useScroll({ container, target: section, offset: ['start start', 'end end'] })
+  const { scrollYProgress } = useScroll({ container, target: section, layoutEffect: false, offset: ['start start', 'end end'] })
   const x = useTransform(scrollYProgress, [0, 1], [0, -distance])
   useMotionValueEvent(scrollYProgress, 'change', value => { if (!staticMode) setActive(Math.round(value * (capabilities.length - 1))) })
   useEffect(() => {

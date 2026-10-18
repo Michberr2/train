@@ -21,7 +21,7 @@ function RevealWord({ word, index, progress, reduced }: { word: string; index: n
 
 function ScrollStory({ container, reduced }: { container: RefObject<HTMLDivElement>; reduced: boolean }) {
   const section = useRef<HTMLElement>(null)
-  const { scrollYProgress } = useScroll({ container, target: section, offset: ['start start', 'end end'] })
+  const { scrollYProgress } = useScroll({ container, target: section, layoutEffect: false, offset: ['start start', 'end end'] })
   const sceneScale = useTransform(scrollYProgress, [0, 1], [1.08, 1])
   return <section ref={section} className="nalu-manifesto" data-reduced-motion={reduced} aria-label="A little help. A lot of possibility.">
     <div className="nalu-manifesto-sticky">

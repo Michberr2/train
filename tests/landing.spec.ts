@@ -73,6 +73,13 @@ test.describe('Landing', () => {
 
   test('[ux] core follows scroll in both directions and stages can be selected', async ({ page }, testInfo) => {
     await visitLanding(page)
+    await page.evaluate(() => {
+      const host = document.querySelector<HTMLElement>('.nalu-landing')!
+      const story = document.querySelector<HTMLElement>('.nalu-manifesto')!
+      const top = story.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop
+      host.scrollTo({ top: top + (story.offsetHeight - host.clientHeight) * .98, behavior: 'instant' })
+    })
+    await expect.poll(() => page.locator('.nalu-reveal-fill').last().evaluate(el => Number(getComputedStyle(el).opacity))).toBeGreaterThan(.99)
     const scrollToStage = async (fraction: number) => {
       await page.evaluate(value => {
         const host = document.querySelector<HTMLElement>('.nalu-landing')!
