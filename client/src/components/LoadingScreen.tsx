@@ -1,16 +1,17 @@
-import { useState } from 'react'
+import NaluMark from './landing/NaluMark'
 import Scenery from './Scenery'
+import './landing/loading.css'
 
-export default function LoadingScreen() {
-  const [bounces, setBounces] = useState(0)
-  return <div role="status" aria-label="Opening Nalu" className="fixed inset-0 z-[9999] flex items-center justify-center overflow-hidden">
-    <Scenery src="/bg/tech.png" />
-    <div className="absolute inset-0 bg-white/20 backdrop-blur-sm dark:bg-black/20" />
-    <div className="relative flex flex-col items-center gap-5 rounded-3xl border border-white/25 bg-white/15 px-10 py-8 text-ink shadow-xl backdrop-blur-xl">
-      <img src="/wolf-icon.png" alt="" className="h-12 w-12 brightness-0 dark:invert" />
-      <p className="text-sm">Opening your space…</p>
-      <button key={bounces} type="button" aria-label="Bounce the ball" title="Bounce the ball" onClick={() => setBounces(count => count + 1)} className="scenery-ball mt-3 h-9 w-9 rounded-full border border-white/50 bg-amber-300 shadow-lg" style={{ animationDuration: bounces % 2 ? '.65s' : '1.1s' }} />
-      <span className="text-xs text-dim">{bounces ? `${bounces} ${bounces === 1 ? 'bounce' : 'bounces'}` : 'Give the ball a tap'}</span>
+export default function LoadingScreen({ onSkip }: { onSkip?: () => void }) {
+  return <div className="nalu-opening">
+    <Scenery src="/images/bg-hills-teal.png" />
+    <div className="nalu-opening-shade" />
+    <div className="nalu-opening-center" role="status" aria-label="Opening Nalu">
+      <NaluMark className="nalu-opening-logo" />
+      <span className="nalu-opening-wordmark" aria-hidden="true">nalu</span>
+      <p className="nalu-opening-caption">A little help. A little more possibility.</p>
+      <div className="nalu-opening-track" aria-hidden="true"><span /></div>
     </div>
+    {onSkip && <button type="button" onClick={onSkip} className="nalu-opening-skip">Skip intro ↗</button>}
   </div>
 }

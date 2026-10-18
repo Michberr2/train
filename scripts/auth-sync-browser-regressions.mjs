@@ -201,7 +201,7 @@ try {
     await s.page.getByText('A', { exact: true }).first().click()
     await expect(s.page.getByText('Private A', { exact: true })).toBeVisible()
     await s.page.getByRole('button', { name: 'Sign out', exact: true }).click()
-    await s.page.getByLabel('Main navigation').getByRole('button', { name: 'Sign in', exact: true }).click()
+    await s.page.getByRole('button', { name: 'Sign in', exact: true }).click()
     const form = s.page.locator('form')
     await form.getByPlaceholder('Email or username').fill('B')
     await form.getByPlaceholder('Password', { exact: true }).fill('fixture-password')
