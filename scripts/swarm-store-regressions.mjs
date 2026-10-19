@@ -186,6 +186,35 @@ assert.ok((await store.read('bob')).state.projects.length)
 console.log('PASS account deletion cascades Swarm data without touching another account')
 await exercise(new PostgresFixture(), 'PostgreSQL transaction contract stub')
 
+// Group replies are serialized in member order so each teammate can see the
+// prior reply. Turn and job IDs are reverse-sorted to prove identity ordering
+// does not depend on database row order or hashed job IDs.
+{
+  const roundStore = new SwarmStore(new SQLiteD1()), now = Date.now()
+  await roundStore.mutate('alice', draft => {
+    draft.state.projects.push({ id:'round-project', title:'Round', brief:'', members:['Nalu','Rocky','Milo'], createdAt:now, updatedAt:now })
+    draft.state.messages.push({ id:'round-ask', projectId:'round-project', thread:'group', speaker:'You', content:'Review this trip pull together.', createdAt:now })
+    for (const [speaker, suffix] of [['Nalu','z'],['Rocky','m'],['Milo','a']]) {
+      const turnId=`turn-${suffix}-${speaker}`, jobId=`job-${suffix}-${speaker}`
+      draft.state.turns.push({ id:turnId, projectId:'round-project', thread:'group', replySpeaker:speaker, userMessageId:'round-ask', replyId:`${jobId}:reply`, status:'pending', createdAt:now, updatedAt:now })
+      draft.jobs.push({ id:jobId, projectId:'round-project', thread:'group', kind:'reply', turnId, speaker, status:'queued', input:'Review this trip pull together.', requestId:`request-${speaker}`, createdAt:now, updatedAt:now, attempts:0 })
+    }
+  })
+  const first = await roundStore.claim('alice')
+  assert.equal(first?.speaker, 'Nalu', 'the first member replies first even when its job sorts last')
+  assert.equal(await roundStore.claim('alice'), null, 'later group replies wait until their predecessor completes')
+  await roundStore.mutateLeased('alice', first.id, first.leaseToken, draft => {
+    const job = draft.jobs.find(item => item.id === first.id)
+    const turn = draft.state.turns.find(item => item.id === first.turnId)
+    job.status='done'; job.result='I can organize the trip; I need its dates.'; delete job.leaseToken; delete job.leaseUntil
+    turn.status='completed'; turn.updatedAt=Date.now()
+    draft.state.messages.push({ id:`${first.id}:reply`, projectId:first.projectId, thread:'group', speaker:first.speaker, content:job.result, createdAt:Date.now(), turnId:first.turnId })
+  })
+  const next = await roundStore.claim('alice')
+  assert.equal(next?.speaker, 'Rocky', 'the next member becomes claimable after Nalu posts')
+  console.log('PASS group replies run in teammate order so each reply can build on the previous one')
+}
+
 const cappedDb = new SQLiteD1(), capped = new SwarmStore(cappedDb)
 await capped.mutate('alice', draft => seed(draft, 'Capacity'))
 const recoveryJob = await capped.claim('alice', 'reply-job')

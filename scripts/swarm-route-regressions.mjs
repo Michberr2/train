@@ -227,7 +227,8 @@ await regression('ordinary group sends persist one real worker reply per teammat
   assert.equal((await teamRequest(nextSend)).code, 200)
   const pending = (await store.read('carol')).jobs.filter(job => job.projectId === teamProject && job.thread === 'group' && job.status === 'queued')
   assert.equal(pending.length, 3)
-  const claim = await store.claim('carol', pending[0].id), started = defer(), late = defer()
+  const firstPending = pending.find(job => job.speaker === 'Nalu')
+  const claim = await store.claim('carol', firstPending.id), started = defer(), late = defer()
   const running = executeLeasedSwarmJob(store, 'carol', claim, { execute: async () => { started.resolve(); await late.promise; return { status: 'done', content: 'LATE_TEAM_REPLY', summary: 'Late' } } })
   await started.promise
   assert.equal((await teamRequest({ action: 'stop', projectId: teamProject, thread: 'group' })).code, 200)

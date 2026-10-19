@@ -250,12 +250,21 @@ export function readSwarmArtifact(snapshot: SwarmSnapshot, body: Record<string, 
 export function swarmContext(snapshot: SwarmSnapshot, job: SwarmJob) {
   const project = projectFor(snapshot.state, job.projectId)
   threadFor(snapshot.state, project.id, job.thread)
+  const currentTurn = job.turnId ? snapshot.state.turns.find(turn => turn.id === job.turnId) : undefined
+  // Group replies for one user message are deliberately claimed in turn order.
+  // Let each later teammate see the replies already posted for that same turn,
+  // even though they were written after the shared job-creation timestamp.
+  const sameGroupTurnIds = job.thread === 'group' && currentTurn
+    ? new Set(snapshot.state.turns.filter(turn => turn.projectId === project.id && turn.thread === 'group'
+      && turn.userMessageId === currentTurn.userMessageId).sort((a, b) => project.members.indexOf(a.replySpeaker) - project.members.indexOf(b.replySpeaker)).map(turn => turn.id))
+    : new Set<string>()
   // Assignment grants the new agent this work item, not the original agent's
   // private conversation or its other work. Group context remains shared.
   const ownsPrivateThread = job.thread !== 'group' && job.speaker === job.thread
   const messages = snapshot.state.messages.filter(message => message.projectId === project.id
     && (message.thread === 'group' || (ownsPrivateThread && message.thread === job.thread))
-    && message.createdAt <= job.createdAt)
+    && (message.createdAt <= job.createdAt
+      || (job.thread === 'group' && message.turnId && sameGroupTurnIds.has(message.turnId) && message.speaker !== job.speaker)))
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)).slice(-39)
   // Match the execution adapter's limits, including speaker prefixes, the
   // current request, the shared brief, and one optional status message.

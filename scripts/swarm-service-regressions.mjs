@@ -72,6 +72,17 @@ const context = swarmContext(state, rocky).context.map(message => message.conten
 assert.match(context, /Shared|launch/)
 assert.match(context, /ROCKY_PRIVATE_CANARY/)
 assert.doesNotMatch(context, /MILO_PRIVATE_CANARY/)
+{
+  const round = empty(); change(round, projectRequest)
+  change(round, { action: 'send', projectId, thread: 'group', requestId: 'group-round-0001', content: 'Can you all review this trip pull?' }, 2000)
+  const firstJob = round.jobs.find(job => job.speaker === 'Nalu')
+  appendSwarmResult(round, firstJob, 'I can organize the itinerary; we need the trip dates.', 2100)
+  const nextJob = round.jobs.find(job => job.speaker === 'Rocky')
+  const shared = swarmContext(round, nextJob).context.map(message => message.content).join('\n')
+  assert.match(shared, /Nalu: I can organize the itinerary; we need the trip dates/)
+  round.state.messages.push({ id: 'unrelated-later-turn', projectId, thread: 'group', speaker: 'You', content: 'UNRELATED_LATER_TURN', createdAt: 2200 })
+  assert.doesNotMatch(swarmContext(round, nextJob).context.map(message => message.content).join('\n'), /UNRELATED_LATER_TURN/)
+}
 change(state, { ...projectRequest, requestId: 'project-0002', title: 'Other' }, 1000)
 const otherProject = state.state.projects[1].id
 change(state, { action: 'send', projectId: otherProject, requestId: 'other-msg-001', thread: 'group', content: 'OTHER_PROJECT_CANARY' }, 1100)

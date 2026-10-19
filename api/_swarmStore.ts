@@ -119,6 +119,23 @@ function assertSnapshot(value: SwarmSnapshot, previous?: SwarmSnapshot): void {
   }
 }
 
+/** Only one teammate replies at a time to a shared group message. This makes
+ * each later reply able to read the earlier replies from that same round. */
+function blockedByEarlierGroupReply(snapshot: SwarmSnapshot, candidate: SwarmJob): boolean {
+  if (candidate.kind !== 'reply' || candidate.thread !== 'group' || !candidate.turnId) return false
+  const current = snapshot.state.turns.find(turn => turn.id === candidate.turnId)
+  if (!current) return false
+  const project = snapshot.state.projects.find(item => item.id === candidate.projectId)
+  if (!project) return false
+  const siblings = snapshot.state.turns.filter(turn => turn.projectId === candidate.projectId
+    && turn.thread === 'group' && turn.userMessageId === current.userMessageId)
+    .sort((a, b) => project.members.indexOf(a.replySpeaker) - project.members.indexOf(b.replySpeaker))
+  const index = siblings.findIndex(turn => turn.id === current.id)
+  if (index <= 0) return false
+  const earlier = new Set(siblings.slice(0, index).map(turn => turn.id))
+  return snapshot.jobs.some(job => job.turnId && earlier.has(job.turnId) && ['queued', 'running'].includes(job.status))
+}
+
 function assemble(revision: unknown, data: Partial<Record<Table, RecordRow[]>>): SwarmSnapshot {
   const snapshot = empty()
   snapshot.revision = Number(revision || 0)
@@ -342,7 +359,8 @@ export class SwarmStore {
       // recovery allowance. Do not mix it with starting fresh work at the cap.
       if (Buffer.byteLength(JSON.stringify(draft.state)) > SWARM_MAX_STATE_BYTES || Buffer.byteLength(JSON.stringify(draft)) > SWARM_MAX_SNAPSHOT_BYTES) return
       if (draft.jobs.filter(job => job.status === 'running').length >= maximum) return
-      const job = draft.jobs.find(item => item.status === 'queued' && (!jobId || item.id === jobId))
+      const job = draft.jobs.find(item => item.status === 'queued' && (!jobId || item.id === jobId)
+        && !blockedByEarlierGroupReply(draft, item))
       if (!job) return
       job.status = 'running'; job.leaseToken = token; job.leaseUntil = now + SWARM_LEASE_MS; job.attempts++; job.updatedAt = now
       const task = draft.state.tasks.find(item => item.id === job.taskId)

@@ -45,7 +45,9 @@ try {
       assert.equal(identity.role, 'system')
       assert.ok(identity.content.startsWith(`You are ${speaker}, a collaborator in Nalu Swarm.`))
       assert.match(identity.content, /Respond as yourself, not as the other agents/)
+      assert.match(identity.content, /Do not introduce yourself as “Nalu here” unless your assigned speaker is Nalu/)
       assert.match(identity.content, /Do not invent another agent's actions/)
+      assert.match(f.calls[0].messages.at(-1).content, /Avoid vague prompts such as “What is the actual ask\?”/)
       assert.equal(f.calls.length, 1)
     }
   })
