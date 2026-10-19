@@ -1,4 +1,3 @@
-import WorkspaceIntro from './WorkspaceIntro'
 import AiBudgetPanel from './AiBudgetPanel'
 import { getBillingReturn } from '../../lib/billing'
 import {
@@ -70,9 +69,10 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
           bottom padding so the last section clears the viewport edge. */}
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="ws-settings-content max-w-2xl mx-auto px-6 pt-6 pb-6">
-          <WorkspaceIntro label="Your Nalu" title="Make yourself at home." description="Your account, your preferences, your way of working.">
+          <header className="ws-utility-heading">
+            <div><h1>Settings</h1><p>Account, appearance, and how Nalu works for you.</p></div>
             <span role="status" className="ws-save-status">{saved ? 'Changes saved' : 'Preferences save automatically'}</span>
-          </WorkspaceIntro>
+          </header>
           <nav className="ws-segments flex-wrap" aria-label="Settings categories">
             {['Account', 'Support Nalu', 'Thinking', 'Video & engine'].map(item => <button key={item} aria-pressed={category === item} onClick={() => setCategory(item)}>{item}</button>)}
           </nav>
@@ -126,7 +126,7 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
             <div className="rounded-xl border border-glass/[0.18] bg-glass/[0.11] backdrop-blur-2xl px-4 py-3.5 space-y-4">
               <div>
                 <div className="text-sm font-medium text-ink mb-2">Reasoning level</div>
-                <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6">
+                <div className="ws-reasoning-levels grid grid-cols-3 gap-1.5 sm:grid-cols-6">
                   {REASONING_LEVELS.map((lvl) => (
                     <button
                       key={lvl}
@@ -289,10 +289,10 @@ function Section({
 }) {
   return (
     <section>
-      <div className="flex items-center gap-2 mb-3">
+      <div className="ws-setting-section-heading flex items-center gap-2 mb-3">
         <span className="text-dim">{icon}</span>
         <h2 className="text-sm font-semibold text-ink">{title}</h2>
-        <span className="text-xs text-dim">· {desc}</span>
+        <span className="text-xs text-dim">{desc}</span>
       </div>
       {children}
     </section>

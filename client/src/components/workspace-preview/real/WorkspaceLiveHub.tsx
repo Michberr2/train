@@ -76,7 +76,7 @@ export default function WorkspaceLiveHub({ chats, activity, onOpenChat, onOpenSw
     { key: 'finished', label: 'Recent', count: finished.length },
   ]
   return <section className="workspace-live-hub" aria-label="Your work">
-    <header className="live-hub-header"><div><h1>Memory</h1><p>Your work, in motion. See what’s taking shape, what needs you, and where to pick things up.</p></div><button onClick={onNewChat}>Start something new<span aria-hidden="true">+</span></button></header>
+    <header className="live-hub-header"><div><h1>Memory</h1><p>Saved work, conversations, and current activity.</p></div><button onClick={onNewChat}>New conversation<span aria-hidden="true">+</span></button></header>
     <div className="live-hub-tabs" role="tablist" aria-label="Memory views" onKeyDown={event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
       event.preventDefault()

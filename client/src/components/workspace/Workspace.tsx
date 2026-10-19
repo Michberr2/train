@@ -3021,7 +3021,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         ) : <MemoryPanel chats={chats} onOpenChat={selectChat} />)}
         {view === 'agents' && (
           <Suspense fallback={<div role="status" className="flex flex-1 items-center justify-center gap-2 text-sm text-dim">Opening AutoPilot…</div>}>
-            <div className="ws-feature-shell"><WorkspaceIntro compact label="AutoPilot" title="Leave it with me." description="Plan the steps, connect your tools, and follow your work as it happens."/><AgentsPanel /></div>
+            <div className="ws-feature-shell"><WorkspaceIntro compact label="AutoPilot" title={reviewLayout ? 'AutoPilot' : 'Leave it with me.'} description="Build and run workflows with your agents and tools."/><AgentsPanel /></div>
           </Suspense>
         )}
         {view === 'skills' && <SkillsPanel onDraft={prompt => { setInput(prompt); if (reviewLayout) openSpace('chat'); else setView('chat'); requestAnimationFrame(() => taRef.current?.focus()) }} />}

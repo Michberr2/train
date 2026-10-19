@@ -462,8 +462,8 @@ export default function MemoryPanel({ chats, onOpenChat, designPreview = false, 
           }
           if (!dim && n.type !== 'core' && (n.type === 'lobe' || n.id === focusId)) {
             ctx.globalAlpha = 1
-            const fontSize = 10 / cam.current.z, gap = 7 / cam.current.z
-            ctx.font = `${fontSize}px Inter, sans-serif`
+            const fontSize = 12 / cam.current.z, gap = 7 / cam.current.z
+            ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`
             ctx.textAlign = 'center'; ctx.fillStyle = palette.label
             const label = reviewNodeLabel(n).slice(0, 26), width = ctx.measureText(label).width
             const above = { x: n.x, y: n.y - r - gap }, below = { x: n.x, y: n.y + r + gap + fontSize }
@@ -588,7 +588,7 @@ export default function MemoryPanel({ chats, onOpenChat, designPreview = false, 
     return (
       <section className="ws-memory memory-review" aria-labelledby="memory-review-title">
         <header className="memory-review-heading">
-          <div><span className="memory-review-eyebrow">Memory</span><h1 id="memory-review-title">Pick up where you left off.</h1><p>Your conversations, creations, and saved work. Connected in one place.</p></div>
+          <div><span className="memory-review-eyebrow">Memory</span><h1 id="memory-review-title">Saved work</h1><p>Your conversations, creations, and connections.</p></div>
           <div className="memory-review-summary" aria-label="Saved workspace totals">
             {([{ id: 'chat', value: s.chats, label: 'Conversations' }, { id: 'creations', value: s.studio, label: 'Studio items' }, { id: 'flow', value: s.autopilot, label: 'Workflows' }, { id: 'map', value: s.map, label: 'Map items' }] as const).map(item => <button key={item.id} onClick={() => selectFilter(item.id)}><strong>{item.value}</strong><span>{item.label}</span></button>)}
           </div>
@@ -616,7 +616,7 @@ export default function MemoryPanel({ chats, onOpenChat, designPreview = false, 
           </section>
           <aside className="memory-review-inspector" aria-label="Memory context and connections">
             <section className="memory-review-network" aria-labelledby="memory-network-title">
-              <header><div><span className="memory-review-eyebrow">Connected context</span><h2 id="memory-network-title">The bigger picture.</h2></div><span>{brain.nodes.length > 128 ? `128 of ${brain.nodes.length} nodes` : `${brain.nodes.length} nodes`}</span></header>
+              <header><div><span className="memory-review-eyebrow">Workspace</span><h2 id="memory-network-title">Connections</h2></div><span>{brain.nodes.length > 128 ? `128 of ${brain.nodes.length} nodes` : `${brain.nodes.length} nodes`}</span></header>
               <div ref={wrapRef} className="memory-review-canvas"><canvas ref={canvasRef} aria-label="Interactive workspace memory graph. Drag to pan, scroll to zoom, or use the saved work list to select a node." className="touch-none"/></div>
               <div className="memory-review-graph-tools"><span>Drag to explore · Scroll to zoom</span><div><button aria-label="Zoom memory graph out" onClick={() => { cam.current.z = Math.max(0.25, cam.current.z / 1.25) }}><Minus size={15}/></button><button aria-label="Zoom memory graph in" onClick={() => { cam.current.z = Math.min(4, cam.current.z * 1.25) }}><Plus size={15}/></button><button aria-label="Fit all memory connections" onClick={() => fitGraph.current()}><Maximize2 size={14}/></button></div></div>
             </section>

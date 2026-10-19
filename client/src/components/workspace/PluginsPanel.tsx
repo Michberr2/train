@@ -27,16 +27,21 @@ export default function PluginsPanel() {
     </header>
     <div className="ws-plugins-content min-h-0 flex-1 overflow-y-auto px-6 pb-5">
       <section aria-label="Nalu for Chrome" className="ws-plugins-chrome mb-5 rounded-2xl border border-accent/30 bg-accent/[0.08] p-5">
+        <div className="ws-plugins-chrome-heading">
         <h2 className="text-[15px] font-medium">Nalu for Chrome</h2>
+        <a href="/nalu-for-chrome.zip" download className="inline-flex items-center gap-2 rounded-xl bg-accent px-3.5 py-2 text-sm text-[#0a1018]"><Download size={15} />Download extension</a>
+        </div>
         <p className="mt-1 text-sm text-dim">Work with the page you are viewing. Nalu can read pages, click, type and navigate, with review before consequential actions. Scheduled runs stop when review is needed.</p>
+        <details className="ws-plugins-install">
+        <summary>Installation instructions</summary>
         <ol className="mt-3 list-inside list-decimal space-y-1 text-sm text-dim">
           <li>Download and unzip the extension.</li>
           <li>Open <span className="font-mono text-ink">chrome://extensions</span> and turn on Developer mode.</li>
           <li>Choose Load unpacked, then select the unzipped nalu-for-chrome folder.</li>
           <li>Pin Nalu and open its side panel. Reload open tabs after updating the extension.</li>
         </ol>
-        <a href="/nalu-for-chrome.zip" download className="mt-4 inline-flex items-center gap-2 rounded-xl bg-accent px-3.5 py-2 text-sm text-[#0a1018]"><Download size={15} />Download Nalu for Chrome</a>
         <p className="mt-2 text-xs text-dim">Check installation in Chrome. This page cannot verify whether the extension is installed.</p>
+        </details>
       </section>
       {loading && <p role="status" className="mb-4 text-sm text-dim">Loading your saved connections…</p>}
       {error && <p role="alert" className="mb-4 rounded-xl border border-red-400/30 p-3 text-sm">{error}</p>}

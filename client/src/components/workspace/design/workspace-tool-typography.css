@@ -1,0 +1,26 @@
+/* One type system for application controls inside the glass tool windows.
+   Chat, the desktop shell and authored documents retain their own typography. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat])>.ws-main {
+  --workspace-ui-font:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  font-family:var(--workspace-ui-font);
+  font-size:13px;
+  line-height:1.5;
+  font-weight:400;
+  letter-spacing:normal;
+  font-kerning:normal;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main :is(.ws-page-intro,.ws-studio-toolbar,.ws-studio-canvas-toolbar,.ws-studio-brief,.ws-skills,.ws-settings,.ws-plugins,.ws-projects,.map-workspace,.workspace-live-hub,.memory-review,.ap-toolbar,.ap-flowbar,.ap-rail,.ap-empty,.ap-template-dialog,.ap-editor-dialog) {
+  font-family:var(--workspace-ui-font);
+  letter-spacing:normal;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main :is(.ws-page-intro,.ws-studio-toolbar,.ws-studio-canvas-toolbar,.ws-studio-brief,.ws-skills,.ws-settings,.ws-plugins,.ws-projects,.map-workspace,.memory-review,.live-hub-header,.live-hub-tabs,.live-hub-filters,.live-hub-card-heading,.live-hub-card-copy,.live-hub-card-actions,.live-hub-empty,.ap-toolbar,.ap-flowbar,.ap-rail,.ap-empty,.ap-template-dialog,.ap-editor-dialog) :is(button,input,textarea,select,label,summary) {
+  font-family:var(--workspace-ui-font);
+  letter-spacing:normal;
+  text-transform:none;
+}
+/* Keep keyboard focus clear on both glass tones without changing generated
+   content, control colors, pointer behavior, or native selection affordances. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main :is(.ws-studio-toolbar,.ws-studio-brief,.ws-skills,.ws-settings,.ws-plugins,.ws-projects,.map-workspace,.memory-review,.live-hub-header,.live-hub-tabs,.live-hub-filters,.ap-toolbar,.ap-flowbar) :is(button,input,textarea,select,summary):focus-visible {
+  outline:2px solid rgb(var(--ws-ink)/.7);
+  outline-offset:3px;
+}

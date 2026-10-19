@@ -99,7 +99,7 @@ export default function ProjectsPanel() {
           <div>
             <h1 className="text-base font-semibold text-ink">Projects</h1>
             <p className="text-sm text-dim">
-              Connect a GitHub repo or create a workspace
+              Keep your workspaces and repository references together.
             </p>
           </div>
         </div>

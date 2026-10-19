@@ -1,6 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
 import { BookOpen, Code2, FileText, Globe, Image, ListChecks, Presentation, Table2, Wand2 } from 'lucide-react'
-import WorkspaceIntro from './WorkspaceIntro'
 const PluginsPanel = lazy(() => import('./PluginsPanel'))
 
 type Skill = { id: string; name: string; description: string; action: string; draft?: string; icon: typeof BookOpen; help?: boolean }
@@ -21,12 +20,14 @@ export default function SkillsPanel({ onDraft }: { onDraft?: (prompt: string) =>
   const [tab, setTab] = useState<'tools' | 'connections'>('tools')
   const [guide, setGuide] = useState(false)
   return <div className="ws-skills ws-feature-page flex min-h-0 flex-1 flex-col font-sans text-ink">
-    <nav aria-label="Skills sections" className="flex gap-2 px-4 pt-4">
+    <header className="ws-utility-heading">
+      <div><h1>Skills</h1><p>Choose a tool, then complete your request in chat.</p></div>
+      <nav aria-label="Skills sections" className="ws-utility-segments">
       <button aria-pressed={tab === 'tools'} onClick={() => setTab('tools')} className="rounded-xl border border-glass/20 px-4 py-2 text-sm">Tools & guides</button>
       <button aria-pressed={tab === 'connections'} onClick={() => setTab('connections')} className="rounded-xl border border-glass/20 px-4 py-2 text-sm">Connections & Chrome</button>
-    </nav>
+      </nav>
+    </header>
     {tab === 'connections' ? <Suspense fallback={<p role="status" className="p-6 text-sm text-dim">Opening connections…</p>}><PluginsPanel /></Suspense> : <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-      <div className="mx-auto max-w-2xl"><WorkspaceIntro label="Skills" title="Make something useful." description="Choose a starting point. Your request opens in chat for you to complete and review before sending." /></div>
       {guide && <section aria-label="Workspace guide" className="mx-auto mb-4 max-w-5xl rounded-xl border border-glass/20 bg-glass/10 p-4 text-sm">
         <div className="mb-2 flex items-center justify-between gap-4"><h2 className="font-medium">Your workspace</h2><button onClick={() => setGuide(false)} className="rounded px-2 py-1 hover:bg-glass/10">Close guide</button></div>
         <ol className="list-inside list-decimal space-y-2 text-dim">

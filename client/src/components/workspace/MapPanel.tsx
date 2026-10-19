@@ -1558,7 +1558,7 @@ export default function MapPanel() {
             <span className="text-sm font-medium text-ink">Map search</span>
             <button onClick={() => setPanelOpen(false)} aria-label="Hide search panel" className="ml-auto flex h-8 w-8 items-center justify-center rounded-md text-dim hover:bg-glass/10 hover:text-ink"><X size={16} /></button>
           </div>
-          <p className="map-search-intro mb-3 text-xs leading-relaxed text-dim">Find places, compare areas, or ask Nalu to map what matters to you.</p>
+          <p className="map-search-intro mb-3 text-xs leading-relaxed text-dim">Find a place, compare areas, or ask Nalu.</p>
           <div className="map-search-field flex items-center gap-1.5 rounded-xl border border-glass/[0.12] bg-glass/[0.04] px-2.5 py-2 focus-within:border-glass/25">
             <Search size={14} className="text-dim" />
             <input aria-label="Map search" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void search() }}
@@ -1581,13 +1581,13 @@ export default function MapPanel() {
               </button>
             ))}
           </div>
-          {loading && <div role="status" className="mt-2 text-[11px] text-dim">Searching the map…</div>}
-          {err && <div role="status" className="mt-2 text-[11px] text-amber-300/90">{err}</div>}
+          {loading && <div role="status" className="map-search-status mt-2 text-[11px] text-dim">Searching the map…</div>}
+          {err && <div role="status" className="map-search-status mt-2 text-[11px] text-amber-300/90">{err}</div>}
         </div>
         <div className="map-search-results flex-1 overflow-y-auto p-2">
           {comparison && (
             <div className="map-comparison mb-2 overflow-hidden rounded-xl border border-accent/30 bg-accent/[0.06]">
-              <div className="flex items-center justify-between border-b border-glass/10 px-2.5 py-2">
+              <div className="map-comparison-heading flex items-center justify-between border-b border-glass/10 px-2.5 py-2">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gold">{comparison.title}</span>
                 {comparison.criteria.length > 3 && <span className="shrink-0 text-[9px] text-dim">swipe →</span>}
               </div>
@@ -1623,12 +1623,12 @@ export default function MapPanel() {
                   </tbody>
                 </table>
               </div>
-              <p className="border-t border-glass/10 px-2.5 py-2 text-[10px] leading-relaxed text-dim">{comparison.methodology}</p>
+              <p className="map-comparison-note border-t border-glass/10 px-2.5 py-2 text-[10px] leading-relaxed text-dim">{comparison.methodology}</p>
             </div>
           )}
           {answer && (
             <div className="map-search-answer mb-2 rounded-xl border border-accent/30 bg-accent/[0.07] p-2.5">
-              <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-gold"><Sparkles size={11} /> Nalu</div>
+              <div className="map-answer-heading mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-gold"><Sparkles size={11} /> Nalu</div>
               <p className="text-[12px] leading-relaxed text-ink">{answer}</p>
             </div>
           )}

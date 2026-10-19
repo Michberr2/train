@@ -205,7 +205,7 @@ export default function StudioPanel({
   return (
     <div className="ws-studio ws-feature-page flex-1 min-h-0" data-studio-design-preview={reviewLayout || undefined}>
       <div className="ws-studio-layout">
-        <WorkspaceIntro label={reviewLayout ? 'Studio' : 'Nalu Studio'} title={reviewLayout ? 'An idea. A little room to make it.' : "Let's make something."} description={reviewLayout ? 'Choose your medium, find your direction, and make something yours.' : 'A page, a picture, a whole new idea. Pick a tool and tell Nalu what you have in mind.'}/>
+        <WorkspaceIntro label={reviewLayout ? 'Studio' : 'Nalu Studio'} title={reviewLayout ? 'Studio' : "Let's make something."} description={reviewLayout ? 'Bring an idea to life with Nalu.' : 'A page, a picture, a whole new idea. Pick a tool and tell Nalu what you have in mind.'}/>
 
         <div className="ws-studio-toolbar">
           <nav className="ws-segments" aria-label="Studio views">
@@ -233,7 +233,7 @@ export default function StudioPanel({
         </aside>}
         {/* Design screen — the result shows HERE, above the prompt bar */}
         <div className="ws-studio-preview">
-          <div className="flex items-center justify-between gap-3 border-b border-glass/[0.07] px-4 py-2.5">
+          <div className="ws-studio-canvas-toolbar flex items-center justify-between gap-3 border-b border-glass/[0.07] px-4 py-2.5">
             <button className="ws-mobile-preview-toggle" onClick={() => setMobilePreview(false)}>Edit brief</button>
             <span className="flex min-w-0 items-center gap-2 text-[13px] text-ink">
               {working && <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-glass/20 border-t-accent" />}
@@ -284,7 +284,7 @@ export default function StudioPanel({
 
         {/* Prompt bar */}
         <div className="ws-studio-brief">
-          <div className="mb-3 flex items-baseline justify-between gap-3">
+          <div className="ws-studio-brief-heading mb-3 flex items-baseline justify-between gap-3">
             <div className="ws-brief-title">{inline ? 'Keep creating.' : tool.name}</div>
             <div className="ws-brief-description text-[11px] text-dim">{inline && toolKey !== 'movie' ? `Editing ${inline.title}. Describe what to change; the current version stays saved.` : tool.desc}</div>
             {inline && <button className="ws-start-new" onClick={startNew} disabled={working}>Start a new creation</button>}
@@ -303,7 +303,7 @@ export default function StudioPanel({
             placeholder={inline && toolKey !== 'movie' ? 'What would you like to change or add?' : `Describe your ${tool.name.toLowerCase()} — e.g. “${tool.ph}”`}
             className="max-h-44 w-full resize-none bg-transparent py-1 text-[15px] leading-relaxed text-ink outline-none placeholder:text-dim"
           />
-          <div className="mt-2 flex items-center justify-between border-t border-glass/[0.07] pt-3">
+          <div className="ws-studio-brief-actions mt-2 flex items-center justify-between border-t border-glass/[0.07] pt-3">
             <span className="ws-studio-shortcut text-[10px] text-dim">⌘/Ctrl + Enter</span>
             <button className="ws-mobile-preview-toggle" onClick={() => setMobilePreview(true)}>Preview <Eye size={13}/></button>
             <button onClick={run} disabled={working || streaming || (!!inline && !brief.trim())}
@@ -318,7 +318,7 @@ export default function StudioPanel({
         {/* Your creations — preview anything built in the Studio, right here */}
         {studioView === 'library' && (
           <div className="ws-studio-library">
-            <div className="mb-4 flex items-center gap-3">
+            <div className="ws-studio-library-heading mb-4 flex items-center gap-3">
               <span className="text-[10px] font-medium uppercase tracking-[0.24em] text-dim">Your creations</span>
               <span className="h-px flex-1 bg-glass/[0.08]" />
               <span className="text-[10px] text-dim">{creations.length}</span>
