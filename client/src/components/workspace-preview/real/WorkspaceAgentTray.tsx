@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { LayoutGrid, X } from 'lucide-react'
+import { LayoutGrid, MessageCircle, Search, X } from 'lucide-react'
 import type { ActivityChat, ActivityItem, WorkspaceActivityController } from '../../workspace/design/workspaceActivity'
 import { AgentHead, agentForItem, type AgentName } from './WorkspaceAgentIdentity'
 import './workspace-agent-tray.css'
@@ -12,6 +12,7 @@ export interface WorkspaceAgentTrayProps {
   onSelectItem?: (id: string) => void
   onOpenScreens?: () => void
   onOpenPicker?: () => void
+  onOpenAgent?: (name: AgentName) => void
   selectedItemId?: string
 }
 
@@ -20,10 +21,11 @@ const isCurrent = (item: ActivityItem) => ['running', 'queued', 'waiting', 'fail
 const statusLabel = (item: ActivityItem) => ({ queued: 'Queued', running: 'Working', waiting: 'Needs you', done: 'Ready', saved: 'Saved', failed: 'Attention', cancelled: 'Cancelled', paused: 'Paused' })[item.status]
 
 /** Navigation to existing work; the caller owns its account-scoped activity. */
-export default function WorkspaceAgentTray({ chats, activity, onOpenChat, onOpenMemory, onSelectItem, onOpenScreens, onOpenPicker, selectedItemId }: WorkspaceAgentTrayProps) {
+export default function WorkspaceAgentTray({ chats, activity, onOpenChat, onOpenMemory, onSelectItem, onOpenScreens, onOpenPicker, onOpenAgent, selectedItemId }: WorkspaceAgentTrayProps) {
   const chatIds = new Set(chats.map(chat => chat.id))
   const [chosenAgent, setChosenAgent] = useState<AgentName>('Nalu')
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const root = useRef<HTMLElement>(null)
   const panel = useRef<HTMLElement>(null)
   const cards = useRef<Partial<Record<AgentName, HTMLButtonElement | null>>>({})
@@ -45,7 +47,14 @@ export default function WorkspaceAgentTray({ chats, activity, onOpenChat, onOpen
   const togglePicker = () => {
     if (open) { close(); return }
     onOpenPicker?.()
+    setQuery('')
     setOpen(true)
+  }
+  const openAgent = (name: AgentName) => {
+    setChosenAgent(name)
+    setOpen(false)
+    cards.current[name]?.focus({ preventScroll: true })
+    onOpenAgent?.(name)
   }
   const selectItem = (item: ActivityItem) => {
     const name = agentForItem(item).name
@@ -85,8 +94,8 @@ export default function WorkspaceAgentTray({ chats, activity, onOpenChat, onOpen
     <div className="agent-tray-cards" role="group" aria-label="Choose an agent workspace">
       {groups.map(({ name, index, item, current }) => {
         const primary = name === primaryAgent
-        const status = item ? statusLabel(item) : 'No activity'
-        const summary = item ? `${name}: ${item.title} — ${item.preview ? 'Sample · ' : ''}${status}` : `${name}: no activity`
+        const status = item ? statusLabel(item) : 'Ready to help'
+        const summary = item ? `${name}: ${item.title} — ${item.preview ? 'Sample · ' : ''}${status}` : `Chat with ${name}`
         const detail = item?.pendingQuestion?.text || item?.detail || item?.events[item.events.length - 1]?.m || ''
         const others = current.length > 1 ? `\n${current.length - 1} more active workspace${current.length > 2 ? 's' : ''} in All workspaces.` : ''
         return <button ref={element => { cards.current[name] = element }} type="button" key={name} className="agent-tray-card" data-agent={name.toLowerCase()} data-status={item?.status || 'idle'} data-primary={primary}
@@ -94,8 +103,8 @@ export default function WorkspaceAgentTray({ chats, activity, onOpenChat, onOpen
           aria-label={primary ? `${name}: ${open ? 'close' : 'open'} agent activity` : summary}
           aria-haspopup={primary ? 'dialog' : undefined} aria-expanded={primary ? open : undefined}
           aria-controls={primary && open ? panelId : undefined}
-          aria-pressed={!primary ? !!item && selectedItemId === item.id : undefined} disabled={!primary && !item}
-          title={summary + (detail ? '\n' + detail : '') + others} onClick={() => primary ? togglePicker() : item && selectItem(item)}>
+          aria-pressed={!primary ? !!item && selectedItemId === item.id : undefined}
+          title={summary + (detail ? '\n' + detail : '') + others} onClick={() => primary ? togglePicker() : item ? selectItem(item) : openAgent(name)}>
           <AgentHead name={name} className="agent-card-head"/>
           <span className="agent-card-copy"><strong>{name}</strong><span className="agent-card-status">{status}</span>
             {item?.preview && <small>Sample</small>}
@@ -108,21 +117,28 @@ export default function WorkspaceAgentTray({ chats, activity, onOpenChat, onOpen
     </button>
     {open && <section ref={panel} id={panelId} className="agent-tray-picker" role="dialog" aria-labelledby={`${panelId}-title`} tabIndex={-1}>
       <header className="agent-tray-picker-header">
-        <div><h2 id={`${panelId}-title`}>Agent activity</h2><p>{hasSamples ? 'Includes sample activity' : 'Your current work'}</p></div>
+        <div><h2 id={`${panelId}-title`}>Your team</h2><p>{hasSamples ? 'Includes sample activity' : 'Start a conversation or pick up ongoing work'}</p></div>
         <button type="button" className="agent-tray-close" aria-label="Close agent activity" onClick={close}><X size={16} aria-hidden="true"/></button>
       </header>
+      <label className="agent-tray-search"><Search size={15} aria-hidden="true"/><input type="search" aria-label="Find an agent or task" placeholder="Find an agent or task" value={query} onChange={event => setQuery(event.target.value)}/></label>
       <div className="agent-tray-picker-list">
-        {groups.flatMap(({ name, rows }) => (rows.length ? rows : [undefined]).map((item, index) => {
-          const status = item ? `${item.preview ? 'Sample · ' : ''}${statusLabel(item)}` : 'No activity'
+        {groups.filter(({ name, rows }) => `${name} ${rows.map(item => item.title).join(' ')}`.toLowerCase().includes(query.trim().toLowerCase())).map(({ name, rows, current }) => <section className="agent-tray-person" key={name} aria-label={`${name} workspace`}>
+          <button type="button" className="agent-tray-picker-task agent-tray-start" data-agent={name.toLowerCase()} aria-label={`Chat with ${name}`} onClick={() => openAgent(name)}>
+            <span className="agent-picker-face"><AgentHead name={name} className="agent-picker-head"/></span>
+            <span className="agent-tray-picker-copy"><strong>{name}</strong><span className="agent-tray-picker-task-title">{current.length ? `${current.length} active ${current.length === 1 ? 'task' : 'tasks'}` : 'Ready to help'}</span></span>
+            <MessageCircle size={17} aria-hidden="true"/>
+          </button>
+          {rows.filter(item => !query.trim() || name.toLowerCase().includes(query.trim().toLowerCase()) || item.title.toLowerCase().includes(query.trim().toLowerCase())).map(item => {
+          const status = `${item.preview ? 'Sample · ' : ''}${statusLabel(item)}`
           const detail = item?.pendingQuestion?.text || item?.detail || item?.events[item.events.length - 1]?.m || ''
           const title = item?.title || 'No current workspace'
-          return <button type="button" key={item?.id || `${name}-${index}`} className="agent-tray-picker-task" data-agent={name.toLowerCase()} data-status={item?.status || 'idle'}
+          return <button type="button" key={item.id} className="agent-tray-picker-task agent-tray-work" data-agent={name.toLowerCase()} data-status={item.status}
             aria-label={`${name}: ${title} — ${status}`} aria-pressed={!!item && selectedItemId === item.id}
-            title={`${title}${detail ? '\n' + detail : ''}`} disabled={!item} onClick={() => item && selectItem(item)}>
-            <span className="agent-picker-face"><AgentHead name={name} className="agent-picker-head"/></span>
-            <span className="agent-tray-picker-copy"><strong>{name}</strong><span className="agent-tray-picker-task-title">{title}</span><span className="agent-tray-picker-task-status">{status}</span></span>
+            title={`${title}${detail ? '\n' + detail : ''}`} onClick={() => selectItem(item)}>
+            <span className="agent-tray-picker-copy"><span className="agent-tray-picker-task-title">{title}</span><span className="agent-tray-picker-task-status">{status}</span></span>
           </button>
-        }))}
+        })}</section>)}
+        {query.trim() && !groups.some(({ name, rows }) => `${name} ${rows.map(item => item.title).join(' ')}`.toLowerCase().includes(query.trim().toLowerCase())) && <p className="agent-tray-empty" role="status">No matching agents or work.</p>}
       </div>
       <footer className="agent-tray-picker-footer"><button type="button" className="agent-tray-all-workspaces" onClick={openAll}><LayoutGrid size={15} aria-hidden="true"/>All workspaces</button></footer>
     </section>}

@@ -12,6 +12,7 @@ type Props = {
   navigationKey: number
   onOpenChat: (id: string) => void
   availableChatIds: string[]
+  startingAgent?: AgentName
 }
 type Task = SwarmController['state']['tasks'][number]
 const AGENTS: AgentName[] = ['Nalu', 'Rocky', 'Milo']
@@ -46,8 +47,8 @@ function LiveTaskActions({ task, swarm }: { task: Task; swarm: SwarmController }
   </>
 }
 
-function NewSwarm({ swarm }: { swarm: SwarmController }) {
-  const [title, setTitle] = useState('')
+function NewSwarm({ swarm, startingAgent }: { swarm: SwarmController; startingAgent?: AgentName }) {
+  const [title, setTitle] = useState(startingAgent ? `Work with ${startingAgent}` : '')
   const [brief, setBrief] = useState('')
   const [saving, setSaving] = useState(false)
   const [submitError, setSubmitError] = useState('')
@@ -57,12 +58,16 @@ function NewSwarm({ swarm }: { swarm: SwarmController }) {
     event.preventDefault()
     if (!title.trim() || !brief.trim() || saving) return
     setSaving(true); setSubmitError('')
-    try { await swarm.createProject(title.trim(), brief.trim()) }
+    try {
+      const id = await swarm.createProject(title.trim(), brief.trim())
+      if (id && startingAgent) swarm.navigate(id, startingAgent)
+      else if (!id) setSubmitError('Your workspace could not be created. Please try again.')
+    }
     catch { setSubmitError('Your workspace could not be created. Please try again.') }
     finally { setSaving(false) }
   }
   return <div className="swarm-create">
-    <div className="swarm-create-heading"><div><h2>Make room for an idea.</h2><p>One project, a shared conversation, and a little help from the team.</p></div><button type="button" className="swarm-icon-button" aria-label="Cancel new Swarm" onClick={() => swarm.setCreating(false)}><X size={15}/></button></div>
+    <div className="swarm-create-heading"><div><h2>{startingAgent ? `Work with ${startingAgent}` : 'Make room for an idea.'}</h2><p>{startingAgent ? `Give ${startingAgent} some context. Your private conversation stays connected to this project.` : 'One project, a shared conversation, and a little help from the team.'}</p></div><button type="button" className="swarm-icon-button" aria-label="Cancel new Swarm" onClick={() => swarm.setCreating(false)}><X size={15}/></button></div>
     <form onSubmit={event => void submit(event)}>
       <label className="swarm-field">Project name<input ref={input} value={title} onChange={event => setTitle(event.target.value)} maxLength={100} placeholder="A launch, a trip, a new idea…" required/></label>
       <label className="swarm-field">What would you like to work on?<textarea value={brief} onChange={event => setBrief(event.target.value)} maxLength={2000} placeholder="Give everyone a little context and a place to start." rows={3} required/></label>
@@ -75,7 +80,7 @@ function NewSwarm({ swarm }: { swarm: SwarmController }) {
 }
 
 /** Group and direct project conversations; the supplied controller owns all data. */
-export default function WorkspaceSwarm({ swarm, navigationKey, onOpenChat, availableChatIds }: Props) {
+export default function WorkspaceSwarm({ swarm, startingAgent, navigationKey, onOpenChat, availableChatIds }: Props) {
   const root = useRef<HTMLElement>(null)
   const scroll = useRef<HTMLDivElement>(null)
   const composer = useRef<HTMLTextAreaElement>(null)
@@ -195,7 +200,7 @@ export default function WorkspaceSwarm({ swarm, navigationKey, onOpenChat, avail
   }
 
   return <section ref={root} className="workspace-swarm" data-wide={wide} aria-label="Swarm project workspace">
-    {swarm.loading && !project ? <p className="swarm-pending" role="status">Loading your Swarm workspaces…</p> : swarm.creating || !project ? <NewSwarm swarm={swarm}/> : <>
+    {swarm.loading && !project ? <p className="swarm-pending" role="status">Loading your Swarm workspaces…</p> : swarm.creating || !project ? <NewSwarm key={startingAgent || 'group'} swarm={swarm} startingAgent={startingAgent}/> : <>
       <header className="swarm-header">
         <div className="swarm-heading"><div><small>Swarm</small>{sample && <span className="swarm-sample-label">Local sample</span>}</div><h2 title={project.title}>{project.title}</h2></div>
         <div className="swarm-project-controls">

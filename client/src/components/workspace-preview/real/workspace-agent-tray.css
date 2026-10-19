@@ -61,6 +61,11 @@
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-close>svg { box-sizing:content-box; padding:6px; border-radius:50%; background:#e8edf4; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-close:hover>svg { color:#243044; background:#dce4ee; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-list { min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:8px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-search { display:flex; flex:0 0 auto; align-items:center; gap:8px; margin:12px 16px 4px; padding:9px 11px; border:1px solid #263e5912; border-radius:12px; background:#e9eef480; color:#64778c; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-search input { min-width:0; width:100%; border:0; outline:none; background:transparent; color:#243044; font:400 12px/1.5 Inter,sans-serif; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-search:focus-within { outline:2px solid #367bb3; outline-offset:1px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-person + .agent-tray-person { margin-top:5px; padding-top:5px; border-top:1px solid #35465a09; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-empty { padding:16px; color:#657284; font-size:12px; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-task {
   display:flex; align-items:center; gap:12px; width:100%; min-height:81px; margin:0; padding:11px 13px;
   border:1px solid transparent; border-radius:19px; color:#243044; background:transparent; text-align:left;
@@ -69,6 +74,8 @@
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-task:hover:not(:disabled) { background:#e8edf4b0; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-task[aria-pressed=true] { border-color:#fff; background:#fff; box-shadow:0 2px 8px #23334b06; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-task:disabled { opacity:.65; cursor:default; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-work { width:calc(100% - 32px); min-height:52px; margin-left:32px; padding:8px 13px; border-radius:12px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-start>svg { flex-shrink:0; color:#5d7892; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-picker-face { display:grid; place-items:center; flex:0 0 44px; width:44px; height:44px; border:1px solid #ffffffd9; border-radius:50%; background-color:#edf3f8; background-image:linear-gradient(#ffffff30,#ffffff30),var(--agent-scene); background-position:center bottom; background-size:auto 135%; box-shadow:0 2px 5px #23334b07; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-picker-head { display:block; width:32px; height:32px; overflow:visible; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-copy { display:flex; flex-direction:column; gap:3px; min-width:0; flex:1; }

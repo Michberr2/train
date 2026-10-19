@@ -121,7 +121,7 @@ import WorkspaceAccountMenu from './design/WorkspaceAccountMenu'
 import useLiveWorkspaceActivity from './design/useLiveWorkspaceActivity'
 import useSwarm from './design/useSwarm'
 import { withSwarmActivity } from './design/swarmActivity'
-import { isSwarmRoom, type SwarmRoomReference } from './design/swarmTypes'
+import { isSwarmRoom, type SwarmAgentId, type SwarmRoomReference } from './design/swarmTypes'
 
 // ---- model ---------------------------------------------------------------
 
@@ -769,6 +769,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   const liveSwarm = useSwarm({ accountId: user?.id, enabled: reviewLayout && !previewLayout, active: reviewChatOpen || agentScreensOpen || view === 'memory' })
   const liveActivity = withSwarmActivity({ ...baseActivity, error: [baseActivity.error, liveSwarm.error].filter(Boolean).join(' '), refresh: () => { baseActivity.refresh(); liveSwarm.refresh?.() } }, liveSwarm.state)
   const [swarmNavigationRequest, setSwarmNavigationRequest] = useState<(SwarmRoomReference & { key: number }) | undefined>()
+  const [agentConversationRequest, setAgentConversationRequest] = useState<{ agent: SwarmAgentId; key: number }>()
   const [saveState, setSaveState] = useState(getSyncState)
   useEffect(() => {
     const update = () => setSaveState(getSyncState())
@@ -3043,12 +3044,13 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         <WorkspaceAgentTray chats={chats} activeChatIds={reviewActiveChats} activity={liveActivity}
           onOpenChat={id => { setActiveId(id); openSpace('chat') }}
           onOpenPicker={() => setReviewChatOpen(false)}
+          onOpenAgent={agent => { setSelectedAgentItem(null); setAgentScreensOpen(false); setAgentConversationRequest(current => ({ agent, key: (current?.key || 0) + 1 })); setReviewChatOpen(true) }}
           onOpenMemory={() => openSpace('memory')} selectedItemId={selectedAgentItem || undefined}
           onSelectItem={selectActivityItem} onOpenScreens={() => openAgentScreens(null)}/>
       </Suspense>}
 
       {reviewLayout && WorkspaceChatPopover && <Suspense fallback={null}>
-        <WorkspaceChatPopover swarm={previewLayout ? undefined : liveSwarm} swarmNavigationRequest={swarmNavigationRequest} open={reviewChatOpen} onOpen={() => setReviewChatOpen(true)}
+        <WorkspaceChatPopover swarm={previewLayout ? undefined : liveSwarm} swarmNavigationRequest={swarmNavigationRequest} agentConversationRequest={agentConversationRequest} open={reviewChatOpen} onOpen={() => setReviewChatOpen(true)}
           fullPageAnchor={chatInlineAnchor}
           fullPageVisible={view === 'chat' && !launcherOpen && !agentScreensOpen}
           onChatVisibilityChange={setChatContentVisible}

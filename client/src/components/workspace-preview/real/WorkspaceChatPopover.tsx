@@ -2,12 +2,13 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type 
 import NaluMark from '../../landing/NaluMark'
 import WorkspaceSwarm from './WorkspaceSwarm'
 import { isSwarmRoom, type SwarmController, type SwarmThread, type SwarmRoomReference } from '../../workspace/design/swarmTypes'
-import { AgentHead } from './WorkspaceAgentIdentity'
+import { AgentHead, type AgentName } from './WorkspaceAgentIdentity'
 import './workspace-chat-popover.css'
 
 export type WorkspaceChatPopoverProps = {
   swarm?: SwarmController
   swarmNavigationRequest?: SwarmRoomReference & { key: number }
+  agentConversationRequest?: { agent: AgentName; key: number }
   persistenceKey?: string
   fullPageAnchor?: HTMLElement | null
   fullPageVisible?: boolean
@@ -42,7 +43,7 @@ function QuickTab({ label, active, onOpen, onHide, children }: { label: string; 
 }
 
 /** Window presentation: callers supply the real chat renderer and optional Swarm controller. */
-export default function WorkspaceChatPopover({ swarm, swarmNavigationRequest, persistenceKey = HIDDEN_TABS_KEY, fullPageAnchor, fullPageVisible = false, onChatVisibilityChange, open, onOpen, onClose, onNewChat, title, history, chatTools, chatItems, activeChatId, onSelectChat, children }: WorkspaceChatPopoverProps) {
+export default function WorkspaceChatPopover({ swarm, swarmNavigationRequest, agentConversationRequest, persistenceKey = HIDDEN_TABS_KEY, fullPageAnchor, fullPageVisible = false, onChatVisibilityChange, open, onOpen, onClose, onNewChat, title, history, chatTools, chatItems, activeChatId, onSelectChat, children }: WorkspaceChatPopoverProps) {
   const launcher = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const expand = useRef<HTMLButtonElement>(null)
@@ -61,6 +62,7 @@ export default function WorkspaceChatPopover({ swarm, swarmNavigationRequest, pe
   const surfaceVisible = open || fullPageVisible && !!inlineBounds
   const ordinaryVisible = surfaceVisible && (!open || conversation === 'chat')
   const [swarmNavigation, setSwarmNavigation] = useState(0)
+  const [startingAgent, setStartingAgent] = useState<AgentName>()
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [jumpOpen, setJumpOpen] = useState(false)
   const [jumpQuery, setJumpQuery] = useState('')
@@ -86,6 +88,7 @@ export default function WorkspaceChatPopover({ swarm, swarmNavigationRequest, pe
   const showChat = (id: string) => { restoreQuickTab(chatTabId(id)); setConversation('chat'); onSelectChat(id); setJumpOpen(false); setNewMenuOpen(false); if (mobile) setHistoryOpen(false); focusComposer() }
   const showSwarm = (projectId: string, thread: SwarmThread = 'group') => {
     if (!swarm) return
+    setStartingAgent(undefined)
     restoreQuickTab(swarmTabId(projectId, thread))
     swarm.navigate(projectId, thread); setConversation('swarm'); setJumpOpen(false); setNewMenuOpen(false)
     setSwarmNavigation(value => value + 1)
@@ -93,7 +96,7 @@ export default function WorkspaceChatPopover({ swarm, swarmNavigationRequest, pe
     focusComposer()
   }
   const createChat = () => { setNewMenuOpen(false); setConversation('chat'); if (mobile) setHistoryOpen(false); onNewChat(); focusComposer() }
-  const createSwarm = () => { if (!swarm) return; setConversation('swarm'); swarm.setCreating(true); setNewMenuOpen(false); setJumpOpen(false); if (mobile) setHistoryOpen(false) }
+  const createSwarm = () => { if (!swarm) return; setStartingAgent(undefined); setConversation('swarm'); swarm.setCreating(true); setNewMenuOpen(false); setJumpOpen(false); if (mobile) setHistoryOpen(false) }
   const quickChoices = [
     ...(swarm?.state.projects.flatMap(project => (['group', ...project.members] as SwarmThread[]).map(thread => ({
       id: `${project.id}:${thread}`, label: thread === 'group' ? project.title : `${thread} · ${project.title}`,
@@ -120,6 +123,21 @@ export default function WorkspaceChatPopover({ swarm, swarmNavigationRequest, pe
     consumedSwarmNavigation.current = target.key
     showSwarm(target.projectId, target.thread)
   }, [open, swarmNavigationRequest, swarm?.state])
+
+  const consumedAgentRequest = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    const target = agentConversationRequest
+    if (!open || !swarm || swarm.loading || !target || consumedAgentRequest.current === target.key) return
+    consumedAgentRequest.current = target.key
+    const project = swarm.state.projects.find(project => project.id === swarm.activeProjectId && project.members.includes(target.agent))
+      || [...swarm.state.projects].sort((a, b) => b.updatedAt - a.updatedAt).find(project => project.members.includes(target.agent))
+    if (project) showSwarm(project.id, target.agent)
+    else {
+      setStartingAgent(target.agent)
+      setConversation('swarm'); swarm.setCreating(true); setNewMenuOpen(false); setJumpOpen(false)
+      if (mobile) setHistoryOpen(false)
+    }
+  }, [open, agentConversationRequest, swarm?.loading, swarm?.state])
 
   useLayoutEffect(() => {
     if (open || fullPageVisible) setHasShownChat(true)
@@ -395,7 +413,7 @@ export default function WorkspaceChatPopover({ swarm, swarmNavigationRequest, pe
           </aside>
         </>}
         <div ref={body} className={open ? 'workspace-chat-popover-body' : 'workspace-chat-inline-body'}>
-          {open && conversation === 'swarm' && swarm && <WorkspaceSwarm swarm={swarm} navigationKey={swarmNavigation} availableChatIds={chatItems.map(chat => chat.id)} onOpenChat={showChat}/>}
+          {open && conversation === 'swarm' && swarm && <WorkspaceSwarm swarm={swarm} startingAgent={startingAgent} navigationKey={swarmNavigation} availableChatIds={chatItems.map(chat => chat.id)} onOpenChat={showChat}/>}
           {/* Keep one ordinary-chat subtree in one DOM location. Changing its
               presentation must not reset editors, iframe state, or dictation. */}
           <div key="ordinary-chat" className="workspace-chat-ordinary" style={{ display: ordinaryVisible ? 'contents' : 'none' }}>{children}</div>

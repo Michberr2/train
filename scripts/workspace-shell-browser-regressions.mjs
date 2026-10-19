@@ -18,6 +18,7 @@ try{
  await server.listen();browser=await chromium.launch()
  for(const viewport of [{width:1440,height:1000},{width:390,height:844}]){
   const context=await browser.newContext({viewport});let cloud={'nalu-chats':JSON.stringify(initial)}
+  const swarmState={version:1,mode:'live',projects:[],tasks:[],messages:[],turns:[]},swarmRequests=[];let swarmRevision=1
   await context.addInitScript(initial=>{if(window!==top)return;if(sessionStorage.getItem('shell-seeded'))return;sessionStorage.setItem('shell-seeded','1');localStorage.setItem('nalu-token','offline-shell');localStorage.setItem('nalu-data-owner','offline-shell');localStorage.setItem('nalu-view','studio');localStorage.setItem('nalu-chats',JSON.stringify(initial))},initial)
   await context.route('**/*',async route=>{
    const req=route.request(),url=new URL(req.url())
@@ -34,7 +35,28 @@ try{
    if(url.pathname==='/api/connect'&&body.action==='list')return route.fulfill({json:{connections:[]}})
    if(url.pathname==='/api/connect')return route.fulfill({status:501,json:{error:'Unexpected connection mutation in offline regression'}})
    if(url.pathname==='/api/oauth')return route.fulfill({json:{configured:[]}})
-   if(url.pathname==='/api/swarm')return route.fulfill({json:{state:{version:1,mode:'live',projects:[],tasks:[],messages:[],turns:[]},revision:1}})
+   if(url.pathname==='/api/swarm'){
+    swarmRequests.push(body)
+    if(body.action==='create'){
+     assert.ok(body.title&&body.brief&&body.requestId,'Agent work creates a real project with a request receipt')
+     let project=swarmState.projects.find(item=>item.requestId===body.requestId)
+     if(!project){const now=Date.now();project={id:`shell-project-${swarmState.projects.length+1}`,requestId:body.requestId,title:body.title,brief:body.brief,members:['Nalu','Rocky','Milo'],createdAt:now,updatedAt:now};swarmState.projects.push(project);swarmRevision++}
+     return route.fulfill({json:{state:swarmState,revision:swarmRevision,projectId:project.id}})
+    }
+    if(body.action==='send'){
+     const project=swarmState.projects.find(item=>item.id===body.projectId)
+     assert.ok(project&&project.members.includes(body.thread),'Private replies stay attached to a member of the selected project')
+     assert.ok(body.requestId&&body.content,'Private sends preserve their request receipt and content')
+     if(!swarmState.turns.some(item=>item.requestId===body.requestId)){
+      const now=Date.now(),userMessageId=`shell-user-${body.requestId}`,replyId=`shell-reply-${body.requestId}`,turnId=`shell-turn-${body.requestId}`
+      swarmState.messages.push({id:userMessageId,projectId:project.id,thread:body.thread,speaker:'You',content:body.content,createdAt:now},{id:replyId,projectId:project.id,thread:body.thread,speaker:body.thread,content:`${body.thread} is working with you on ${project.title}.`,createdAt:now+1,turnId})
+      swarmState.turns.push({id:turnId,requestId:body.requestId,projectId:project.id,thread:body.thread,replySpeaker:body.thread,userMessageId,replyId,status:'completed',createdAt:now,updatedAt:now+1});project.updatedAt=now+1;swarmRevision++
+     }
+     return route.fulfill({json:{state:swarmState,revision:swarmRevision}})
+    }
+    if(body.action==='list')return route.fulfill({json:{state:swarmState,revision:swarmRevision}})
+    return route.fulfill({status:400,json:{error:'Unexpected Swarm action in offline shell regression'}})
+   }
    if(url.pathname==='/api/web'&&body.action==='intent')return route.fulfill({json:{kind:'chat',mode:'answer'}})
    if(url.pathname==='/api/chat')return route.fulfill({contentType:'text/event-stream',body:'event: route\ndata: {"name":"Nalu"}\n\nevent: delta\ndata: {"text":"Offline ordinary chat response."}\n\nevent: finish\ndata: {"reason":"stop"}\n\nevent: done\ndata: {"ok":true}\n\n'})
    return route.fulfill({json:{ok:true,connections:[],providers:[],results:[],items:[],tasks:[],outputs:[],runs:[],members:[]}})
@@ -105,6 +127,40 @@ try{
   await expect(chat.getByText('Offline ordinary chat response.',{exact:true})).toBeVisible()
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1))
   report.checks.push(`${viewport.width}: ordinary composer survives maximize, history search/selection, real streaming renderer and minimize/reopen`)
+  await chat.getByRole('button',{name:'Minimize Nalu chat',exact:true}).click()
+  const tray=page.getByRole('complementary',{name:'Agent workspaces',exact:true}),rocky=tray.locator('.agent-tray-card[data-agent="rocky"]'),milo=tray.locator('.agent-tray-card[data-agent="milo"]')
+  await expect(rocky).toBeEnabled();await expect(milo).toBeEnabled()
+  const chooseAgent=async name=>{await tray.locator('.agent-tray-card[data-primary="true"]').click();const picker=tray.getByRole('dialog',{name:'Your team',exact:true});await expect(picker).toBeVisible();await picker.getByRole('button',{name:`Chat with ${name}`,exact:true}).click()}
+  await chooseAgent('Rocky')
+  await expect(chat.getByRole('heading',{name:'Work with Rocky',exact:true})).toBeVisible()
+  await chat.getByLabel('Project name',{exact:true}).fill('Launch with the pack')
+  await chat.getByLabel('What would you like to work on?',{exact:true}).fill('Keep each agent conversation attached to our launch project.')
+  await chat.getByRole('button',{name:'Create Swarm',exact:true}).click()
+  await expect(chat.getByText('Talking with Rocky',{exact:true})).toBeVisible()
+  await chat.getByRole('textbox',{name:'Message Rocky',exact:true}).fill('ROCKY_PRIVATE: Please review the launch budget.')
+  await chat.getByRole('button',{name:'Send Swarm message',exact:true}).click()
+  await expect(chat.getByRole('log',{name:'Rocky direct conversation',exact:true}).getByText('Rocky is working with you on Launch with the pack.',{exact:true})).toBeVisible()
+  await chat.getByRole('button',{name:'Minimize Nalu chat',exact:true}).click()
+  await expect(milo).toBeEnabled();await chooseAgent('Milo')
+  await expect(chat.getByText('Talking with Milo',{exact:true})).toBeVisible()
+  await expect(chat.getByRole('log',{name:'Milo direct conversation',exact:true}).getByText('ROCKY_PRIVATE: Please review the launch budget.',{exact:true})).toHaveCount(0)
+  await chat.getByRole('textbox',{name:'Message Milo',exact:true}).fill('MILO_PRIVATE: Help with the launch brief.')
+  await chat.getByRole('button',{name:'Send Swarm message',exact:true}).click()
+  await expect(chat.getByRole('log',{name:'Milo direct conversation',exact:true}).getByText('Milo is working with you on Launch with the pack.',{exact:true})).toBeVisible()
+  assert.equal(swarmState.projects.length,1,'Selecting another dog opens its private branch in the same group')
+  assert.deepEqual(swarmRequests.filter(item=>item.action==='send').map(({projectId,thread})=>({projectId,thread})),[{projectId:swarmState.projects[0].id,thread:'Rocky'},{projectId:swarmState.projects[0].id,thread:'Milo'}])
+  assert.ok((await page.evaluate(()=>JSON.parse(localStorage.getItem('nalu-chats')||'[]'))).some(item=>item.id==='planning-chat'),'Agent conversations preserve the ordinary chat')
+  await page.screenshot({path:`${out}/${viewport.width}-agents.png`})
+  await chat.getByRole('navigation',{name:'Quick conversations',exact:true}).getByRole('button',{name:'Planning conversation',exact:true}).click()
+  await expect(chat.getByText('Offline ordinary chat response.',{exact:true})).toBeVisible()
+  report.checks.push(`${viewport.width}: idle Rocky and Milo are selectable, create/open real private group branches, render their own replies and preserve ordinary chat`)
+  await page.reload({waitUntil:'domcontentloaded'});await expect(carousel).toBeVisible({timeout:60000})
+  await carousel.getByRole('button',{name:'Open Studio',exact:true}).click()
+  await chooseAgent('Rocky')
+  await expect(chat.getByRole('log',{name:'Rocky direct conversation',exact:true}).getByText('Rocky is working with you on Launch with the pack.',{exact:true})).toBeVisible()
+  await expect(chat.getByRole('log',{name:'Rocky direct conversation',exact:true}).getByText('MILO_PRIVATE: Help with the launch brief.',{exact:true})).toHaveCount(0)
+  assert.equal(swarmState.projects.length,1,'Reload and reopening an agent do not duplicate its project')
+  report.checks.push(`${viewport.width}: saved agent private branches survive reload without leaking another private conversation or duplicating projects`)
   await context.close();console.log(`PASS desktop/mobile shell ${viewport.width}`)
  }
  const signedOut=await browser.newContext({viewport:{width:1440,height:1000}})
