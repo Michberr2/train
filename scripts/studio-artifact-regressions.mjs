@@ -87,9 +87,28 @@ try {
     return readFile(join(output, file))
   }
   const galleryButton = title => page.getByRole('button').filter({ has: page.getByText(title, { exact: true }) }).last()
-  const showLibrary = async () => {
+  const selectStudio = async () => {
+    // The authenticated app opens its space picker even with a saved view.
+    // Wait for that shell before checking lazy navigation, then enter Studio
+    // through the same carousel control a returning account uses.
+    await page.locator('.nalu-workspace').waitFor()
+    if (await page.locator('.nalu-workspace[data-workspace-launcher=true]').count()) {
+      const carousel = page.getByRole('region', { name: 'Choose a workspace', exact: true })
+      await carousel.waitFor()
+      await carousel.getByRole('button', { name: 'Show Studio', exact: true }).click()
+      await carousel.getByRole('button', { name: 'Open Studio', exact: true }).click()
+      await expect(carousel).toBeHidden()
+      return
+    }
     const dock = page.getByRole('navigation', { name: 'Workspace navigation', exact: true })
     if (await dock.count()) await dock.getByRole('button', { name: 'Studio', exact: true }).click()
+    else if (await page.locator('.nalu-workspace').getAttribute('data-workspace-view') !== 'studio') {
+      await page.getByRole('button', { name: 'Chats', exact: true }).click()
+      await page.getByRole('button', { name: 'Studio', exact: true }).click()
+    }
+  }
+  const showLibrary = async () => {
+    await selectStudio()
     await page.getByRole('button', { name: /Your creations/ }).click()
     await page.locator('.ws-studio-library').waitFor()
   }
@@ -101,11 +120,7 @@ try {
     await overlay.waitFor()
     return overlay
   }
-  const returnStudio = async () => {
-    const dock = page.getByRole('navigation', { name: 'Workspace navigation', exact: true })
-    if (await dock.count()) await dock.getByRole('button', { name: 'Studio', exact: true }).click()
-    else { await page.getByRole('button', { name: 'Chats', exact: true }).click(); await page.getByRole('button', { name: 'Studio', exact: true }).click() }
-  }
+  const returnStudio = selectStudio
   for (const item of artifacts.filter(item => !process.env.ARTIFACT_CASE || process.env.ARTIFACT_CASE.split(',').includes(item.id))) {
     const { id, title, art } = item
     try {
