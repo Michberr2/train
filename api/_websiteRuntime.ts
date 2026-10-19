@@ -210,6 +210,35 @@ export async function reviewWebsiteRuntime(html: string, tests: WebsiteRuntimeTe
           const control = target.tag === 'a' ? frame.locator('a').filter({ hasText: target.text }).first() : frame.locator(target.tag).filter({ hasText: target.text }).first()
           try { await control.click({ timeout: 800 }); await page.waitForTimeout(30) } catch { /* exact interactions are explicitly unverified without a valid plan */ }
         }
+        // A planner timeout must not reduce verification to clicks alone. Run a
+        // bounded, fresh form smoke pass using only native controls. This does
+        // not invent expected business results; it catches null handlers,
+        // broken validation paths, and uncaught errors in the most common app
+        // interaction while leaving the page contract to explicit journeys.
+        const fields = await frame.locator('input:not([type="hidden"]),select,textarea').evaluateAll((nodes: Element[]) => nodes
+          .filter(node => (node as HTMLElement).getClientRects().length)
+          .slice(0, 8)
+          .map(node => ({ tag: node.tagName.toLowerCase(), type: node.getAttribute('type') || '', name: node.getAttribute('name') || '', id: node.getAttribute('id') || '' })))
+        if (fields.length) {
+          frame = await load()
+          for (const field of fields) {
+            try {
+              const target = field.id ? frame.locator(`#${field.id}`) : field.name ? frame.locator(`[name="${field.name}"]`).first() : frame.locator(field.tag).first()
+              if (field.tag === 'select') {
+                const value = await target.locator('option').evaluateAll((options: HTMLOptionElement[]) => options.find(option => !option.disabled && option.value !== '')?.value || '')
+                if (value) await target.selectOption(value)
+              } else if (field.type === 'checkbox' || field.type === 'radio') {
+                await target.check()
+              } else {
+                const value = field.type === 'email' ? 'test@example.com' : field.type === 'date' ? '2028-01-15' : field.type === 'number' ? '1' : 'Smoke test'
+                await target.fill(value)
+              }
+              await page.waitForTimeout(20)
+            } catch { /* optional fields can be conditional; page errors are recorded below */ }
+          }
+          const submit = frame.locator('button[type="submit"],input[type="submit"],button').filter({ hasText: /submit|save|add|create|calculate|continue|send|transfer/i }).first()
+          try { if (await submit.count()) await submit.click({ timeout: 800 }); await page.waitForTimeout(40) } catch { /* validation may intentionally block incomplete forms */ }
+        }
       }
       for (const test of tests) {
         throwIfCancelled(signal)
