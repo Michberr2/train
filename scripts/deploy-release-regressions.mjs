@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { release, RELEASE_DOMAINS } from './deploy-release.mjs'
+import { release, RELEASE_DOMAINS, verifyReleaseAncestry } from './deploy-release.mjs'
 import { checkPreview } from './preview-release-checks.mjs'
 
 const directory = await mkdtemp(join(tmpdir(), 'nalu-release-regression-'))
@@ -23,8 +23,18 @@ try {
           statusCalls++
           return options.dirty || options.sourceChangedAt === statusCalls ? ' M api/data.ts' : ''
         }
-        commitCalls++
-        return options.commitChangedAt === commitCalls ? '2'.repeat(40) : commit
+        if (args[0] === 'rev-parse') {
+          commitCalls++
+          return options.commitChangedAt === commitCalls ? '2'.repeat(40) : commit
+        }
+        if (args[0] === 'cat-file') {
+          if (options.missingHistory) throw new Error('missing fixture source object')
+          return ''
+        }
+        assert.equal(args[0], 'merge-base')
+        assert.equal(args[1], '--is-ancestor')
+        if (options.divergentHistory) throw new Error('fixture source is not an ancestor')
+        return ''
       }
       if (command === process.execPath) {
         if (options.gateFailure) throw new Error('offline check failed')
@@ -57,7 +67,13 @@ try {
       const hostname = url.hostname
       const response = (body, status = 200, type = 'application/json') => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status, headers: { 'content-type': type } })
       if (options.networkFailure) throw new Error('fixture network failure')
-      if (hostname === 'api.vercel.com') return response({ id: options.wrongMetadataId ? 'dpl_unexpected' : url.pathname.split('/').pop(), readyState: options.metadataNotReady ? 'ERROR' : 'READY', target: url.pathname.endsWith(deploymentId) && Object.hasOwn(options, 'candidateTarget') ? options.candidateTarget : 'production', projectId: options.wrongProject ? 'prj_other' : 'prj_fixture', meta: { naluSourceCommit: options.wrongCommit ? '2'.repeat(40) : commit } }, options.metadataUnauthorized ? 401 : 200)
+      if (hostname === 'api.vercel.com') {
+        const isCandidate = url.pathname.endsWith(deploymentId)
+        const source = isCandidate
+          ? Object.hasOwn(options, 'candidateSource') ? options.candidateSource : options.wrongCommit ? '2'.repeat(40) : commit
+          : Object.hasOwn(options, 'liveSource') ? options.liveSource : 'a'.repeat(40)
+        return response({ id: options.wrongMetadataId ? 'dpl_unexpected' : url.pathname.split('/').pop(), readyState: options.metadataNotReady ? 'ERROR' : 'READY', target: isCandidate && Object.hasOwn(options, 'candidateTarget') ? options.candidateTarget : 'production', projectId: options.wrongProject ? 'prj_other' : 'prj_fixture', meta: { naluSourceCommit: source } }, options.metadataUnauthorized ? 401 : 200)
+      }
       if (url.pathname === '/api/health') return response({ ok: options.badHealth !== hostname, checks: { db: { ok: true } }, config: { llmPrimary: true, llmModel: 'fixture' } })
       if (url.pathname === '/') return response('<!doctype html><script type="module" src="/assets/app.js"></script>', 200, 'text/html')
       if (url.pathname === '/assets/app.js') return response(options.wrongEntry === hostname ? 'wrong release' : 'verified app', 200, 'application/javascript')
@@ -82,7 +98,8 @@ try {
     ['--experimental-strip-types', 'scripts/native-chat-contract-regressions.mjs'],
     ['scripts/flow-cross-client-integration.mjs'],
   ], 'publication requires the flow integration after existing offline/sibling/native gates')
-  assert.ok(success.calls.findIndex(call => call.args.includes('scripts/flow-cross-client-integration.mjs')) < success.calls.findIndex(call => call.command === 'vercel'), 'all compatibility gates run before any deployment tooling')
+  assert.ok(success.calls.findIndex(call => call.args[0] === 'merge-base') < success.calls.findIndex(call => call.command === process.execPath), 'live source ancestry is checked before builds and compatibility gates')
+  assert.ok(success.calls.findIndex(call => call.args.includes('scripts/flow-cross-client-integration.mjs')) < success.calls.findIndex(call => call.command === 'vercel' && call.args[0] === 'deploy'), 'all compatibility gates run before candidate creation')
   report.push('successful release verifies all four aliases, exact deployment IDs, health and app bytes')
   const failures = [
     ['dirty source', { dirty: true }, /clean, reviewed checkout/, false],
@@ -92,6 +109,10 @@ try {
     ['commit changed by checks', { commitChangedAt: 2 }, /Source commit changed while checks/, false],
     ['source edited during build', { sourceChangedAt: 3 }, /Source changed while the candidate/, false],
     ['commit changed during build', { commitChangedAt: 3 }, /Source commit changed while the candidate/, false],
+    ['missing live source metadata', { liveSource: null }, /no valid naluSourceCommit/, false],
+    ['malformed live source metadata', { liveSource: '--untrusted-revision' }, /no valid naluSourceCommit/, false],
+    ['unavailable live history', { missingHistory: true }, /Fetch the source history/, false],
+    ['stale or unrelated release source', { divergentHistory: true }, /does not include live source/, false],
     ['build failure', { deployFailure: true }, /build failed/, false],
     ['ambiguous deploy URL', { ambiguous: true }, /unambiguous/, false],
     ['wrong project', { wrongProject: true }, /wrong Vercel project/, false],
@@ -121,14 +142,27 @@ try {
     await assert.rejects(release({ cwd: directory, ...test, log: line => test.logs.push(line) }), message)
     assert.ok(!test.logs.some(line => line.startsWith('Live and verified:')), name + ': never print false success')
     if (!mayAssign) assert.equal(test.calls.filter(call => call.command === 'vercel' && call.args[0] === 'alias').length, 0, name + ': no domains changed before validation')
-    if (options.flowFailure) assert.equal(test.calls.filter(call => call.command === 'vercel').length, 0, 'failed flow integration stops before deployment tooling')
+    if (options.flowFailure) assert.equal(test.calls.filter(call => call.command === 'vercel' && ['deploy', 'alias'].includes(call.args[0])).length, 0, 'failed flow integration stops before deployment mutations')
+    if (Object.hasOwn(options, 'liveSource') || options.missingHistory || options.divergentHistory) {
+      assert.equal(test.calls.filter(call => call.command === process.execPath || call.command === 'vercel' && ['deploy', 'alias'].includes(call.args[0])).length, 0, name + ': refusal precedes build, tests and deployment mutations')
+    }
     report.push(name + ' fails without reporting live')
   }
-  const rollback = fixture()
+  const rollbackSource = 'b'.repeat(40)
+  const rollback = fixture({ candidateSource: rollbackSource })
   const rolled = await release({ cwd: directory, target: candidateUrl, ...rollback, log: () => {}, writeReceipt: false })
   assert.equal(rolled.operation, 'rollback')
+  assert.equal(rolled.sourceCommit, rollbackSource, 'rollback receipt identifies the actual deployed source')
+  assert.equal(rolled.releaseCheckoutCommit, commit)
+  assert.ok(rollback.calls.some(call => call.command === 'git' && call.args[0] === 'merge-base' && call.args[2] === rollbackSource && call.args[3] === 'a'.repeat(40)), 'explicit rollback checks the candidate is an ancestor of production')
   assert.equal(rollback.calls.filter(call => call.command === 'vercel' && call.args[0] === 'deploy').length, 0)
   report.push('rollback verifies reviewed existing release and all aliases without rebuilding')
+  for (const [options, message] of [[{ divergentHistory: true }, /unrelated releases cannot be used as rollbacks/], [{ candidateSource: null }, /candidate deployment has no valid naluSourceCommit/], [{ missingHistory: true }, /Fetch the source history/]]) {
+    const invalidRollback = fixture(options)
+    await assert.rejects(release({ cwd: directory, target: candidateUrl, ...invalidRollback, log: () => {}, writeReceipt: false }), message)
+    assert.equal(invalidRollback.calls.filter(call => call.command === process.execPath || call.command === 'vercel' && ['deploy', 'alias'].includes(call.args[0])).length, 0)
+  }
+  report.push('rollback rejects unrelated, unidentified or unavailable source history before any build or alias mutation')
   const publication = fixture()
   const published = await release({ cwd: directory, publish: candidateUrl, ...publication, log: () => {}, writeReceipt: false })
   assert.equal(published.operation, 'publish')
@@ -140,6 +174,10 @@ try {
   await assert.rejects(release({ cwd: directory, publish: candidateUrl, ...unrelatedCandidate, log: () => {}, writeReceipt: false }), /checked source commit/)
   assert.equal(unrelatedCandidate.calls.filter(call => call.command === 'vercel' && call.args[0] === 'alias').length, 0)
   report.push('publication rejects an existing candidate from another commit before changing domains')
+  const stalePublication = fixture({ divergentHistory: true })
+  await assert.rejects(release({ cwd: directory, publish: candidateUrl, ...stalePublication, log: () => {}, writeReceipt: false }), /does not include live source/)
+  assert.equal(stalePublication.calls.filter(call => call.command === process.execPath || call.command === 'vercel' && ['deploy', 'alias'].includes(call.args[0])).length, 0)
+  report.push('publication also refuses a matching candidate that omits current production history')
   for (const mode of ['publish', 'target']) for (const candidateTarget of ['preview', null]) {
     const wrongEnvironment = fixture({ candidateTarget })
     await assert.rejects(release({ cwd: directory, [mode]: candidateUrl, ...wrongEnvironment, log: line => wrongEnvironment.logs.push(line), writeReceipt: false }), /not built with production environment settings/)
@@ -149,6 +187,30 @@ try {
   }
   await assert.rejects(release({ cwd: directory, publish: candidateUrl, target: candidateUrl, ...fixture(), writeReceipt: false }), /Choose publication or rollback/)
   report.push('ambiguous publication and rollback modes are rejected')
+
+  // Real Git objects prove the direction of the ancestry guard. These local
+  // fixtures have no remote, checkout, network, deployment or credentials.
+  const history = join(directory, 'history'); await mkdir(history)
+  const git = args => {
+    const result = spawnSync('git', args, { cwd: history, encoding: 'utf8', input: '', env: { ...process.env, GIT_AUTHOR_NAME: 'Release Test', GIT_AUTHOR_EMAIL: 'release@example.invalid', GIT_COMMITTER_NAME: 'Release Test', GIT_COMMITTER_EMAIL: 'release@example.invalid' } })
+    if (result.error || result.status !== 0) throw new Error(result.error?.message || result.stderr || `git exited ${result.status}`)
+    return result.stdout.trim()
+  }
+  git(['init', '--quiet'])
+  const tree = git(['mktree'])
+  const base = git(['commit-tree', tree, '-m', 'base'])
+  const live = git(['commit-tree', tree, '-p', base, '-m', 'live'])
+  const next = git(['commit-tree', tree, '-p', live, '-m', 'next'])
+  const divergent = git(['commit-tree', tree, '-p', base, '-m', 'competing branch'])
+  const verify = (currentSource, candidateSource, operation = 'deploy') => verifyReleaseAncestry({ currentSource, candidateSource, operation, domain: 'fixture.invalid', git })
+  verify(live, next)
+  verify(live, live)
+  verify(next, live, 'rollback')
+  assert.throws(() => verify(next, live), /does not include live source/)
+  assert.throws(() => verify(live, divergent), /does not include live source/)
+  assert.throws(() => verify(live, divergent, 'rollback'), /unrelated releases cannot be used as rollbacks/)
+  assert.throws(() => verify(live, 'e'.repeat(40)), /candidate source .* is unavailable/)
+  report.push('real Git history permits descendants and explicit ancestor rollbacks, and blocks stale, divergent and unavailable source')
 
   // Exercise deploy.sh itself with a local node stub: exec must preserve failures.
   const bin = join(directory, 'bin'); await mkdir(bin)

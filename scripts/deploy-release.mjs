@@ -46,6 +46,22 @@ export async function verifyDeploymentMetadata(deploymentId, project, { fetchImp
   return { sourceCommit: metadata.meta?.naluSourceCommit }
 }
 
+export function verifyReleaseAncestry({ currentSource, candidateSource, domain, operation, git }) {
+  for (const [label, source] of [['live', currentSource], ['candidate', candidateSource]]) {
+    assert.match(source || '', /^[a-f0-9]{40}$/i, `${domain}: ${label} deployment has no valid naluSourceCommit. Reconcile its source metadata before releasing.`)
+    try { git(['cat-file', '-e', `${source}^{commit}`]) } catch {
+      throw new Error(`${domain}: ${label} source ${source} is unavailable in this checkout. Fetch the source history from the intended repository, reconcile it, and retry; no domains were changed by this check.`)
+    }
+  }
+  const ancestor = operation === 'rollback' ? candidateSource : currentSource
+  const descendant = operation === 'rollback' ? currentSource : candidateSource
+  try { git(['merge-base', '--is-ancestor', ancestor, descendant]) } catch {
+    throw new Error(operation === 'rollback'
+      ? `${domain}: rollback source ${candidateSource} is not an ancestor of live source ${currentSource}. Fetch complete history and select a reviewed ancestor; unrelated releases cannot be used as rollbacks.`
+      : `${domain}: candidate source ${candidateSource} does not include live source ${currentSource}. Fetch and merge the deployed source into this release before retrying; refusing to replace newer or unrelated work.`)
+  }
+}
+
 /** Injected runner/fetch are only used by deterministic local regressions. No
  * environment switch can bypass source, test, preview or domain checks. */
 export async function release({ cwd = root, target, publish, run = runProcess, fetchImpl = globalThis.fetch, readToken = cliToken, log = console.log, writeReceipt = true } = {}) {
@@ -57,13 +73,6 @@ export async function release({ cwd = root, target, publish, run = runProcess, f
   assert.match(commit, /^[a-f0-9]{40}$/i, 'A committed source revision is required')
   const project = JSON.parse(await readFile(resolve(cwd, '.vercel/project.json'), 'utf8'))
   assert.ok(project.projectId && project.orgId, 'Link the intended Vercel project before deploying')
-  log('Checking source, offline regressions, build and sibling compatibility…')
-  call(process.execPath, ['scripts/offline-release-checks.mjs'])
-  call(process.execPath, ['scripts/check-nalu-sync.mjs'])
-  call(process.execPath, ['--experimental-strip-types', 'scripts/native-chat-contract-regressions.mjs'])
-  call(process.execPath, ['scripts/flow-cross-client-integration.mjs'])
-  assert.equal(call('git', ['status', '--porcelain']).trim(), '', 'Checks changed tracked or untracked source; inspect it before release')
-  assert.equal(call('git', ['rev-parse', 'HEAD']).trim(), commit, 'Source commit changed while checks ran')
   const cli = (args) => call('vercel', [...args, '--scope', project.orgId, ...(process.env.VERCEL_TOKEN ? ['--token', process.env.VERCEL_TOKEN] : [])])
   // Refresh short-lived CLI login credentials before reading the auth file for
   // API metadata verification. CI can instead supply an explicit scoped token.
@@ -76,25 +85,43 @@ export async function release({ cwd = root, target, publish, run = runProcess, f
     }
     return { ...info, ...deploymentMetadata.get(info.id) }
   }
-  const previous = {}
-  for (const domain of RELEASE_DOMAINS) previous[domain] = (await inspect(domain)).id
   let deploymentUrl = target || publish
+  let reviewedDeployment
+  if (deploymentUrl) {
+    assert.match(deploymentUrl, /^https:\/\/[a-zA-Z0-9.-]+\.vercel\.app\/?$/, 'Publication or rollback requires the exact reviewed deployment URL')
+    reviewedDeployment = await inspect(deploymentUrl)
+    if (operation !== 'rollback') assert.equal(reviewedDeployment.sourceCommit, commit, 'Candidate does not identify the checked source commit')
+  }
+  const candidateSource = reviewedDeployment ? reviewedDeployment.sourceCommit : commit
+  const verifyAncestry = (info, domain) => verifyReleaseAncestry({ currentSource: info.sourceCommit, candidateSource, domain, operation, git: args => call('git', args) })
+  const previous = {}
+  log('Checking that the release preserves the source currently live on every domain…')
+  for (const domain of RELEASE_DOMAINS) {
+    const current = await inspect(domain)
+    verifyAncestry(current, domain)
+    previous[domain] = current.id
+  }
+  log('Checking source, offline regressions, build and sibling compatibility…')
+  call(process.execPath, ['scripts/offline-release-checks.mjs'])
+  call(process.execPath, ['scripts/check-nalu-sync.mjs'])
+  call(process.execPath, ['--experimental-strip-types', 'scripts/native-chat-contract-regressions.mjs'])
+  call(process.execPath, ['scripts/flow-cross-client-integration.mjs'])
+  assert.equal(call('git', ['status', '--porcelain']).trim(), '', 'Checks changed tracked or untracked source; inspect it before release')
+  assert.equal(call('git', ['rev-parse', 'HEAD']).trim(), commit, 'Source commit changed while checks ran')
   if (!deploymentUrl) {
     log('Building production candidate without moving public domains…')
     const text = cli(['deploy', '--prod', '--skip-domain', '--yes', '--meta', `naluSourceCommit=${commit}`])
     const urls = [...new Set(text.split(/\s+/).filter(value => /^https:\/\/[a-zA-Z0-9.-]+\.vercel\.app\/?$/.test(value)))]
     assert.equal(urls.length, 1, 'Deployment did not return one unambiguous deployment URL')
     deploymentUrl = urls[0]
-  } else {
-    assert.match(deploymentUrl, /^https:\/\/[a-zA-Z0-9.-]+\.vercel\.app\/?$/, 'Publication or rollback requires the exact reviewed deployment URL')
   }
-  const deployment = await inspect(deploymentUrl)
+  const deployment = reviewedDeployment || await inspect(deploymentUrl)
   if (operation !== 'rollback') assert.equal(deployment.sourceCommit, commit, 'Candidate does not identify the checked source commit')
   assert.equal(call('git', ['status', '--porcelain']).trim(), '', 'Source changed while the candidate was built; inspect it before publication')
   assert.equal(call('git', ['rev-parse', 'HEAD']).trim(), commit, 'Source commit changed while the candidate was built')
   log(`Verifying candidate ${deployment.id}…`)
   const candidate = await checkPreview(deploymentUrl, { fetchImpl })
-  const receipt = { at: new Date().toISOString(), operation, sourceCommit: commit, projectId: project.projectId, deploymentId: deployment.id, deploymentUrl, previous, candidate, domains: [], complete: false }
+  const receipt = { at: new Date().toISOString(), operation, sourceCommit: deployment.sourceCommit, releaseCheckoutCommit: commit, projectId: project.projectId, deploymentId: deployment.id, deploymentUrl, previous, candidate, domains: [], complete: false }
   const persist = async () => {
     if (!writeReceipt) return
     await mkdir(resolve(cwd, '.vercel'), { recursive: true })
@@ -104,8 +131,9 @@ export async function release({ cwd = root, target, publish, run = runProcess, f
   try {
     for (const domain of RELEASE_DOMAINS) {
       // Do not overwrite a concurrent deployment that happened during checks.
-      const before = (await inspect(domain)).id
-      assert.ok(before === previous[domain] || before === deployment.id, `${domain}: changed to another release; stop and reconcile`)
+      const before = await inspect(domain)
+      assert.ok(before.id === previous[domain] || before.id === deployment.id, `${domain}: changed to another release; stop and reconcile`)
+      verifyAncestry(before, domain)
       log(`Assigning and verifying ${domain}…`)
       cli(['alias', 'set', deploymentUrl, domain])
       assert.equal((await inspect(domain)).id, deployment.id, `${domain}: alias points to the wrong deployment`)
