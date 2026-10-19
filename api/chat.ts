@@ -1280,7 +1280,13 @@ async function handleChat(req: any, res: any, clientAbort: AbortController, dead
     const HARD_KINDS = new Set(['reasoning', 'code', 'math', 'science', 'engineering', 'finance', 'medical', 'legal', 'accounting', 'insurance', 'data'])
     // CLI turns skip the verify pass: the terminal agent verifies its own work by
     // running builds/tests, and the extra round-trip would slow every reply.
-    const doVerify = canAppend && !cliMode && !refinedAnswer && !hasImage(messages) && answerSoFar.trim().length > 80 && (HARD_KINDS.has(backend.kind) || thinkLevel >= 2)
+    // Ordinary general chat can still contain high-risk arithmetic and
+    // time-sensitive claims. Route those requests through the same bounded
+    // second opinion even when keyword routing selected the general specialist.
+    // Exact-format answers remain excluded by `canAppend`, and explicit CLI,
+    // image, and refinement paths retain their existing latency contract.
+    const verificationCue = /\b(?:calculate|calculation|compute|how many|how much|percent(?:age)?|rate|ratio|average|total|sum|difference|compare|comparison|before and after|deadline|date|dated|when|latest|current|today|this week|price|cost|quantity|units?|probability|odds|estimate|forecast|trend|is it true|verify|fact.?check)\b/i
+    const doVerify = canAppend && !cliMode && !refinedAnswer && !hasImage(messages) && answerSoFar.trim().length > 80 && (HARD_KINDS.has(backend.kind) || thinkLevel >= 2 || verificationCue.test(lastUserText))
     const verification = doVerify ? chatVerificationRecord({
       messages: fullMessages.slice(1), answer: answerSoFar, instructions: conversationInstructions,
       identity: identityBlock(promptIdentity), memory: [sharedMemory, typeof memory === 'string' ? memory.trim().slice(0, 7000) : ''].filter(Boolean).join('\n'),
