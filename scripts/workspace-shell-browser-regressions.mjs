@@ -12,11 +12,65 @@ const root=fileURLToPath(new URL('../client/',import.meta.url)),out=process.env.
 await mkdir(out,{recursive:true})
 const server=await createServer({root,configFile:root+'vite.config.ts',cacheDir:out+'/vite-cache',css:{postcss:{plugins:[tailwindcss({...tailwindConfig,content:[root+'src/**/*.{ts,tsx}']}),autoprefixer()]}},server:{host:'127.0.0.1',port:5198,strictPort:true,hmr:false}})
 const origin='http://127.0.0.1:5198',report={checks:[],errors:[],requests:[],blocked:[]}
+const carouselOnly=process.env.CAROUSEL_ONLY==='1'
 let browser, lastPage
 const initial=[{id:'planning-chat',title:'Planning conversation',createdAt:1,messages:[{id:'user-one',role:'user',content:'Remember the launch plans.'},{id:'answer-one',role:'assistant',content:'The launch plan is saved here.'}]}]
+async function checkCarouselFit(page){
+ const originalViewport=page.viewportSize(),carousel=page.getByRole('region',{name:'Choose a workspace',exact:true})
+ await page.emulateMedia({reducedMotion:'reduce'})
+ for(const viewport of [{width:1728,height:906},{width:1440,height:900},{width:1366,height:768},{width:390,height:844},{width:390,height:667}]){
+  await page.setViewportSize(viewport)
+  await carousel.press('Home')
+  for(const name of ['Chat','Studio','Autopilot','Map','Memory','Skills']){
+   await expect(carousel.getByRole('button',{name:`${name}, selected`,exact:true})).toHaveCount(1)
+   const geometry=await carousel.evaluate(root=>{
+    const rect=element=>{const box=element.getBoundingClientRect();return{x:box.x,y:box.y,width:box.width,height:box.height,right:box.right,bottom:box.bottom}}
+    const visible=element=>{const style=getComputedStyle(element);return style.display!=='none'&&style.visibility!=='hidden'&&Number(style.opacity)!==0}
+    const card=root.querySelector('.workspace-carousel-card[data-active="true"]')
+    const targets=[['heading',root.querySelector('.workspace-carousel-heading')],['heading title',root.querySelector('.workspace-carousel-heading h1')],['card',card],['label',card.querySelector('.workspace-carousel-card-label')],['visual',card.querySelector('.workspace-core-visual,.workspace-map-visual,.workspace-experience-visual')],['title',card.querySelector('.workspace-carousel-select>h2')],['description',card.querySelector('.workspace-carousel-select>p')],['open',card.querySelector('.workspace-carousel-open')],['controls',root.querySelector('.workspace-carousel-controls')],...Array.from(root.querySelectorAll('.workspace-carousel-controls button')).map(element=>[element.getAttribute('aria-label'),element])]
+    const measured=targets.map(([name,element])=>{
+     if(!element)return{name,missing:true}
+     const box=rect(element),button=element instanceof HTMLButtonElement
+     const hit=button?document.elementFromPoint(box.x+box.width/2,box.y+box.height/2):null
+     return{name,...box,visible:visible(element),scrollHeight:element.scrollHeight,clientHeight:element.clientHeight,clickable:button?!!hit&&element.contains(hit):undefined}
+    })
+    const text=Array.from(card.querySelectorAll('.workspace-carousel-select>h2,.workspace-carousel-select>p')).map(element=>{const range=document.createRange();range.selectNodeContents(element);return{label:element.tagName,text:element.textContent,box:rect(element),lines:Array.from(range.getClientRects()).map(box=>({x:box.x,y:box.y,right:box.right,bottom:box.bottom}))}})
+    return{root:rect(root),scrollTop:root.scrollTop,scrollHeight:root.scrollHeight,clientHeight:root.clientHeight,pageY:scrollY,pageHeight:document.documentElement.scrollHeight,viewport:{width:innerWidth,height:innerHeight},targets:measured,text}
+   })
+   const label=`${viewport.width}x${viewport.height} ${name}`
+   report.carouselGeometry??=[];report.carouselGeometry.push({selection:name,...geometry})
+   assert.equal(geometry.scrollTop,0,`${label}: the carousel does not scroll vertically`)
+   assert.equal(geometry.pageY,0,`${label}: the page does not scroll vertically`)
+   assert.ok(geometry.scrollHeight<=geometry.clientHeight+1,`${label}: carousel content fits without overflow (${geometry.scrollHeight} > ${geometry.clientHeight})`)
+   assert.ok(geometry.pageHeight<=viewport.height+1,`${label}: page content fits the viewport`)
+   const inside=(box,bounds)=>box.x>=bounds.x-1&&box.y>=bounds.y-1&&box.right<=bounds.right+1&&box.bottom<=bounds.bottom+1
+   const viewportBox={x:0,y:0,right:viewport.width,bottom:viewport.height}
+   const card=geometry.targets.find(target=>target.name==='card')
+   for(const target of geometry.targets){
+    assert.ok(!target.missing&&target.visible&&target.width>0&&target.height>0,`${label}: ${target.name} is displayed`)
+    assert.ok(inside(target,geometry.root)&&inside(target,viewportBox),`${label}: ${target.name} fits inside the visible carousel ${JSON.stringify(target)}`)
+    if(['label','visual','title','description','open'].includes(target.name))assert.ok(inside(target,card),`${label}: ${target.name} stays inside its card`)
+    if(target.clickable!==undefined)assert.ok(target.clickable,`${label}: ${target.name} can be clicked without scrolling or an overlapping element`)
+   }
+   for(const text of geometry.text){
+    assert.ok(text.text?.trim()&&text.lines.length,`${label}: ${text.label} retains its text`)
+    for(const line of text.lines)assert.ok(inside(line,text.box),`${label}: ${text.label} text is not clipped`)
+   }
+   const description=geometry.targets.find(target=>target.name==='description'),open=geometry.targets.find(target=>target.name==='open')
+   assert.ok(description.bottom<=open.y+1,`${label}: description does not overlap the Open button`)
+   if(name==='Studio'||name==='Skills')await page.screenshot({path:`${out}/${viewport.width}x${viewport.height}-${name.toLowerCase()}-fit.png`})
+   report.checks.push(`${label}: heading, full active card and all controls fit without scrolling or clipping`)
+   await carousel.getByRole('button',{name:'Next workspace',exact:true}).click()
+  }
+ }
+ await page.setViewportSize(originalViewport)
+ await carousel.getByRole('button',{name:'Show Studio',exact:true}).click()
+ await page.emulateMedia({reducedMotion:'no-preference'})
+ console.log('PASS carousel fit: six selections at five desktop/mobile viewport sizes')
+}
 try{
  await server.listen();browser=await chromium.launch()
- for(const viewport of [{width:1440,height:1000},{width:390,height:844}]){
+ for(const viewport of carouselOnly?[{width:1728,height:906}]:[{width:1440,height:1000},{width:390,height:844}]){
   const context=await browser.newContext({viewport});let cloud={'nalu-chats':JSON.stringify(initial)}
   const swarmState={version:1,mode:'live',projects:[],tasks:[],messages:[],turns:[]},swarmRequests=[];let swarmRevision=1
   await context.addInitScript(initial=>{if(window!==top)return;if(sessionStorage.getItem('shell-seeded'))return;sessionStorage.setItem('shell-seeded','1');localStorage.setItem('nalu-token','offline-shell');localStorage.setItem('nalu-data-owner','offline-shell');localStorage.setItem('nalu-view','studio');localStorage.setItem('nalu-chats',JSON.stringify(initial))},initial)
@@ -68,6 +122,8 @@ try{
   const carousel=page.getByRole('region',{name:'Choose a workspace',exact:true})
   await expect(carousel).toBeVisible()
   await expect(carousel.getByRole('heading',{name:'What would you like to do?',exact:true})).toBeVisible()
+  if(viewport.width>950)await checkCarouselFit(page)
+  if(carouselOnly){await context.close();continue}
   assert.equal(await page.evaluate(()=>localStorage.getItem('nalu-view')),'studio')
   if(viewport.width>950){
    const frame=await page.evaluate(()=>{const scene=document.querySelector('.review-desktop-scene'),dock=document.querySelector('.workspace-app-dock'),brand=document.querySelector('.review-header-brand');return{sceneTop:scene.getBoundingClientRect().top,shoulderTop:dock.getBoundingClientRect().top+parseFloat(getComputedStyle(dock,'::before').top),brandBottom:brand.getBoundingClientRect().bottom}})
@@ -170,6 +226,7 @@ try{
   report.checks.push(`${viewport.width}: saved agent private branches survive reload without leaking another private conversation or duplicating projects`)
   await context.close();console.log(`PASS desktop/mobile shell ${viewport.width}`)
  }
+ if(!carouselOnly){
  const signedOut=await browser.newContext({viewport:{width:1440,height:1000}})
  await signedOut.route('**/*',async route=>{
   const url=new URL(route.request().url())
@@ -187,5 +244,6 @@ try{
  await publicPage.screenshot({path:`${out}/signed-out-landing.png`})
  report.checks.push('Signed-out actual App remains behind the public landing/authentication gate')
  await signedOut.close()
+ }
  assert.deepEqual(report.errors,[])
 }catch(error){report.failure=error.message;report.stack=error.stack;if(lastPage&&!lastPage.isClosed()){await lastPage.screenshot({path:out+'/failure.png'}).catch(()=>{});await writeFile(out+'/failure-body.txt',await lastPage.locator('body').innerText().catch(()=>''))}throw error}finally{await writeFile(out+'/report.json',JSON.stringify(report,null,2));await browser?.close();await server.close()}

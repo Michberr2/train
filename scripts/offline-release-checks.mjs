@@ -9,6 +9,7 @@ const scripts = [
   'project-data-regressions.mjs',
   'cloudflare-store-regressions.mjs',
   'chat-handler-regressions.mjs',
+  'chat-verifier-regressions.mjs',
   'chat-budget-regressions.mjs',
   'chat-length-regressions.mjs',
   'sheet-correctness-regressions.mjs',
@@ -70,7 +71,7 @@ const scripts = [
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(?:API_KEY|SECRET|TOKEN|DATABASE_URL|CLOUDFLARE_DATA_URL)$/.test(key)))
 // A release always exercises every fixture, even if the parent shell was used
 // for an audit-only or single-artifact diagnosis earlier.
-for (const key of ['BASE_URL', 'AUDIT_ONLY', 'ARTIFACT_CASE', 'OUTPUT_DIR']) delete env[key]
+for (const key of ['BASE_URL', 'AUDIT_ONLY', 'ARTIFACT_CASE', 'CAROUSEL_ONLY', 'OUTPUT_DIR']) delete env[key]
 for (const check of scripts) {
   const [script, ...args] = Array.isArray(check) ? check : [check]
   console.log(`Checking ${[script, ...args].join(' ')}`)
