@@ -12,6 +12,7 @@ export interface SwarmTask {
   /** Actual execution data supplied by the controller; never inferred by UI. */
   progress?: number; executionId?: string; executionRequestId?: string
   handoff?: { studioKind: string; prompt: string; reason: string }
+  artifact?: { executionId: string; studioKind: string; revision: number }
 }
 export interface SwarmMessage {
   id: string; projectId: string; thread: SwarmThread; speaker: 'You' | SwarmAgentId
@@ -27,6 +28,11 @@ export interface SwarmState {
   messages: SwarmMessage[]; turns: SwarmTurn[]
 }
 export interface SwarmRoomReference { projectId: string; thread: SwarmThread }
+export interface SwarmStudioArtifact {
+  type: 'studio-artifact'; studioKind: string; payload: Record<string, unknown>; status: 'done' | 'waiting'; summary: string
+}
+export interface SwarmArtifactResponse { artifact: SwarmStudioArtifact; revision: number }
+export interface SwarmMedia { attachmentId: string; filename: string; mime: string; size: number; parts: number; sha256: string }
 export interface SwarmController {
   state: SwarmState
   activeProjectId: string
@@ -58,6 +64,10 @@ export interface SwarmController {
   startTask?: (taskId: string) => void | Promise<void>
   stopTask?: (taskId: string) => void | Promise<void>
   shareTask?: (taskId: string) => void | Promise<void>
+  continueStudio?: (taskId: string) => Promise<void>
+  getArtifact?: (taskId: string, executionId: string, signal?: AbortSignal) => Promise<SwarmArtifactResponse>
+  loadArtifactMedia?: (taskId: string, executionId: string, media: SwarmMedia, signal?: AbortSignal) => Promise<Blob>
+  updateArtifact?: (taskId: string, executionId: string, revision: number, payload: Record<string, unknown>) => Promise<number>
   busyTaskIds?: readonly string[]
 }
 

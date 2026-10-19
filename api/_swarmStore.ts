@@ -9,6 +9,8 @@ export interface SwarmJob {
   speaker: SwarmAgentId; status: SwarmJobStatus; input: string; requestId: string
   createdAt: number; updatedAt: number; leaseToken?: string; leaseUntil?: number; attempts: number
   progress?: number; summary?: string; result?: string; error?: string
+  /** A failed refund remains unconfirmed; this flag never retries providers. */
+  quotaCleanupPending?: boolean
   artifact?: { type: string; [key: string]: unknown }
 }
 export interface SwarmSnapshot { state: SwarmState; jobs: SwarmJob[]; revision: number }
@@ -97,6 +99,7 @@ function assertSnapshot(value: SwarmSnapshot, previous?: SwarmSnapshot): void {
     if (!room(job.projectId, job.thread) || !projectMap.get(job.projectId)?.members.includes(job.speaker) || !STATUSES.has(job.status) || !['reply', 'task'].includes(job.kind) || !validId(job.requestId) || requests.has(job.requestId) || typeof job.input !== 'string') throw new Error('Invalid Swarm job.')
     requests.add(job.requestId)
     if (!timestamp(job.createdAt) || !timestamp(job.updatedAt) || !Number.isSafeInteger(job.attempts) || job.attempts < 0 || (job.progress !== undefined && (!Number.isFinite(job.progress) || job.progress < 0 || job.progress > 1))) throw new Error('Invalid Swarm job progress.')
+    if (job.quotaCleanupPending !== undefined && typeof job.quotaCleanupPending !== 'boolean') throw new Error('Invalid Swarm refund status.')
     if (job.status === 'running' && (!validId(job.leaseToken) || !timestamp(job.leaseUntil))) throw new Error('Running Swarm work requires a lease.')
     const task = job.taskId ? tasks.get(job.taskId) : undefined, turn = job.turnId ? turns.get(job.turnId) : undefined
     if (job.kind === 'task' && (!task || task.projectId !== job.projectId || !task.threads?.includes(job.thread))) throw new Error('Invalid Swarm job work association.')
@@ -143,10 +146,13 @@ function terminalRecovery(previous: SwarmSnapshot, next: SwarmSnapshot): boolean
     const job = next.jobs.find(item => item.id === old.id)
     if (!job) return false
     if (same(old, job)) continue
-    if (!['queued', 'running', 'waiting'].includes(old.status) || !['failed', 'cancelled'].includes(job.status)
+    const ending = ['queued', 'running', 'waiting'].includes(old.status) && ['failed', 'cancelled'].includes(job.status)
+    const notingRefund = ['failed', 'cancelled'].includes(old.status) && job.status === old.status
+      && job.quotaCleanupPending === true && old.quotaCleanupPending !== true
+    if ((!ending && !notingRefund)
       || job.leaseToken !== undefined || job.leaseUntil !== undefined || (job.summary?.length || 0) > 512 || (job.error?.length || 0) > 512
       || (job.progress !== undefined && job.progress !== old.progress)
-      || !same(without(old, ['status', 'updatedAt', 'leaseToken', 'leaseUntil', 'summary', 'error', 'progress']), without(job, ['status', 'updatedAt', 'leaseToken', 'leaseUntil', 'summary', 'error', 'progress']))) return false
+      || !same(without(old, ['status', 'updatedAt', 'leaseToken', 'leaseUntil', 'summary', 'error', 'progress', 'quotaCleanupPending']), without(job, ['status', 'updatedAt', 'leaseToken', 'leaseUntil', 'summary', 'error', 'progress', 'quotaCleanupPending']))) return false
     changed.push(job)
   }
   if (!changed.length) return false
@@ -191,11 +197,22 @@ export class SwarmStore {
     let ready = schemas.get(client)
     if (!ready) {
       ready = serial(client, async () => {
-        await client.query(`CREATE TABLE IF NOT EXISTS nalu_swarm_accounts (
-          owner_id TEXT PRIMARY KEY REFERENCES nalu_users(id) ON DELETE CASCADE,
-          revision BIGINT NOT NULL DEFAULT 0 CHECK(revision>=0), write_token TEXT
-        ); ${pgTables}
-        CREATE INDEX IF NOT EXISTS nalu_swarm_jobs_due ON nalu_swarm_jobs(status,lease_until,updated_at,owner_id);`)
+        await client.query('BEGIN')
+        try {
+          // IF NOT EXISTS does not serialize PostgreSQL catalog/type creation
+          // across independent connections. A transaction-scoped lock also
+          // releases automatically if initialization fails or the client dies.
+          await client.query("SELECT pg_advisory_xact_lock(hashtext('nalu_swarm_schema_v1'))")
+          await client.query(`CREATE TABLE IF NOT EXISTS nalu_swarm_accounts (
+            owner_id TEXT PRIMARY KEY REFERENCES nalu_users(id) ON DELETE CASCADE,
+            revision BIGINT NOT NULL DEFAULT 0 CHECK(revision>=0), write_token TEXT
+          ); ${pgTables}
+          CREATE INDEX IF NOT EXISTS nalu_swarm_jobs_due ON nalu_swarm_jobs(status,lease_until,updated_at,owner_id);`)
+          await client.query('COMMIT')
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => {})
+          throw error
+        }
       })
       schemas.set(client, ready)
       ready.catch(() => schemas.delete(client))

@@ -1,3 +1,4 @@
+import { useScopedArtifact } from './ScopedArtifactContext'
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
@@ -151,6 +152,7 @@ function initThree(mount: HTMLDivElement): Three {
 type Status = 'compiling' | 'repairing' | 'done' | 'error'
 
 export default function CADCard({ code, prompt }: { code: string; prompt?: string }) {
+  const scoped = useScopedArtifact()
   const mountRef = useRef<HTMLDivElement>(null)
   const threeRef = useRef<Three | null>(null)
   const meshRef = useRef<THREE.Mesh | null>(null)
@@ -224,7 +226,7 @@ export default function CADCard({ code, prompt }: { code: string; prompt?: strin
         // Self-repair: ask the backend to fix the failing code, then recompile.
         // The original prompt rides along so the fix keeps the DESIGN INTENT
         // (without it, repairs tend to gut detail just to compile).
-        if (attempt < 2) {
+        if (attempt < 2 && !scoped) {
           setStatus('repairing')
           try {
             const r = await fetch('/api/cad', {
@@ -253,7 +255,7 @@ export default function CADCard({ code, prompt }: { code: string; prompt?: strin
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code, retryTick])
+  }, [code, retryTick, scoped])
 
   const dl = (data: BlobPart, filename: string, type: string) => {
     const url = URL.createObjectURL(new Blob([data], { type }))

@@ -85,7 +85,7 @@ export async function publicFetch(value: string, options: PublicFetchOptions = {
             }
             const finish = (body: Uint8Array | null) => {
               try {
-                const result = new Response(body, { status, statusText: incoming.statusMessage || '', headers: responseHeaders })
+                const result = new Response(body === null ? null : new Uint8Array(body), { status, statusText: incoming.statusMessage || '', headers: responseHeaders })
                 Object.defineProperty(result, 'url', { value: url.href })
                 resolve(result)
               } catch (error) { incoming.destroy(); reject(error) }

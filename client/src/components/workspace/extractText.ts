@@ -2,6 +2,7 @@
 // (pdf.js, JSZip) are dynamically imported so they never weigh down the bundle.
 // Supports bounded text, PDF selectable text, DOCX, XLSX and PPTX extraction.
 import { extractOffice, type OfficeRange } from './attachmentOffice'
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
 export type AttachmentExtraction = {
   status: 'complete' | 'partial' | 'unsupported' | 'needs-ocr' | 'failed' | 'image'
@@ -90,8 +91,7 @@ async function downscaleImage(file: File, maxDim = 1568): Promise<string | undef
 type ReadResult = { text: string; truncated?: boolean; extraction: AttachmentExtraction }
 async function extractPdf(file: File, range: OfficeRange): Promise<ReadResult> {
   const pdfjs = await import('pdfjs-dist')
-  const workerUrl = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default
-  pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
+  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
   const task = pdfjs.getDocument({ data: await file.arrayBuffer(), isEvalSupported: false, stopAtErrors: true })
   let timer: ReturnType<typeof setTimeout> | undefined
   const work = async (): Promise<ReadResult> => {

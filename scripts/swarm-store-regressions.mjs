@@ -54,6 +54,7 @@ class PostgresFixture {
     const result = rows => ({ rows })
     if (sql.startsWith('CREATE TABLE')) { assert.match(sql, /REFERENCES nalu_users\(id\) ON DELETE CASCADE/); return result([]) }
     if (sql === 'BEGIN') { assert.equal(this.transaction, false, 'shared PG connection has no overlapping transactions'); this.transaction = true; this.backup = { accounts: clone([...this.accounts]), tables: Object.fromEntries(tables.map(table => [table, clone([...this.tables[table]])])) }; return result([]) }
+    if (sql.startsWith('SELECT pg_advisory_xact_lock')) { assert.equal(this.transaction, true, 'schema advisory lock is scoped to a transaction'); return result([]) }
     if (sql === 'COMMIT') { assert.equal(this.transaction, true); this.transaction = false; return result([]) }
     if (sql === 'ROLLBACK') { this.accounts = new Map(this.backup.accounts); this.tables = Object.fromEntries(tables.map(table => [table, new Map(this.backup.tables[table])])); this.transaction = false; return result([]) }
     if (sql.startsWith('SELECT COALESCE')) {
@@ -209,6 +210,15 @@ assert.ok(await capped.mutateLeased('alice', recoveryJob.id, recoveryJob.leaseTo
 }))
 const recoveredBytes = Buffer.byteLength(JSON.stringify((await capped.read('alice')).state))
 assert.ok(recoveredBytes > SWARM_MAX_STATE_BYTES && recoveredBytes <= SWARM_MAX_STATE_BYTES + 16000)
+await capped.mutate('alice', draft => {
+  const job = draft.jobs.find(item => item.id === recoveryJob.id)
+  job.quotaCleanupPending = true; job.summary = 'The usage refund could not be confirmed.'; job.error = job.summary; job.updatedAt = Date.now()
+})
+assert.equal((await capped.read('alice')).jobs.find(item => item.id === recoveryJob.id).quotaCleanupPending,true,'bounded refund recovery metadata survives full history')
+await assert.rejects(capped.mutate('alice', draft => {
+  const job = draft.jobs.find(item => item.id === recoveryJob.id)
+  job.quotaCleanupPending = true; job.result = 'Arbitrary new result cannot masquerade as cleanup metadata.'
+}), SwarmStoreLimitError)
 await assert.rejects(capped.mutate('alice', draft => { draft.state.messages.push({ id: 'not-recovery', projectId: 'project', thread: 'group', speaker: 'You', content: 'This is new content, not terminal recovery.', createdAt: Date.now() }) }), SwarmStoreLimitError)
 
 // The separate snapshot cap protects job-result duplication even when the

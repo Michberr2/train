@@ -4,7 +4,7 @@ import { connectionBackend, type ConnectionBackend } from './_connectionBackend'
 import { readToken, safeJson } from './_db'
 import { reserveDailyQuota, type QuotaResult } from './_limits'
 import { SwarmStore, SwarmStoreLimitError } from './_swarmStore'
-import { applySwarmAction, createdProjectId, SwarmError } from './_swarm'
+import { applySwarmAction, createdProjectId, readSwarmArtifact, SwarmError } from './_swarm'
 import { runSwarmOwner } from './_swarmWorker'
 
 export default async function handler(req: any, res: any) {
@@ -14,7 +14,7 @@ export default async function handler(req: any, res: any) {
   const token = readToken(req)
   if (!token) return res.status(401).json({ error: 'Sign in to use Swarm.' })
   const body = (typeof req.body === 'string' ? safeJson(req.body) : req.body) || {}
-  if (Array.isArray(body) || typeof body !== 'object' || JSON.stringify(body).length > 32000) return res.status(400).json({ error: 'Invalid Swarm request.' })
+  if (Array.isArray(body) || typeof body !== 'object' || Buffer.byteLength(JSON.stringify(body)) > (body.action === 'update-artifact' ? 650000 : 32000)) return res.status(400).json({ error: 'Invalid Swarm request.' })
   let backend: ConnectionBackend | undefined
   let quota: QuotaResult | undefined
   try {
@@ -22,6 +22,10 @@ export default async function handler(req: any, res: any) {
     const owner = await backend.userId(token)
     if (!owner) return res.status(401).json({ error: 'Sign in to use Swarm.' })
     const store = new SwarmStore(backend.client), before = await store.read(owner)
+    if (body.action === 'artifact') {
+      const { artifact, revision } = readSwarmArtifact(before, body)
+      return res.status(200).json({ artifact, revision })
+    }
     let snapshot = before
     if (body.action !== 'list') {
       const preview = structuredClone(before), acceptedAt = Date.now()

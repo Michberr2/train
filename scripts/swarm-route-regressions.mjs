@@ -8,7 +8,7 @@ import { build } from 'esbuild'
 // state machine, store and D1 SQL are real. No network or model is called.
 const entry = `export { default as handler } from './api/swarm'; export { default as cronHandler } from './api/swarm-cron'; export * from './api/_swarm'; export * from './api/_swarmWorker'; export * from './api/_swarmStore'; export { CloudflareStore } from './api/_cloudflareStore';`
 const result = await build({ stdin: { contents: entry, resolveDir: process.cwd(), loader: 'ts' }, bundle: true, write: false, format: 'cjs', platform: 'node', target: 'es2022', plugins: [{ name: 'local-services', setup(builder) {
-  builder.onResolve({ filter: /^@vercel\/functions$|\/_connectionBackend$|\/_limits$|\/_db$|\/_swarmExecution$/ }, args => ({ path: args.path, namespace: 'fixture' }))
+  builder.onResolve({ filter: /^@vercel\/functions$|\/_connectionBackend$|\/_limits$|\/_db$|\/_swarmExecution$|\/_swarmStudioRunner$/ }, args => ({ path: args.path, namespace: 'fixture' }))
   builder.onResolve({ filter: /\/_swarmWorker$/ }, args => /\/(?:swarm|swarm-cron)\.ts$/.test(args.importer) ? { path: args.path, namespace: 'fixture' } : undefined)
   builder.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({ contents:
     path === '@vercel/functions' ? 'export function waitUntil(promise){globalThis.__swarmRoutes.background.push(promise)}' :
@@ -16,6 +16,7 @@ const result = await build({ stdin: { contents: entry, resolveDir: process.cwd()
     path.endsWith('_limits') ? 'export function reserveDailyQuota(){return globalThis.__swarmRoutes.quota()}' :
     path.endsWith('_db') ? `export function readToken(req){return req.headers?.authorization?.replace(/^Bearer /,'') || null} export function safeJson(value){try{return JSON.parse(value)}catch{return null}}` :
     path.endsWith('_swarmWorker') ? 'export async function runSwarmOwner(owner){globalThis.__swarmRoutes.wakes.push(owner)} export async function runDueSwarmJobs(){globalThis.__swarmRoutes.crons++;return {accountsChecked:0}}' :
+    path.endsWith('_swarmStudioRunner') ? 'export async function runSwarmStudioJob(){throw new Error("No real Studio provider in route regressions")}' :
     'export async function executeSwarmWork(){throw new Error("No real model in route regressions")}' }))
 } }] })
 const mod = { exports: {} }

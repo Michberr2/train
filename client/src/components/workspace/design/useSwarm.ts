@@ -102,5 +102,9 @@ export default function useSwarm({ accountId, enabled = true, active = false }: 
     startTask: id => client ? mutate(() => client.startTask(id)) : undefined,
     stopTask: id => client ? mutate(() => client.stopTask(id)) : undefined,
     shareTask: id => client ? mutate(() => client.shareTask(id)) : undefined,
+    continueStudio: client ? id => mutate(() => client.continueStudio(id)) : undefined,
+    getArtifact: client?.getArtifact,
+    loadArtifactMedia: client?.loadArtifactMedia,
+    updateArtifact: client ? (id, executionId, revision, payload) => mutate(() => client.updateArtifact(id, executionId, revision, payload)) : undefined,
   }
 }

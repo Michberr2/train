@@ -6,7 +6,7 @@ import { build } from 'esbuild'
 // work and clock advancement are explicit fixtures; no browser/network/model.
 const result = await build({ stdin: { contents: "export { runSwarmOwner } from './api/_swarmWorker'", resolveDir: process.cwd(), loader: 'ts' },
   bundle: true, write: false, platform: 'node', format: 'cjs', target: 'es2022', plugins: [{ name: 'scheduler-fixtures', setup(builder) {
-    builder.onResolve({ filter: /\/(?:_connectionBackend|_swarmStore|_swarm|_swarmExecution)$/ }, args => ({ path: args.path, namespace: 'fixture' }))
+    builder.onResolve({ filter: /\/(?:_connectionBackend|_swarmStore|_swarm|_swarmExecution|_swarmStudioRunner)$/ }, args => ({ path: args.path, namespace: 'fixture' }))
     builder.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({ contents:
       path.endsWith('_connectionBackend') ? 'export function connectionBackend(){return globalThis.__swarmScheduler.backend()}' :
       path.endsWith('_swarmStore') ? `export class SwarmStore {
@@ -17,6 +17,7 @@ const result = await build({ stdin: { contents: "export { runSwarmOwner } from '
         mutateLeased(owner,id,token,change){return globalThis.__swarmScheduler.mutate(id,token,change)}
       }` :
       path.endsWith('_swarmExecution') ? 'export function executeSwarmWork(input){return globalThis.__swarmScheduler.execute(input)}' :
+      path.endsWith('_swarmStudioRunner') ? 'export async function runSwarmStudioJob(){throw new Error("No real Studio provider in scheduler fixture")}' :
       `export function swarmContext(){return {brief:'',context:[]}}
        export function appendSwarmResult(snapshot,job,content){snapshot.state.messages.push({id:job.id,content})}` }))
   } }] })

@@ -1,3 +1,4 @@
+import { useScopedArtifact } from './ScopedArtifactContext'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Download, Loader2 } from 'lucide-react'
 import MotionPreview from './MotionPreview'
@@ -17,6 +18,7 @@ function checkedPreview(html: string): string {
 }
 
 export default function DesignCard({ html, kind = 'webpage', motion, truncated, quality, onUpdate }: { html: string; kind?: 'webpage' | 'poster' | 'motion' | 'game' | 'board'; motion?: Partial<MotionSpec>; truncated?: boolean; quality?: WebsiteQuality; onUpdate?: (html: string, quality?: WebsiteQuality) => void }) {
+  const scoped = useScopedArtifact()
   const [showCode, setShowCode] = useState(false)
   const [publication, setPublication] = useState<{ html: string; state: 'working' | 'ready' | 'error'; url?: string; error?: string }>()
   const [copiedHtml, setCopiedHtml] = useState<string>()
@@ -61,7 +63,7 @@ export default function DesignCard({ html, kind = 'webpage', motion, truncated, 
   // An interrupted build can always still be finished: hand the current page
   // back to the design engine to complete every unfinished section.
   const finishBuild = async (repair = false) => {
-    if (finishing || !onUpdate) return
+    if (scoped || finishing || !onUpdate) return
     setFinishing(true)
     setFinishErr('')
     try {
@@ -100,6 +102,7 @@ export default function DesignCard({ html, kind = 'webpage', motion, truncated, 
 
   // Publish to a public shareable URL on n4lu.ai (stored server-side).
   const makeShareLink = async () => {
+    if (scoped) return
     if (share?.state === 'working') return
     const copy = async (url: string) => {
       try {
@@ -151,21 +154,21 @@ export default function DesignCard({ html, kind = 'webpage', motion, truncated, 
         <button onClick={() => setShowCode((s) => !s)} className="shrink-0 text-xs text-dim underline-offset-4 hover:text-ink hover:underline">Code</button>
         <span className="text-xs text-dim">·</span>
         <button onClick={openTab} className="shrink-0 text-xs text-dim underline-offset-4 hover:text-ink hover:underline">Open</button>
-        <span className="text-xs text-dim">·</span>
-        <button
+        {!scoped && <span className="text-xs text-dim">·</span>}
+        {!scoped && <button
           onClick={() => void makeShareLink()}
           title={share?.url || 'Publish this version and create a shareable link'}
           className="shrink-0 text-xs text-dim underline-offset-4 hover:text-ink hover:underline"
         >
           {share?.state === 'working' ? 'Sharing…' : copied ? 'Copied' : share?.url ? 'Link' : 'Share'}
-        </button>
+        </button>}
         <span className="text-xs text-dim">·</span>
         <button onClick={download} className="shrink-0 text-xs font-medium text-gold underline-offset-4 hover:underline">HTML</button>
       </div>
       {share?.state === 'error' && <p role="alert" className="px-2 pb-2 text-xs text-ink">{share.error || 'This version could not be shared. Try again.'}</p>}
       {share?.url && <p className="px-2 pb-2 text-xs text-dim">Published version: <a className="break-all underline" href={share.url} target="_blank" rel="noopener noreferrer">{share.url}</a></p>}
       {kind === 'webpage' && <StudioValidation quality={quality} />}
-      {truncated && onUpdate && (
+      {truncated && onUpdate && !scoped && (
         <div className="flex items-center gap-2.5 border-b border-amber-400/25 bg-panel/80 px-4 py-2">
           <span className="flex-1 text-xs text-ink">This build was interrupted before it finished — it can still be completed.</span>
           {finishErr && <span className="text-[11px] text-red-300">{finishErr}</span>}
@@ -180,12 +183,12 @@ export default function DesignCard({ html, kind = 'webpage', motion, truncated, 
         </div>
       )}
       {kind === 'webpage' && <div className="flex items-center justify-between gap-3 border-t border-glass/10 px-2 py-2">
-        <span className="text-xs text-dim">Try the page before sharing</span>
+        <span className="text-xs text-dim">{scoped ? 'Try the page' : 'Try the page before sharing'}</span>
         <div className="flex gap-1"><button onClick={() => { setPhone(false); setPreviewIssues([]) }} aria-pressed={!phone} className={`rounded px-3 py-1.5 text-xs ${!phone ? 'bg-glass/10 text-ink' : 'text-dim'}`}>Responsive</button><button onClick={() => { setPhone(true); setPreviewIssues([]) }} aria-pressed={phone} className={`rounded px-3 py-1.5 text-xs ${phone ? 'bg-glass/10 text-ink' : 'text-dim'}`}>Phone</button></div>
       </div>}
       {kind === 'webpage' && !!previewIssues.length && <div className="flex flex-wrap items-center gap-3 border-t border-amber-500/20 bg-panel/80 p-3 text-xs text-ink">
         <span className="min-w-0 flex-1">The preview found a problem: {previewIssues[0]}</span>
-        {onUpdate && <button disabled={finishing} onClick={() => void finishBuild(true)} className="rounded-lg bg-amber-500/20 px-3 py-2 font-medium disabled:opacity-50">{finishing ? 'Repairing…' : 'Repair preview'}</button>}
+        {onUpdate && !scoped && <button disabled={finishing} onClick={() => void finishBuild(true)} className="rounded-lg bg-amber-500/20 px-3 py-2 font-medium disabled:opacity-50">{finishing ? 'Repairing…' : 'Repair preview'}</button>}
         {finishErr && <span role="alert" className="w-full">{finishErr}</span>}
       </div>}
       {kind === 'motion' ? <MotionPreview html={html} motion={motion} /> : <div className="flex justify-center overflow-auto bg-black/10"><iframe

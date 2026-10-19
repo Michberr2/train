@@ -70,10 +70,10 @@ export async function withSwarmStudioInvocation<T>(scope: SwarmStudioInvocation,
   return invocations.run(invocation, async () => {
     try { return await task() }
     catch (error) {
-      invocation.failed = true
       // A lost commit acknowledgement can mean the artifact was saved. Never
       // compensate or rerun providers blindly; recover that durable job first.
       if (error && typeof error === 'object' && 'swarmCommitUncertain' in error && error.swarmCommitUncertain) throw error
+      invocation.failed = true
       const releases = await Promise.allSettled(invocation.quotas.map(receipt => receipt.value.release()))
       if (releases.some(result => result.status === 'rejected')) {
         // Preserve the original failure, but expose cleanup failure to the

@@ -3,9 +3,10 @@ import { build } from 'esbuild'
 
 const bundled = await build({ stdin: { contents: `export * from './api/_swarm'; export * from './api/_swarmWorker'`, resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'esm', write: false,
   plugins: [{ name: 'no-services', setup(builder) {
-    builder.onResolve({ filter: /\/_connectionBackend$|\/_swarmStore$|\/_swarmExecution$/ }, args => ({ path: args.path, namespace: 'offline' }))
+    builder.onResolve({ filter: /\/_connectionBackend$|\/_swarmStore$|\/_swarmExecution$|\/_swarmStudioRunner$/ }, args => ({ path: args.path, namespace: 'offline' }))
     builder.onLoad({ filter: /.*/, namespace: 'offline' }, args => ({ contents: args.path.endsWith('_swarmExecution')
       ? 'export async function executeSwarmWork(){throw new Error("Inject offline executor")}'
+      : args.path.endsWith('_swarmStudioRunner') ? 'export async function runSwarmStudioJob(){throw new Error("Inject offline Studio executor")}'
       : args.path.endsWith('_swarmStore') ? 'export class SwarmStore {}; export const SWARM_MAX_STATE_BYTES=3000000, SWARM_MAX_SNAPSHOT_BYTES=12000000' : 'export function connectionBackend(){throw new Error("No real database in this suite")}' }))
   } }] })
 const { applySwarmAction, createdProjectId, swarmContext, appendSwarmResult, executeLeasedSwarmJob } = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`)

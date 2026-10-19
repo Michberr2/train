@@ -1,5 +1,5 @@
-import { isSwarmRoom, selectSwarmPending, swarmRoomId, type SwarmAgentId, type SwarmRoomReference, type SwarmState, type SwarmThread } from './swarmTypes'
-import { requestSwarm, sameSwarmAccount, SwarmRequestError, SwarmSessionChanged, type SwarmAccount, type SwarmResponse } from './swarmTransport'
+import { isSwarmRoom, selectSwarmPending, swarmRoomId, type SwarmArtifactResponse, type SwarmMedia, type SwarmAgentId, type SwarmRoomReference, type SwarmState, type SwarmThread } from './swarmTypes'
+import { requestSwarm, requestSwarmArtifact, requestSwarmMedia, sameSwarmAccount, SwarmRequestError, SwarmSessionChanged, type SwarmAccount, type SwarmResponse } from './swarmTransport'
 
 type Payload = Record<string, string>
 type Intent = { key: string; requestId: string; action: string; payload: Payload; originalDraft?: string }
@@ -11,7 +11,7 @@ const emptyPreferences = (): Preferences => ({ activeProjectId: '', recipient: '
 export const emptySwarmSnapshot: SwarmSnapshot = { state: emptyState(), revision: -1, preferences: emptyPreferences(), creating: false, loading: true, error: '', sendingRooms: [], busyTaskIds: [] }
 const roomThread = (value: unknown): value is SwarmThread => ['group', 'Nalu', 'Rocky', 'Milo'].includes(String(value))
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
-const intentActions = new Set(['create', 'send', 'add-task', 'start-task'])
+const intentActions = new Set(['create', 'send', 'add-task', 'start-task', 'continue-studio'])
 const intentKey = (action: string, payload: Payload, context = '') => JSON.stringify([action, Object.entries(payload).sort(([a], [b]) => a.localeCompare(b)), context])
 function readPreferences(storage: Options['storage'], key: string): Preferences {
   try {
@@ -95,7 +95,7 @@ export class SwarmClient {
           if (!this.writes.has(intent.key)) this.acknowledgedRetries.set(intent.key, response)
           prefs = this.acknowledge(intent, prefs)
         }
-      } else if (intent.action === 'start-task') {
+      } else if (intent.action === 'start-task' || intent.action === 'continue-studio') {
         if (state.tasks.some(task => task.id === intent.payload.taskId && task.projectId === intent.payload.projectId && task.executionRequestId === intent.requestId)) prefs = this.acknowledge(intent, prefs)
       }
     }
@@ -208,6 +208,70 @@ export class SwarmClient {
     const task = this.snapshot.state.tasks.find(task => task.id === taskId && task.projectId === projectId)
     if (!task) return
     await this.mutate(action, { projectId, taskId, ...extra }, { context: action === 'start-task' ? task.executionId || '' : undefined })
+  }
+  continueStudio = async (taskId: string): Promise<void> => {
+    const projectId = this.snapshot.preferences.activeProjectId
+    const task = this.snapshot.state.tasks.find(task => task.id === taskId && task.projectId === projectId)
+    if (!task || task.status !== 'waiting' || !task.handoff || !task.executionId || !(task.threads ?? ['group', task.assignee]).includes(this.snapshot.preferences.recipient)) throw new Error('This Studio request changed. Refresh the task before continuing.')
+    if (task.handoff.studioKind === 'book') throw new Error('Create long-form books in Studio. Background book generation is not available here yet.')
+    await this.mutate('continue-studio', { projectId, taskId, sourceJobId: task.executionId })
+  }
+  private artifactTask(taskId: string, executionId: string) {
+    if (!this.isCurrent()) throw new SwarmSessionChanged()
+    const { activeProjectId, recipient } = this.snapshot.preferences
+    const task = this.snapshot.state.tasks.find(task => task.id === taskId && task.projectId === activeProjectId)
+    if (!task?.artifact || task.artifact.executionId !== executionId || !(task.threads ?? ['group', task.assignee]).includes(recipient)) throw new Error('This creation changed or is no longer in the selected conversation. Reopen it from its task.')
+    return task as typeof task & { artifact: NonNullable<typeof task.artifact> }
+  }
+  private async artifactRequest<T>(operation: (signal: AbortSignal) => Promise<T>, externalSignal?: AbortSignal): Promise<T> {
+    if (!this.isCurrent()) throw new SwarmSessionChanged()
+    const generation = this.generation, controller = new AbortController()
+    const abort = () => controller.abort(externalSignal?.reason)
+    externalSignal?.addEventListener('abort', abort, { once: true })
+    if (externalSignal?.aborted) abort()
+    this.controllers.add(controller)
+    const timer = setTimeout(() => controller.abort(), 60000)
+    try {
+      const result = await operation(controller.signal)
+      controller.signal.throwIfAborted()
+      if (!this.isCurrent() || generation !== this.generation) throw new SwarmSessionChanged()
+      return result
+    } finally { clearTimeout(timer); this.controllers.delete(controller); externalSignal?.removeEventListener('abort', abort) }
+  }
+  getArtifact = async (taskId: string, executionId: string, signal?: AbortSignal): Promise<SwarmArtifactResponse> => {
+    const task = this.artifactTask(taskId, executionId)
+    const result = await this.artifactRequest(signal => requestSwarmArtifact(this.account, { projectId: task.projectId, taskId, executionId }, signal, this.options.readAccount, this.options.request), signal)
+    const latest = this.artifactTask(taskId, executionId)
+    if (latest.projectId !== task.projectId || result.revision < latest.artifact.revision || result.artifact.studioKind !== latest.artifact.studioKind) throw new Error('A newer creation is available. Reload to view it.')
+    return result
+  }
+  loadArtifactMedia = async (taskId: string, executionId: string, media: SwarmMedia, signal?: AbortSignal): Promise<Blob> => {
+    const saved = await this.getArtifact(taskId, executionId, signal)
+    if (JSON.stringify(saved.artifact.payload.media) !== JSON.stringify(media)) throw new Error('The saved media reference changed. Reload this creation.')
+    const blob = await this.artifactRequest(signal => requestSwarmMedia(this.account, media, signal, this.options.readAccount, this.options.request), signal)
+    if (this.artifactTask(taskId, executionId).artifact.revision > saved.revision) throw new Error('This creation changed while loading. Please retry.')
+    return blob
+  }
+  updateArtifact = async (taskId: string, executionId: string, revision: number, payload: Record<string, unknown>): Promise<number> => {
+    const task = this.artifactTask(taskId, executionId)
+    if (['image', 'video', 'cad'].includes(task.artifact.studioKind)) throw new Error('This creation supports viewing and downloading only.')
+    if (task.artifact.revision > revision) throw new Error('This creation has newer saved changes. Keep your edits and reload the saved version before retrying.')
+    const captured = JSON.stringify(payload)
+    this.patch({ busyTaskIds: [...new Set([...this.snapshot.busyTaskIds, taskId])] })
+    try {
+      const response = await this.call({ action: 'update-artifact', projectId: task.projectId, taskId, executionId, revision, payload: JSON.parse(captured) })
+      const next = response.state.tasks.find(item => item.id === taskId && item.projectId === task.projectId)?.artifact
+      if (!next || next.executionId !== executionId || next.revision <= revision) throw new Error('The save was not confirmed. Your local edits are still here.')
+      return next.revision
+    } catch (error) {
+      // A lost write response is only accepted if an owner-scoped read confirms
+      // the exact edited payload at a newer artifact revision.
+      if (error instanceof SwarmRequestError && error.uncertain && this.isCurrent()) {
+        const saved = await this.getArtifact(taskId, executionId).catch(() => null)
+        if (saved && saved.revision > revision && JSON.stringify(saved.artifact.payload) === captured) { void this.refresh(); return saved.revision }
+      }
+      throw error
+    } finally { if (this.isCurrent()) this.patch({ busyTaskIds: this.snapshot.busyTaskIds.filter(id => id !== taskId) }) }
   }
   assignTask = (taskId: string, assignee: SwarmAgentId) => { void this.taskAction('assign-task', taskId, { assignee }).catch(() => {}) }
   startTask = (taskId: string) => this.taskAction('start-task', taskId)

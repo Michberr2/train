@@ -54,7 +54,7 @@ try{
   browser=await chromium.launch();const page=await browser.newPage();page.on('pageerror',e=>errors.push(e.message))
   await page.route('**/*',route=>new URL(route.request().url()).origin===origin||/^(data|blob):/.test(route.request().url())?route.continue():route.abort())
   await page.goto(origin+'/__extract');await page.waitForFunction(()=>window.fixtureReady)
-  for(const f of fixtures){const r=await page.evaluate(f=>window.readFixture(f),f);reports[f.name]=r;console.log(`${f.name}: ${r.extraction.status} (${r.extraction.processed}/${r.extraction.total} ${r.extraction.unit})`)}
+  for(const f of fixtures){const r=await page.evaluate(f=>window.readFixture(f),f);reports[f.name]=r;console.log(`${f.name}: ${r.extraction.status} (${r.extraction.processed}/${r.extraction.total} ${r.extraction.unit})`, r.extraction.notes)}
   assert.match(reports['note.txt'].text,/paid invoice 12345/);assert.equal(reports['note.txt'].extraction.status,'complete')
   assert.equal(reports['actual-image.png'].extraction.status,'image');assert.equal(reports['actual-image.png'].dataUrl,'retained');assert.equal(reports['actual-image.png'].isImage,true)
   assert.equal(reports['broken-image.png'].extraction.status,'failed');assert.equal(reports['broken-image.png'].dataUrl,undefined)

@@ -1,3 +1,4 @@
+import { useScopedArtifact } from './ScopedArtifactContext'
 import { useMemo, useRef, useState, useEffect, useCallback, lazy, Suspense } from 'react'
 import { Palette, Sparkles, Ruler, Download, Copy, Check, FileJson, FileCode2, Image as ImageIcon, FileText, Star, Box, PencilRuler, ShoppingBag, ExternalLink, Footprints } from 'lucide-react'
 import CardErrorBoundary from './CardErrorBoundary'
@@ -301,7 +302,9 @@ function ActionBtn({
 // "Make routine" — set this palette/brand as the global primary Brand Kit, so it
 // persists across every chat and themes all docs / decks / sheets / designs.
 function MakeRoutineBtn({ art }: { art: DesignArtifact }) {
+  const scoped = useScopedArtifact()
   const [done, setDone] = useState(false)
+  if (scoped) return null
   return (
     <ActionBtn
       onClick={() => {
@@ -478,6 +481,7 @@ export function PaletteCard({ art }: { art: PaletteArt }) {
 }
 
 function PaletteOptions({ art }: { art: PaletteArt }) {
+  const scoped = useScopedArtifact()
   const [picked, setPicked] = useState<string | null>(null)
   const all: PaletteOption[] = [
     { name: art.name || 'Recommended', description: art.description, fonts: art.fonts, colors: art.colors || [] },
@@ -495,7 +499,7 @@ function PaletteOptions({ art }: { art: PaletteArt }) {
   return (
     <div className="mt-4 border-t border-glass/[0.08] pt-3">
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-dim">
-        Pick a direction — applies & saves to your palette
+        {scoped ? 'Palette directions' : 'Pick a direction — applies & saves to your palette'}
       </div>
       <div className="space-y-1.5">
         {all.map((o, i) => {
@@ -517,12 +521,12 @@ function PaletteOptions({ art }: { art: PaletteArt }) {
                   {[o.fonts?.heading && `${o.fonts.heading} / ${o.fonts.body || 'system'}`, o.description].filter(Boolean).join(' — ')}
                 </span>
               </span>
-              <button
+              {!scoped && <button
                 onClick={() => use(o, key)}
                 className={`shrink-0 rounded-lg px-2.5 py-1.5 text-[11.5px] font-medium transition-colors ${picked === key ? 'bg-emerald-500/20 text-emerald-200' : 'bg-accent/15 text-gold hover:bg-accent/25'}`}
               >
                 {picked === key ? 'Saved ✓' : 'Use & save'}
-              </button>
+              </button>}
             </div>
           )
         })}
@@ -975,6 +979,7 @@ function seedFor(key: string): number {
   return Math.abs(h % 999983) + 1
 }
 function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, colorsLocked, userStyle, background, saved, onCache }: { name: string; brand: string; accent?: string; symbol?: string; colorNames?: string[]; serif?: boolean; literal?: boolean; colorsLocked?: boolean; userStyle?: string; background?: string; saved?: Record<string, string>; onCache?: (url: string, dataUrl: string) => void }) {
+  const scoped = useScopedArtifact()
   const [savedChoice, setSavedChoice] = useState<number | null>(null)
   const [saveError, setSaveError] = useState('')
   const saveImage = async (data: string, index: number) => {
@@ -1004,7 +1009,7 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, c
   const [round, setRound] = useState(0)
   // Seed the cache from the artifact's saved images (persisted in the DB) so every
   // logo you ever made shows INSTANTLY on revisit — browse them all, anytime.
-  useMemo(() => { if (saved) for (const [u, d] of Object.entries(saved)) if (u && d) logoMemCache.set(u, d) }, [saved])
+  useMemo(() => { if (!scoped && saved) for (const [u, d] of Object.entries(saved)) if (u && d) logoMemCache.set(u, d) }, [saved])
   // FAITHFUL = the user described the mark or named a style, and hasn't opted to
   // explore other looks → reproduce exactly what they asked for. Otherwise apply a
   // polished house style. Default preset is luxury/modern (not the old forced 'minimal').
@@ -1043,7 +1048,7 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, c
   // Seed each slot from what's ALREADY cached (saved-in-DB imgCache first, then the
   // local cache) so finished logos show INSTANTLY on (hard) refresh — never reloaded.
   const seedSlot = (u: string): LogoSlot => {
-    const c = (saved && saved[u]) || logoCacheGet(u)
+    const c = (saved && saved[u]) || (!scoped ? logoCacheGet(u) : '')
     return c ? { st: 'done', data: c } : { st: 'idle', data: '' }
   }
   const [slots, setSlots] = useState<LogoSlot[]>(() => urls.map(seedSlot))
@@ -1060,6 +1065,7 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, c
   }, [urlKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const generate = (targets: string[], indices: number[]) => {
+    if (scoped) return
     const key = targets.join('|')
     for (const i of indices) {
       const requestKey = key + '#' + i
@@ -1092,7 +1098,7 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, c
     <div className="border-t border-glass/[0.08] px-4 py-3">
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
         <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-dim">AI logo images</span>
-        {faithful ? (
+        {!scoped && (faithful ? (
           // FAITHFUL: no imposed styles — we render exactly what was described. Show
           // a read-only chip + a quiet opt-in to explore other looks.
           <>
@@ -1116,11 +1122,11 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, c
               </button>
             ))}
           </>
-        )}
-        <button disabled={loading} onClick={() => generate(urls, slots.flatMap((s, i) => s.st !== 'done' ? [i] : []))} className="ml-auto rounded px-1.5 py-0.5 text-[10px] text-dim hover:bg-glass/10 hover:text-ink disabled:opacity-50">Generate images</button>
-        <button disabled={loading} onClick={regenerate} className="disabled:opacity-50 rounded px-1.5 py-0.5 text-[10px] text-dim hover:bg-glass/10 hover:text-ink">
+        ))}
+        {!scoped && <button disabled={loading} onClick={() => generate(urls, slots.flatMap((s, i) => s.st !== 'done' ? [i] : []))} className="ml-auto rounded px-1.5 py-0.5 text-[10px] text-dim hover:bg-glass/10 hover:text-ink disabled:opacity-50">Generate images</button>}
+        {!scoped && <button disabled={loading} onClick={regenerate} className="disabled:opacity-50 rounded px-1.5 py-0.5 text-[10px] text-dim hover:bg-glass/10 hover:text-ink">
           Regenerate
-        </button>
+        </button>}
       </div>
       <div className="grid grid-cols-3 gap-3">
         {/* Each logo appears the instant IT finishes — no waiting for all three. */}
@@ -1138,7 +1144,7 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, c
                       </div>}
                     </div>
                     <div className="absolute inset-x-1.5 bottom-1.5 flex flex-wrap justify-end gap-1">
-                      <button onClick={() => saveImage(s.data, i)} className="rounded-md bg-black/65 px-2 py-1 text-[10px] font-medium text-white">{savedChoice === i ? 'Saved' : 'Save to Brand'}</button>
+                      {!scoped && <button onClick={() => saveImage(s.data, i)} className="rounded-md bg-black/65 px-2 py-1 text-[10px] font-medium text-white">{savedChoice === i ? 'Saved' : 'Save to Brand'}</button>}
                       <button onClick={() => downloadLogoLockup(s.data, name, !!serif, `${slug(name, 'nalu-logo')}-${faithful ? 'logo' : presetKey}-${i + 1}.png`)} className="rounded-md bg-black/65 px-2 py-1 text-[10px] font-medium text-white">Download</button>
                     </div>
                   </>
@@ -1146,7 +1152,7 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, c
                   <div className="absolute inset-0 flex items-center justify-center bg-white">
                     <span className="h-6 w-6 animate-spin rounded-full border-2 border-black/15 border-t-accent" />
                   </div>
-                ) : (
+                ) : scoped ? <div className="flex h-full items-center justify-center p-2 text-center text-xs text-black/60">No saved image</div> : (
                   <button onClick={() => generate(urls, [i])} className="absolute inset-0 flex items-center justify-center bg-white text-[10px] text-black/50 hover:bg-black/[0.03]">
                     <span className="rounded-md bg-black/5 px-2 py-1">{s.st === 'idle' ? 'Generate' : 'Retry'}</span>
                   </button>
@@ -1157,7 +1163,7 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, c
       <div className="mt-1.5 text-[10px] text-dim">
         {saveError && <p role="status">{saveError}</p>}
         {generationError && <p role="status">{generationError}</p>}
-        {loading ? `Designing your logos… ${doneCount}/3 ready` : doneCount
+        {scoped ? 'Saved logo images for this task.' : loading ? `Designing your logos… ${doneCount}/3 ready` : doneCount
           ? 'Saved images are ready. Generate missing images or Regenerate for new options.'
           : 'Choose a style, then Generate images. Generation uses your daily image allowance.'}
       </div>
@@ -1166,6 +1172,7 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, c
 }
 
 export function LogoCard({ art, onUpdate }: { art: LogoArt; onUpdate?: (art: LogoArt) => void }) {
+  const scoped = useScopedArtifact()
   // Accumulate generated logo images into the artifact (capped) + persist them,
   // debounced, so all your logos are saved in the DB — browse them whenever.
   const imgAcc = useRef<Record<string, string>>({ ...(art.imgCache || {}) })
@@ -1254,9 +1261,9 @@ export function LogoCard({ art, onUpdate }: { art: LogoArt; onUpdate?: (art: Log
       subtitle={opt.concept || 'Logo — designed in black & white first'}
       actions={
         lockup ? <>
-          <ActionBtn onClick={saveToBrand} tint="bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25">
+          {!scoped && <ActionBtn onClick={saveToBrand} tint="bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25">
             {savedBrand ? <Check size={13} /> : <Star size={13} />} {savedBrand ? 'Saved to Brand' : 'Save to Brand'}
-          </ActionBtn>
+          </ActionBtn>}
           <ActionBtn onClick={() => downloadText(isolatedLogoSvg(lockup), `${base}.svg`, 'image/svg+xml')}>
             <FileCode2 size={13} /> SVG
           </ActionBtn>
@@ -1727,6 +1734,7 @@ const roomVideoPrompt = (art: ShoppingArt) => {
 }
 
 export function ShoppingCard({ art }: { art: ShoppingArt }) {
+  const scoped = useScopedArtifact()
   const items = Array.isArray(art.items) ? art.items : []
   const title = art.title || 'Shopping List'
   // group by category, preserving first-seen order
@@ -1744,10 +1752,11 @@ export function ShoppingCard({ art }: { art: ShoppingArt }) {
 
   // "See it in a room" — a real 3D room with the pieces auto-placed (the literal
   // version), plus an AI-rendered scene + on-demand walkthrough video.
-  const [show3d, setShow3d] = useState(false)
+  const [show3d, setShow3d] = useState(scoped)
   const roomPlan = useMemo(() => planRoomFromItems(items), [items])
   const [video, setVideo] = useState<{ state: 'idle' | 'loading' | 'done' | 'error'; url?: string; msg?: string }>({ state: 'idle' })
   const makeVideo = async () => {
+    if (scoped) return
     setVideo({ state: 'loading' })
     try {
       // $0-first: local MiniMax-H3 → in-browser engine → free cloud pool.
@@ -1780,7 +1789,7 @@ export function ShoppingCard({ art }: { art: ShoppingArt }) {
             <video src={video.url} controls autoPlay loop className="aspect-video w-full bg-black" />
           ) : (
             <img
-              src={roomImg(art)}
+              src={scoped ? undefined : roomImg(art)}
               alt={`${title} — styled room`}
               loading="lazy"
               className="aspect-video w-full object-cover"
@@ -1794,13 +1803,13 @@ export function ShoppingCard({ art }: { art: ShoppingArt }) {
           )}
         </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
-          <button
+          {!scoped && <button
             onClick={() => setShow3d((v) => !v)}
             className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium ${show3d ? 'border-emerald-400/40 bg-emerald-500/20 text-emerald-100' : 'border-accent/30 bg-accent/10 text-gold hover:bg-accent/20'}`}
           >
             <Box size={13} /> {show3d ? 'Back to preview' : `Walk the room in 3D (${roomPlan.placed} pieces)`}
-          </button>
-          {!show3d && (
+          </button>}
+          {!scoped && !show3d && (
             <button
               onClick={() => void makeVideo()}
               disabled={video.state === 'loading'}
@@ -1829,7 +1838,7 @@ export function ShoppingCard({ art }: { art: ShoppingArt }) {
                     <div key={i} className="group flex items-center gap-3 px-3.5 py-3 transition-colors hover:bg-glass/[0.03] sm:px-4">
                       <a href={href} target="_blank" rel="noopener noreferrer" className="shrink-0">
                         <img
-                          src={productImg(it)}
+                          src={scoped ? undefined : productImg(it)}
                           alt={it.name}
                           loading="lazy"
                           className="h-12 w-12 rounded-lg border border-glass/10 bg-glass/[0.04] object-cover sm:h-14 sm:w-14"

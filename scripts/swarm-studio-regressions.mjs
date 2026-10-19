@@ -188,6 +188,23 @@ try {
     await assert.rejects(api.executeSwarmStudio({...media.options,handlers:{image:mockHandler({url:'data:image/png;base64,AAAA'},'image',false)}, prepareArtifact:async(_scope,value)=>{media.cancel();return value}}),{name:'AbortError'})
     assert.equal(media.commits(),0); assert.equal(f.releases.length,1)
   })
+  await check('explicitly truncated HTML stays a saved waiting draft, never a completed artifact', async () => {
+    for (const kind of ['poster','game','website']) {
+      fixture(); const h = harness(kind), payload = { html:'<html><body><main>Partial draft</main></body></html>', truncated:true }
+      const result = await api.executeSwarmStudio({...h.options,handlers:{design:mockHandler(payload)}})
+      assert.equal(result.status,'waiting'); assert.match(result.summary,/unfinished draft/)
+      assert.match(result.summary,/completion has not been verified/)
+      assert.equal(h.saved().jobs[1].status,'waiting'); assert.equal(h.saved().state.tasks[0].status,'waiting')
+      assert.deepEqual(h.saved().jobs[1].artifact.payload,payload,'retain actual draft content for review')
+    }
+    assert.equal(api.validateSwarmStudioArtifact('poster',{html:'<html><body>Complete</body></html>'}).status,'done')
+  })
+  await check('known precommit rejection refunds instead of claiming an uncertain save', async () => {
+    const f = fixture(), h = harness()
+    h.options.persist = () => { throw new Error('Artifact exceeds the persistence limit') }
+    await assert.rejects(api.executeSwarmStudio({...h.options,handlers:{doc:mockHandler({blocks:[{type:'p',text:'Too large'}]},'doc')}}), error => /persistence limit/.test(error.message) && !error.swarmCommitUncertain)
+    assert.equal(h.commits(),0); assert.equal(h.saved().jobs[1].status,'running'); assert.equal(f.releases.length,1)
+  })
   await check('uncertain durable commit does not refund or repeat generation', async () => {
     const f = fixture(), h = harness(); const commit = h.options.store.mutateLeased
     h.options.store.mutateLeased = async (...args) => { await commit(...args); throw new Error('Lost commit acknowledgement') }

@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowUp, Plus, Square, X } from 'lucide-react'
 import { AgentHead, type AgentName } from './WorkspaceAgentIdentity'
 import { selectSwarmThreadTasks, swarmProjectOverview, type SwarmController } from '../../workspace/design/swarmTypes'
 import Markdown from '../../workspace/Markdown'
 import './workspace-swarm.css'
+
+const SwarmStudioPreview = lazy(() => import('../../workspace/design/SwarmStudioPreview'))
 
 type Props = {
   swarm: SwarmController
@@ -31,11 +33,13 @@ function LiveTaskActions({ task, swarm }: { task: Task; swarm: SwarmController }
     if (!action || blocked || inFlight.current) return
     inFlight.current = true; setBusy(true); setError('')
     try { await action(task.id) }
-    catch { setError('That request could not be completed. Please try again.') }
+    catch (error) { setError(error instanceof Error ? error.message : 'That request could not be completed. Please try again.') }
     finally { inFlight.current = false; setBusy(false) }
   }
   return <>
     {canStart && swarm.startTask && <button type="button" disabled={blocked} aria-label={`Start ${task.title}`} onClick={() => void request(swarm.startTask)}>{busy ? 'Requesting…' : task.status === 'failed' || task.status === 'cancelled' ? 'Retry task' : task.status === 'paused' ? 'Resume task' : 'Start task'}</button>}
+    {task.status === 'waiting' && task.handoff && task.handoff.studioKind !== 'book' && task.executionId && !task.artifact && swarm.continueStudio && <button type="button" disabled={blocked} onClick={() => void request(swarm.continueStudio)} aria-label={`Continue ${task.title} in Studio`}>{busy ? 'Requesting…' : 'Continue in Studio'}</button>}
+    {task.status === 'waiting' && task.handoff?.studioKind === 'book' && <span className="swarm-task-error">Create long-form books in Studio. Background book generation is not available here yet.</span>}
     {canStop && swarm.stopTask && <button type="button" disabled={blocked} aria-label={`Stop ${task.title}`} onClick={() => void request(swarm.stopTask)}>{busy ? 'Requesting…' : 'Stop task'}</button>}
     {swarm.recipient !== 'group' && !(task.threads ?? ['group', task.assignee]).includes('group') && swarm.shareTask && <button type="button" disabled={blocked} aria-label={`Share ${task.title} and its result with the group`} title="Share this task and its result with the group" onClick={() => void request(swarm.shareTask)}>Share with group</button>}
     {error && <span className="swarm-task-error" role="alert">{error}</span>}
@@ -79,6 +83,7 @@ export default function WorkspaceSwarm({ swarm, navigationKey, onOpenChat, avail
   const taskInput = useRef<HTMLTextAreaElement>(null)
   const nearBottom = useRef(true)
   const previousThread = useRef('')
+  const [creation, setCreation] = useState<{ taskId: string; executionId: string; threadKey: string } | null>(null)
   const [wide, setWide] = useState(false)
   const [section, setSection] = useState<'conversation' | 'board'>('conversation')
   const [addingTask, setAddingTask] = useState(false)
@@ -98,6 +103,8 @@ export default function WorkspaceSwarm({ swarm, navigationKey, onOpenChat, avail
   const threadKey = `${project?.id || ''}:${swarm.recipient}`
   const taskFormState = useRef({ threadKey, taskTitle, taskAssignee }); taskFormState.current = { threadKey, taskTitle, taskAssignee }
   const validChats = new Set(availableChatIds)
+  const creationTask = creation?.threadKey === threadKey ? visibleTasks.find(task => task.id === creation.taskId && task.artifact?.executionId === creation.executionId) : undefined
+  useEffect(() => { setCreation(null) }, [threadKey])
 
   useEffect(() => {
     setSection('conversation')
@@ -257,6 +264,7 @@ export default function WorkspaceSwarm({ swarm, navigationKey, onOpenChat, avail
               </div>
               {!sample && typeof task.progress === 'number' && Number.isFinite(task.progress) && <div className="swarm-task-progress"><progress max={1} value={Math.max(0, Math.min(1, task.progress))} aria-label={`Progress for ${task.title}`}/><span>{Math.round(Math.max(0, Math.min(1, task.progress)) * 100)}%</span></div>}
               <div className="swarm-task-actions">{!sample && <LiveTaskActions task={task} swarm={swarm}/>}<button type="button" onClick={() => openThread(task.assignee)} aria-label={`Discuss ${task.title} with ${task.assignee}`}>Message {task.assignee}</button>
+                {!sample && task.artifact && swarm.getArtifact && <button type="button" onClick={() => setCreation({ taskId: task.id, executionId: task.artifact!.executionId, threadKey })}>View creation</button>}
                 {task.chatId && validChats.has(task.chatId) && <button type="button" onClick={() => onOpenChat(task.chatId!)}>Open saved work</button>}
               </div>
               <details className="swarm-task-details"><summary><span>Details</span><time dateTime={new Date(task.updatedAt).toISOString()} title={new Date(task.updatedAt).toLocaleString()}>Updated {new Date(task.updatedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time></summary>{!sample && task.title.length > 140 && <p><strong>Instructions</strong><br/>{task.title}</p>}<p>{task.summary}</p></details>
@@ -267,5 +275,6 @@ export default function WorkspaceSwarm({ swarm, navigationKey, onOpenChat, avail
         </aside>}
       </div>
     </>}
+    {creationTask && <Suspense fallback={<p role="status">Opening creation…</p>}><SwarmStudioPreview key={`${creationTask.id}:${creationTask.artifact!.executionId}:${threadKey}`} task={creationTask} swarm={swarm} onClose={() => setCreation(null)}/></Suspense>}
   </section>
 }

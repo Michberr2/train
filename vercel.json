@@ -55,10 +55,14 @@
       "maxDuration": 300
     },
     "api/swarm.ts": {
-      "maxDuration": 300
+      "maxDuration": 300,
+      "memory": 2048,
+      "includeFiles": "node_modules/@sparticuz/chromium/bin/**"
     },
     "api/swarm-cron.ts": {
-      "maxDuration": 300
+      "maxDuration": 300,
+      "memory": 2048,
+      "includeFiles": "node_modules/@sparticuz/chromium/bin/**"
     },
     "api/phone.ts": {
       "maxDuration": 300

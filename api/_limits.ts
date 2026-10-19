@@ -10,6 +10,9 @@ import { reserveCloudflareQuota } from './_cloudflareQuota'
 import { getClient, readToken, userIdForToken } from './_db'
 import crypto from 'node:crypto'
 import { isIP } from 'node:net'
+import { recordSwarmStudioQuota, registerSwarmStudioHook, swarmStudioInvocation } from './_swarmStudioContext'
+
+registerSwarmStudioHook('quota')
 
 const USAGE_DDL = `CREATE TABLE IF NOT EXISTS nalu_usage (
   subject TEXT NOT NULL,
@@ -80,11 +83,11 @@ export async function reserveDailyQuota(
 
   if (process.env.NALU_STORAGE_BACKEND === 'cloudflare') {
     try {
-      const backend = connectionBackend(), uid = await backend.userId(readToken(req)), signedIn = !!uid
+      const backend = connectionBackend(), uid = swarmStudioInvocation()?.ownerId ?? await backend.userId(readToken(req)), signedIn = !!uid
       const limit = signedIn ? userLimit : anonLimit
-      if (limit <= 0) return { ok: true, used: 0, limit: 0, signedIn, release: noop }
+      if (limit <= 0) return recordSwarmStudioQuota(uid, kind, { ok: true, used: 0, limit: 0, signedIn, release: noop })
       const quota = await reserveCloudflareQuota(backend.client as CloudflareStore, uid ? `user:${uid}` : anonSubject(req), kind, limit)
-      return { ...quota, signedIn, ...(!quota.ok ? { status: 429 as const, reason: 'limit' as const } : {}) }
+      return recordSwarmStudioQuota(uid, kind, { ...quota, signedIn, ...(!quota.ok ? { status: 429 as const, reason: 'limit' as const } : {}) })
     } catch { return unavailable() }
   }
   let client
@@ -98,14 +101,14 @@ export async function reserveDailyQuota(
     await client.connect()
     await client.query(USAGE_DDL)
 
-    const uid = await userIdForToken(client, readToken(req))
+    const uid = swarmStudioInvocation()?.ownerId ?? await userIdForToken(client, readToken(req))
     const subject = uid ? `user:${uid}` : anonSubject(req)
     const signedIn = !!uid
 
     const limit = signedIn ? userLimit : anonLimit
     if (limit <= 0) {
       await client.end().catch(() => {})
-      return { ok: true, used: 0, limit: 0, signedIn, release: noop }
+      return recordSwarmStudioQuota(uid, kind, { ok: true, used: 0, limit: 0, signedIn, release: noop })
     }
 
     // Counter and durable receipt commit together. The conditional upsert
@@ -122,7 +125,7 @@ export async function reserveDailyQuota(
     if (!r.rows.length) {
       await client.query('ROLLBACK')
       await client.end().catch(() => {})
-      return { ok: false, used: limit, limit, signedIn, status: 429, reason: 'limit', release: noop }
+      return recordSwarmStudioQuota(uid, kind, { ok: false, used: limit, limit, signedIn, status: 429 as const, reason: 'limit' as const, release: noop })
     }
     const used = Number(r.rows[0]?.count)
     const quotaDay = String(r.rows[0]?.quota_day || '')
@@ -162,7 +165,7 @@ export async function reserveDailyQuota(
     }
     const release = () => refunding ||= refund().finally(() => { refunding = undefined })
     await client.end().catch(() => {})
-    return { ok: true, used, limit, signedIn, release }
+    return recordSwarmStudioQuota(uid, kind, { ok: true, used, limit, signedIn, release })
   } catch {
     // The provider is never invoked without a confirmed allowance.
     try {

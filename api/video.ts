@@ -10,6 +10,8 @@
 import { cors } from './_cors'
 import { reserveDailyQuota } from './_limits'
 import { chatComplete } from './_llm'
+import { cancellationSignal, throwIfCancelled, waitWithCancellation, withRequestCancellation } from './_requestCancellation'
+import { abortableWork, fetchChatStream } from './_chatTransport'
 
 function env(name: string): string | undefined {
   const v = process.env[name]
@@ -54,7 +56,45 @@ const FREE_SPACES = (env('NALU_VIDEO_FREE_SPACES') || env('NALU_VIDEO_FREE_SPACE
   .map((s) => s.trim().replace(/\/+$/, ''))
   .filter(Boolean)
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+const sleep = (ms: number) => waitWithCancellation(ms)
+
+// All ladder requests inherit the owning request/worker signal. Existing
+// backend-specific timeouts remain active, and cancellation never advances to
+// a fallback provider or leaves a late response body running unobserved.
+const responseSignals = new WeakMap<Response, AbortSignal>()
+async function videoFetch(input: Parameters<typeof fetch>[0], init: RequestInit = {}): Promise<Response> {
+  throwIfCancelled()
+  const signal = cancellationSignal(init.signal)
+  const response = signal ? await fetchChatStream(String(input), { ...init, signal }) : await fetch(input, init)
+  if (signal) responseSignals.set(response, signal)
+  return response
+}
+async function videoText(response: Response): Promise<string> {
+  const signal = responseSignals.get(response) || cancellationSignal()
+  if (!signal || !response.body) return signal ? abortableWork(() => response.text(), signal) : response.text()
+  const reader = response.body.getReader()
+  const cancel = () => { void reader.cancel().catch(() => {}) }
+  signal.addEventListener('abort', cancel, { once: true })
+  let completed = false
+  try {
+    throwIfCancelled(signal)
+    const decoder = new TextDecoder()
+    let text = ''
+    for (;;) {
+      const chunk = await abortableWork(() => reader.read(), signal)
+      throwIfCancelled(signal)
+      if (chunk.done) { completed = true; return text + decoder.decode() }
+      text += decoder.decode(chunk.value, { stream: true })
+    }
+  } finally {
+    signal.removeEventListener('abort', cancel)
+    if (!completed) cancel()
+    reader.releaseLock()
+  }
+}
+async function videoJson(response: Response): Promise<any> {
+  return JSON.parse(await videoText(response))
+}
 
 // LTX-2.3 (fal) exposes a fixed DURATION enum. This is our path to clips LONGER
 // than the ~4-8s every other backend is capped at: snap a requested length to
@@ -129,6 +169,7 @@ async function enrichVideoPrompt(prompt: string): Promise<string> {
       .trim()
     return out || fallback
   } catch {
+    throwIfCancelled()
     return fallback
   }
 }
@@ -152,7 +193,7 @@ async function veoVideo(prompt: string, image?: string, wantVertical = false): P
   for (const model of VEO_MODELS) {
     let op: { name?: string; error?: { message?: string } } = {}
     try {
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning?key=${GEMINI_KEY}`, {
+      const r = await videoFetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning?key=${GEMINI_KEY}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -161,15 +202,19 @@ async function veoVideo(prompt: string, image?: string, wantVertical = false): P
         }),
       })
       if (r.status === 404) { lastErr = `veo model ${model} not found`; continue }
-      op = (await r.json().catch(() => ({}))) as typeof op
+      op = (await videoJson(r).catch(() => ({}))) as typeof op
       if (!r.ok || !op.name) { lastErr = op.error?.message || `veo ${r.status}`; continue }
-    } catch { lastErr = 'veo submit failed'; continue }
+    } catch {
+      throwIfCancelled()
+      lastErr = 'veo submit failed'
+      continue
+    }
     const deadline = Date.now() + 220000
     while (Date.now() < deadline) {
       await sleep(8000)
       try {
-        const pr = await fetch(`https://generativelanguage.googleapis.com/v1beta/${op.name}?key=${GEMINI_KEY}`)
-        const pj = (await pr.json().catch(() => ({}))) as {
+        const pr = await videoFetch(`https://generativelanguage.googleapis.com/v1beta/${op.name}?key=${GEMINI_KEY}`)
+        const pj = (await videoJson(pr).catch(() => ({}))) as {
           done?: boolean
           error?: { message?: string }
           response?: { generateVideoResponse?: { generatedSamples?: Array<{ video?: { uri?: string } }> } }
@@ -179,7 +224,10 @@ async function veoVideo(prompt: string, image?: string, wantVertical = false): P
           const uri = pj.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri
           return uri ? { url: uri.includes('?') ? `${uri}&key=${GEMINI_KEY}` : `${uri}?key=${GEMINI_KEY}` } : { error: 'veo empty result' }
         }
-      } catch { /* transient poll error */ }
+      } catch {
+        throwIfCancelled()
+        /* transient poll error */
+      }
     }
     return { error: 'veo timeout' }
   }
@@ -192,30 +240,34 @@ async function hfWanVideo(prompt: string, image?: string): Promise<{ url?: strin
   const q = (u: string) => u.replace('https://queue.fal.run', 'https://router.huggingface.co/fal-ai') + '?_subdomain=queue'
   let sub: Response
   try {
-    sub = await fetch(`https://router.huggingface.co/${path}?_subdomain=queue`, {
+    sub = await videoFetch(`https://router.huggingface.co/${path}?_subdomain=queue`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${HF_TOKEN}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt, resolution: '720p', ...(image ? { image_url: image } : {}) }),
     })
   } catch {
+    throwIfCancelled()
     return { error: 'hf-wan submit failed' }
   }
   if (!sub.ok) return { error: `hf-wan submit ${sub.status}` }
-  const j = (await sub.json().catch(() => ({}))) as { status_url?: string; response_url?: string }
+  const j = (await videoJson(sub).catch(() => ({}))) as { status_url?: string; response_url?: string }
   if (!j.status_url || !j.response_url) return { error: 'hf-wan no job' }
   const deadline = Date.now() + 210000
   while (Date.now() < deadline) {
     await sleep(5000)
     try {
-      const st = await fetch(q(j.status_url), { headers: { Authorization: `Bearer ${HF_TOKEN}` } })
-      const sj = (await st.json().catch(() => ({}))) as { status?: string }
+      const st = await videoFetch(q(j.status_url), { headers: { Authorization: `Bearer ${HF_TOKEN}` } })
+      const sj = (await videoJson(st).catch(() => ({}))) as { status?: string }
       if (sj.status === 'COMPLETED') {
-        const rr = await fetch(q(j.response_url), { headers: { Authorization: `Bearer ${HF_TOKEN}` } })
-        const rj = (await rr.json().catch(() => ({}))) as { video?: { url?: string } }
+        const rr = await videoFetch(q(j.response_url), { headers: { Authorization: `Bearer ${HF_TOKEN}` } })
+        const rj = (await videoJson(rr).catch(() => ({}))) as { video?: { url?: string } }
         return rj.video?.url ? { url: rj.video.url } : { error: 'hf-wan empty result' }
       }
       if (sj.status === 'FAILED' || st.status >= 400) return { error: `hf-wan ${sj.status || st.status}` }
-    } catch { /* transient poll error — keep waiting */ }
+    } catch {
+      throwIfCancelled()
+      /* transient poll error — keep waiting */
+    }
   }
   return { error: 'hf-wan timeout' }
 }
@@ -224,17 +276,18 @@ async function hfWanVideo(prompt: string, image?: string): Promise<{ url?: strin
 // Synchronous inference API: POST the prompt, get back { video_url }. The URL may
 // be absolute, a data: URI, or a path relative to the DeepInfra host.
 async function deepinfraVideo(prompt: string): Promise<{ url?: string; error?: string }> {
-  const r = await fetch(`https://api.deepinfra.com/v1/inference/${DEEPINFRA_VIDEO_MODEL}`, {
+  const r = await videoFetch(`https://api.deepinfra.com/v1/inference/${DEEPINFRA_VIDEO_MODEL}`, {
     method: 'POST',
     headers: { Authorization: `bearer ${DEEPINFRA_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, negative_prompt: VIDEO_NEGATIVE }),
   })
-  const text = await r.text()
+  const text = await videoText(r)
   if (!r.ok) return { error: `Video upstream ${r.status}: ${text.slice(0, 200)}` }
   let data: unknown
   try {
     data = JSON.parse(text)
   } catch {
+    throwIfCancelled()
     return { error: 'bad video response' }
   }
   let url = pickUrl(data)
@@ -247,7 +300,7 @@ async function falVideo(prompt: string, seconds?: number): Promise<{ url?: strin
   // LTX-2.3 is our LONG-CLIP backend: snap the requested length to its duration
   // enum (up to 20s) so "make a 15s video" actually renders 14s, not the 6s default.
   const duration = seconds ? snapLtxDuration(seconds) : Number(env('FAL_VIDEO_DURATION')) || 6
-  const submit = await fetch(`https://queue.fal.run/${FAL_MODEL}`, {
+  const submit = await videoFetch(`https://queue.fal.run/${FAL_MODEL}`, {
     method: 'POST',
     headers: { Authorization: `Key ${FAL_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -261,12 +314,13 @@ async function falVideo(prompt: string, seconds?: number): Promise<{ url?: strin
       resolution: env('FAL_VIDEO_RESOLUTION') || '1080p',
     }),
   })
-  const submitText = await submit.text()
+  const submitText = await videoText(submit)
   if (!submit.ok) return { error: `Video submit ${submit.status}: ${submitText.slice(0, 200)}` }
   let job: { status_url?: string; response_url?: string }
   try {
     job = JSON.parse(submitText)
   } catch {
+    throwIfCancelled()
     return { error: 'bad submit response' }
   }
   if (!job.status_url || !job.response_url) return { error: 'no status url from provider' }
@@ -274,29 +328,30 @@ async function falVideo(prompt: string, seconds?: number): Promise<{ url?: strin
   for (;;) {
     await sleep(2000)
     if (Date.now() > deadline) return { error: 'video timed out — try a shorter clip' }
-    const s = await fetch(job.status_url, { headers: { Authorization: `Key ${FAL_KEY}` } })
-    const st = (await s.json().catch(() => ({}))) as { status?: string }
+    const s = await videoFetch(job.status_url, { headers: { Authorization: `Key ${FAL_KEY}` } })
+    const st = (await videoJson(s).catch(() => ({}))) as { status?: string }
     if (st.status === 'COMPLETED') break
     if (st.status === 'FAILED' || st.status === 'ERROR') return { error: 'video generation failed' }
   }
-  const out = await fetch(job.response_url, { headers: { Authorization: `Key ${FAL_KEY}` } })
-  const url = pickUrl(await out.json().catch(() => ({})))
+  const out = await videoFetch(job.response_url, { headers: { Authorization: `Key ${FAL_KEY}` } })
+  const url = pickUrl(await videoJson(out).catch(() => ({})))
   return url ? { url } : { error: 'no video returned' }
 }
 
 // ---- 2) self-hosted (audio) ----
 async function customVideo(prompt: string): Promise<{ url?: string; error?: string }> {
-  const upstream = await fetch(`${V_BASE}/video/generations`, {
+  const upstream = await videoFetch(`${V_BASE}/video/generations`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${V_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: V_MODEL, prompt, negative_prompt: VIDEO_NEGATIVE }),
   })
-  const text = await upstream.text()
+  const text = await videoText(upstream)
   if (!upstream.ok) return { error: `Video upstream ${upstream.status}: ${text.slice(0, 200)}` }
   try {
     const url = pickUrl(JSON.parse(text))
     return url ? { url } : { error: 'no video returned' }
   } catch {
+    throwIfCancelled()
     return { error: 'bad video response' }
   }
 }
@@ -312,6 +367,7 @@ function extractHfVideo(sse: string): string {
             const arr = JSON.parse(lines[j].slice(5).trim())
             return arr?.[0]?.video?.url || ''
           } catch {
+            throwIfCancelled()
             return ''
           }
         }
@@ -325,6 +381,7 @@ function extractHfVideo(sse: string): string {
         const u = arr?.[0]?.video?.url
         if (u) return u
       } catch {
+        throwIfCancelled()
         /* ignore */
       }
     }
@@ -353,7 +410,10 @@ function imageDims(dataUrl: string): { w: number; h: number } | null {
         i += 2 + buf.readUInt16BE(i + 2)
       }
     }
-  } catch { /* unknown format */ }
+  } catch {
+    throwIfCancelled()
+    /* unknown format */
+  }
   return null
 }
 
@@ -377,11 +437,12 @@ async function uploadToSpace(base: string, dataUrl: string): Promise<{ path: str
     const bytes = Buffer.from(m[2], 'base64')
     const fd = new FormData()
     fd.append('files', new Blob([bytes], { type: m[1] }), m[1].includes('png') ? 'input.png' : 'input.jpg')
-    const r = await fetch(`${base}/gradio_api/upload?upload_id=nalu${Date.now()}`, { method: 'POST', body: fd })
+    const r = await videoFetch(`${base}/gradio_api/upload?upload_id=nalu${Date.now()}`, { method: 'POST', body: fd })
     if (!r.ok) return null
-    const arr = (await r.json()) as string[]
+    const arr = (await videoJson(r)) as string[]
     return arr && arr[0] ? { path: arr[0], meta: { _type: 'gradio.FileData' } } : null
   } catch {
+    throwIfCancelled()
     return null
   }
 }
@@ -415,26 +476,28 @@ async function freeSpaceOnce(base: string, prompt: string, image?: string): Prom
   }
   let sub: Response
   try {
-    sub = await fetch(`${base}/gradio_api/call/${endpoint}`, {
+    sub = await videoFetch(`${base}/gradio_api/call/${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
   } catch {
+    throwIfCancelled()
     return { busy: true, error: 'submit failed' }
   }
   if (!sub.ok) return { busy: true, error: `submit ${sub.status}` }
-  const { event_id } = (await sub.json().catch(() => ({}))) as { event_id?: string }
+  const { event_id } = (await videoJson(sub).catch(() => ({}))) as { event_id?: string }
   if (!event_id) return { busy: true, error: 'no job id' }
 
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), 140000)
   try {
-    const stream = await fetch(`${base}/gradio_api/call/${endpoint}/${event_id}`, { signal: ctrl.signal })
+    const stream = await videoFetch(`${base}/gradio_api/call/${endpoint}/${event_id}`, { signal: ctrl.signal })
     if (!stream.ok) return { busy: true, error: `poll ${stream.status}` }
-    const url = extractHfVideo(await stream.text())
+    const url = extractHfVideo(await videoText(stream))
     return url ? { url } : { busy: true, error: 'empty result' }
   } catch {
+    throwIfCancelled()
     return { busy: true, error: 'stream timeout' }
   } finally {
     clearTimeout(t)
@@ -450,26 +513,28 @@ async function wanSpaceVideo(prompt: string, image: string): Promise<{ url?: str
   if (!fileData) return { error: 'wan upload failed' }
   let sub: Response
   try {
-    sub = await fetch(`${WAN_SPACE}/gradio_api/call/generate_video`, {
+    sub = await videoFetch(`${WAN_SPACE}/gradio_api/call/generate_video`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       // 4 steps / 2.5s is the PROVEN ZeroGPU-budget-safe config for this space
       body: JSON.stringify({ data: [fileData, prompt, 4, VIDEO_NEGATIVE, 2.5, 1, 1, 42, true] }),
     })
   } catch {
+    throwIfCancelled()
     return { error: 'wan submit failed' }
   }
   if (!sub.ok) return { error: `wan submit ${sub.status}` }
-  const { event_id } = (await sub.json().catch(() => ({}))) as { event_id?: string }
+  const { event_id } = (await videoJson(sub).catch(() => ({}))) as { event_id?: string }
   if (!event_id) return { error: 'wan no job id' }
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), 200000)
   try {
-    const stream = await fetch(`${WAN_SPACE}/gradio_api/call/generate_video/${event_id}`, { signal: ctrl.signal })
+    const stream = await videoFetch(`${WAN_SPACE}/gradio_api/call/generate_video/${event_id}`, { signal: ctrl.signal })
     if (!stream.ok) return { error: `wan poll ${stream.status}` }
-    const url = extractHfVideo(await stream.text())
+    const url = extractHfVideo(await videoText(stream))
     return url ? { url } : { error: 'wan empty result' }
   } catch {
+    throwIfCancelled()
     return { error: 'wan stream timeout' }
   } finally {
     clearTimeout(t)
@@ -496,6 +561,10 @@ async function freeSpaceVideo(prompt: string, image?: string): Promise<{ url?: s
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default async function handler(req: any, res: any) {
+  return withRequestCancellation(req, res, () => handleVideo(req, res))
+}
+
+async function handleVideo(req: any, res: any) {
   if (cors(req, res)) return
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'POST only' })
@@ -506,6 +575,7 @@ export default async function handler(req: any, res: any) {
   try {
     body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {}
   } catch {
+    throwIfCancelled()
     res.status(400).json({ error: 'invalid JSON' })
     return
   }
@@ -520,6 +590,7 @@ export default async function handler(req: any, res: any) {
   // if generation fails. Tune with NALU_FREE_VIDEO_PER_DAY / NALU_USER_VIDEO_PER_DAY.
   const quota = await reserveDailyQuota(req, 'video')
   if (!quota.ok) {
+    throwIfCancelled()
     res.status(quota.status || 429).json({
       error: quota.reason === 'unavailable' ? 'Usage checks are temporarily unavailable. Please retry in a moment.' : quota.signedIn
         ? `You've hit today's video limit (${quota.limit}/day). It resets tomorrow.`
@@ -528,114 +599,123 @@ export default async function handler(req: any, res: any) {
     return
   }
 
-  // Audio is the upgrade: a clip explicitly asked WITH sound prefers the
-  // audio-capable backends first (fal, self-host); otherwise the cheap silent
-  // ones lead. Either way we build an ORDERED LADDER of every configured backend
-  // and try each until one returns a URL — a single backend's 5xx no longer fails
-  // the whole request while other healthy backends sit unused.
-  const wantAudio = body.audio === true || body.sound === true
-  const image = typeof body.image === 'string' && body.image.startsWith('data:image/') ? body.image : undefined
-  // social video posts are vertical 9:16 (reels/tiktok/shorts/stories or explicit)
-  const wantVertical = body.vertical === true || /\b(reels?|tiktok|shorts?|vertical|story|stories|9:16)\b/i.test(prompt)
-  // How long a clip? explicit body.duration/seconds or a length named in the
-  // prompt ("15 second clip", "20s", "a minute"). >8s ⇒ prefer the LTX (fal)
-  // backend, which is the one that natively renders past 8 seconds.
-  const seconds = requestedSeconds(prompt, body)
-  const longClip = (seconds || 0) > 8
-  // Fast/draft mode: explicit body.fast or a "make it quick" ask. Skips the LLM
-  // prompt-enrichment round-trip and leads with the fastest synchronous backend.
-  const wantFast = body.fast === true || /\b(fast|quick(?:ly)?|asap|draft|rough|instantly?)\b/i.test(prompt)
+  let completed = false
+  try {
+    throwIfCancelled()
 
-  // ARCHITECTURAL MODE — the craft that makes walkthroughs read as real film:
-  // from a technical drawing/blueprint → the "grow into 3D" transformation; from
-  // a photo → a stabilized gimbal walkthrough. Deterministic, reference-grade
-  // prompts beat generic LLM enrichment here.
-  const ARCH = /walk.?through|blueprint|floor ?plan|architect\w*|interior|exterior|building|house|home\b|apartment|room|render|property|real ?estate/i
-  const DRAWING = /blueprint|floor ?plan|drawing|sketch|wireframe|grow|transform|extrude|section/i
-  let finalPrompt: string
-  if (ARCH.test(prompt) && (image || DRAWING.test(prompt))) {
-    finalPrompt = DRAWING.test(prompt)
-      ? `Cinematic architectural transformation animation. ${image ? 'Start on the exact technical drawing in the input image, same framing.' : 'Start with a clean black-and-white technical architectural drawing of the space.'} The camera slowly pushes forward while the drawing gradually transforms into a photorealistic space: linework extrudes into 3D geometry, walls and ceilings gain real depth, furniture emerges from wireframe forms, materials organically appear across every surface — wood grain develops, stone and flooring become realistic, plants grow into detailed vegetation, curtains softly materialize. Natural daylight progressively fills the space: volumetric sunlight, soft shadows and reflections, subtle curtain movement, shallow depth of field. The transformation feels seamless and magical, maintaining the same camera angle throughout. Ultra realistic architectural visualization style, smooth transitions, premium cinematic look, warm lighting, highly detailed. Subject: ${prompt}`
-      : `Cinematic real-estate walkthrough film of the exact space in the input image — keep its architecture, furniture, materials and lighting faithful. One continuous stabilized gimbal shot gliding slowly forward through the space, gentle parallax, no cuts. Natural volumetric daylight through the windows, soft moving shadows, photorealistic PBR materials, subtle life (curtains breathing, foliage swaying), shallow depth of field, premium architectural film look, ultra detailed, 4k. ${prompt}`
-  } else if (wantFast) {
-    // Fast mode: skip the LLM enrichment round-trip (saves up to ~18s) and use a
-    // solid deterministic template so the clip still moves.
-    finalPrompt = `${prompt}. ONE continuous shot, no cuts. Natural, lifelike, continuous motion true to the description; the subject actively moves; smooth cinematic camera; realistic lighting; sharp focus; ultra-detailed.`
-  } else {
-    // Expand the request into a faithful, detailed prompt FIRST so the clip
-    // accurately matches what was asked (raw 1-liners render vague/wrong).
-    finalPrompt = await enrichVideoPrompt(prompt)
-  }
+    // Audio is the upgrade: a clip explicitly asked WITH sound prefers the
+    // audio-capable backends first (fal, self-host); otherwise the cheap silent
+    // ones lead. Either way we build an ORDERED LADDER of every configured backend
+    // and try each until one returns a URL — a single backend's 5xx no longer fails
+    // the whole request while other healthy backends sit unused.
+    const wantAudio = body.audio === true || body.sound === true
+    const image = typeof body.image === 'string' && body.image.startsWith('data:image/') ? body.image : undefined
+    // social video posts are vertical 9:16 (reels/tiktok/shorts/stories or explicit)
+    const wantVertical = body.vertical === true || /\b(reels?|tiktok|shorts?|vertical|story|stories|9:16)\b/i.test(prompt)
+    // How long a clip? explicit body.duration/seconds or a length named in the
+    // prompt ("15 second clip", "20s", "a minute"). >8s ⇒ prefer the LTX (fal)
+    // backend, which is the one that natively renders past 8 seconds.
+    const seconds = requestedSeconds(prompt, body)
+    const longClip = (seconds || 0) > 8
+    // Fast/draft mode: explicit body.fast or a "make it quick" ask. Skips the LLM
+    // prompt-enrichment round-trip and leads with the fastest synchronous backend.
+    const wantFast = body.fast === true || /\b(fast|quick(?:ly)?|asap|draft|rough|instantly?)\b/i.test(prompt)
 
-  type Backend = { name: string; run: () => Promise<{ url?: string; error?: string }> }
-  const fal: Backend = { name: 'fal', run: () => falVideo(finalPrompt, seconds || undefined) }
-  const deepinfra: Backend = { name: 'deepinfra', run: () => deepinfraVideo(finalPrompt) }
-  const selfHost: Backend = { name: 'self-host', run: () => customVideo(finalPrompt) }
-  const free: Backend = { name: 'free', run: () => freeSpaceVideo(finalPrompt, image) }
-  const wan: Backend = { name: 'wan', run: () => (image ? wanSpaceVideo(finalPrompt, image) : Promise.resolve({ error: 'wan is i2v-only' })) }
-  const hfWan: Backend = { name: 'hf-wan', run: () => hfWanVideo(finalPrompt, image) }
-  const veo: Backend = { name: 'veo', run: () => veoVideo(finalPrompt, image, wantVertical) }
-
-  const ladder: Backend[] = []
-  const add = (b: Backend, ok: boolean) => { if (ok) ladder.push(b) }
-  if (longClip) {
-    // LONGER-THAN-8s: only LTX-2.3 (fal) natively renders past 8s, so it leads.
-    // Veo/Wan fall in behind as ~8s fallbacks if fal is unavailable/fails.
-    add(fal, !!FAL_KEY)
-    add(veo, !!GEMINI_KEY)
-    if (image) { add(hfWan, !!HF_TOKEN); ladder.push(free, wan) }
-    else { add(hfWan, !!HF_TOKEN); add(deepinfra, !!DEEPINFRA_KEY); add(selfHost, !!(V_BASE && V_KEY)); ladder.push(free) }
-  } else if (wantFast && !image) {
-    // FAST: lead with the fastest SYNCHRONOUS backend (DeepInfra distilled — one
-    // POST, no queue), then the free pool, then queue-based engines.
-    add(deepinfra, !!DEEPINFRA_KEY)
-    add(fal, !!FAL_KEY)
-    ladder.push(free)
-    add(hfWan, !!HF_TOKEN)
-    add(veo, !!GEMINI_KEY)
-  } else {
-    add(veo, !!GEMINI_KEY) // highest fidelity (native audio on Veo 3.x) — always first when configured
-    if (image) {
-      // image-to-video, best first: full Wan 2.2-A14B (HF router, ~1400px) →
-      // free LTX pool → Wan 2.2-5B ZeroGPU — three independent engines.
-      add(hfWan, !!HF_TOKEN)
-      ladder.push(free, wan)
-    } else if (wantAudio) {
-      add(fal, !!FAL_KEY) // audio
-      add(selfHost, !!(V_BASE && V_KEY)) // audio
-      add(deepinfra, !!DEEPINFRA_KEY) // silent
-      add(hfWan, !!HF_TOKEN)
-      ladder.push(free)
+    // ARCHITECTURAL MODE — the craft that makes walkthroughs read as real film:
+    // from a technical drawing/blueprint → the "grow into 3D" transformation; from
+    // a photo → a stabilized gimbal walkthrough. Deterministic, reference-grade
+    // prompts beat generic LLM enrichment here.
+    const ARCH = /walk.?through|blueprint|floor ?plan|architect\w*|interior|exterior|building|house|home\b|apartment|room|render|property|real ?estate/i
+    const DRAWING = /blueprint|floor ?plan|drawing|sketch|wireframe|grow|transform|extrude|section/i
+    let finalPrompt: string
+    if (ARCH.test(prompt) && (image || DRAWING.test(prompt))) {
+      finalPrompt = DRAWING.test(prompt)
+        ? `Cinematic architectural transformation animation. ${image ? 'Start on the exact technical drawing in the input image, same framing.' : 'Start with a clean black-and-white technical architectural drawing of the space.'} The camera slowly pushes forward while the drawing gradually transforms into a photorealistic space: linework extrudes into 3D geometry, walls and ceilings gain real depth, furniture emerges from wireframe forms, materials organically appear across every surface — wood grain develops, stone and flooring become realistic, plants grow into detailed vegetation, curtains softly materialize. Natural daylight progressively fills the space: volumetric sunlight, soft shadows and reflections, subtle curtain movement, shallow depth of field. The transformation feels seamless and magical, maintaining the same camera angle throughout. Ultra realistic architectural visualization style, smooth transitions, premium cinematic look, warm lighting, highly detailed. Subject: ${prompt}`
+        : `Cinematic real-estate walkthrough film of the exact space in the input image — keep its architecture, furniture, materials and lighting faithful. One continuous stabilized gimbal shot gliding slowly forward through the space, gentle parallax, no cuts. Natural volumetric daylight through the windows, soft moving shadows, photorealistic PBR materials, subtle life (curtains breathing, foliage swaying), shallow depth of field, premium architectural film look, ultra detailed, 4k. ${prompt}`
+    } else if (wantFast) {
+      // Fast mode: skip the LLM enrichment round-trip (saves up to ~18s) and use a
+      // solid deterministic template so the clip still moves.
+      finalPrompt = `${prompt}. ONE continuous shot, no cuts. Natural, lifelike, continuous motion true to the description; the subject actively moves; smooth cinematic camera; realistic lighting; sharp focus; ultra-detailed.`
     } else {
-      add(hfWan, !!HF_TOKEN) // best quality available with existing creds
+      // Expand the request into a faithful, detailed prompt FIRST so the clip
+      // accurately matches what was asked (raw 1-liners render vague/wrong).
+      finalPrompt = await enrichVideoPrompt(prompt)
+    }
+
+    type Backend = { name: string; run: () => Promise<{ url?: string; error?: string }> }
+    const fal: Backend = { name: 'fal', run: () => falVideo(finalPrompt, seconds || undefined) }
+    const deepinfra: Backend = { name: 'deepinfra', run: () => deepinfraVideo(finalPrompt) }
+    const selfHost: Backend = { name: 'self-host', run: () => customVideo(finalPrompt) }
+    const free: Backend = { name: 'free', run: () => freeSpaceVideo(finalPrompt, image) }
+    const wan: Backend = { name: 'wan', run: () => (image ? wanSpaceVideo(finalPrompt, image) : Promise.resolve({ error: 'wan is i2v-only' })) }
+    const hfWan: Backend = { name: 'hf-wan', run: () => hfWanVideo(finalPrompt, image) }
+    const veo: Backend = { name: 'veo', run: () => veoVideo(finalPrompt, image, wantVertical) }
+
+    const ladder: Backend[] = []
+    const add = (b: Backend, ok: boolean) => { if (ok) ladder.push(b) }
+    if (longClip) {
+      // LONGER-THAN-8s: only LTX-2.3 (fal) natively renders past 8s, so it leads.
+      // Veo/Wan fall in behind as ~8s fallbacks if fal is unavailable/fails.
+      add(fal, !!FAL_KEY)
+      add(veo, !!GEMINI_KEY)
+      if (image) { add(hfWan, !!HF_TOKEN); ladder.push(free, wan) }
+      else { add(hfWan, !!HF_TOKEN); add(deepinfra, !!DEEPINFRA_KEY); add(selfHost, !!(V_BASE && V_KEY)); ladder.push(free) }
+    } else if (wantFast && !image) {
+      // FAST: lead with the fastest SYNCHRONOUS backend (DeepInfra distilled — one
+      // POST, no queue), then the free pool, then queue-based engines.
       add(deepinfra, !!DEEPINFRA_KEY)
-      add(selfHost, !!(V_BASE && V_KEY))
       add(fal, !!FAL_KEY)
       ladder.push(free)
+      add(hfWan, !!HF_TOKEN)
+      add(veo, !!GEMINI_KEY)
+    } else {
+      add(veo, !!GEMINI_KEY) // highest fidelity (native audio on Veo 3.x) — always first when configured
+      if (image) {
+        // image-to-video, best first: full Wan 2.2-A14B (HF router, ~1400px) →
+        // free LTX pool → Wan 2.2-5B ZeroGPU — three independent engines.
+        add(hfWan, !!HF_TOKEN)
+        ladder.push(free, wan)
+      } else if (wantAudio) {
+        add(fal, !!FAL_KEY) // audio
+        add(selfHost, !!(V_BASE && V_KEY)) // audio
+        add(deepinfra, !!DEEPINFRA_KEY) // silent
+        add(hfWan, !!HF_TOKEN)
+        ladder.push(free)
+      } else {
+        add(hfWan, !!HF_TOKEN) // best quality available with existing creds
+        add(deepinfra, !!DEEPINFRA_KEY)
+        add(selfHost, !!(V_BASE && V_KEY))
+        add(fal, !!FAL_KEY)
+        ladder.push(free)
+      }
     }
-  }
 
-  try {
     let lastErr = 'no video backend available'
     for (const b of ladder) {
+      throwIfCancelled()
       try {
         const out = await b.run()
+        throwIfCancelled()
         if (out.url) {
           // Report the clip length: fal honors the snapped request; other
           // backends are ~their native short length.
           const outSeconds = b.name === 'fal' && seconds ? snapLtxDuration(seconds) : undefined
           res.status(200).json({ url: out.url, name: 'Nalu Video', backend: b.name, ...(outSeconds ? { seconds: outSeconds } : {}) })
+          completed = true
           return
         }
         if (out.error) lastErr = out.error
       } catch (e) {
+        throwIfCancelled()
         lastErr = e instanceof Error ? e.message : 'backend failed'
       }
     }
-    await quota.release() // every backend failed — don't burn the user's daily slot
+    throwIfCancelled()
     res.status(502).json({ error: lastErr })
   } catch (err) {
-    await quota.release() // error — refund the reserved daily slot
+    throwIfCancelled()
     res.status(500).json({ error: err instanceof Error ? err.message : 'video error' })
+  } finally {
+    if (!completed || cancellationSignal()?.aborted) await quota.release()
   }
 }

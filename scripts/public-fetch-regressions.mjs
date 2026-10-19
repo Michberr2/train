@@ -62,6 +62,11 @@ assert.deepEqual(requests[0].pinned,[{address:'93.184.216.34',family:4}])
 assert.equal(requests[0].headers.host,undefined)
 
 reset()
+const binary = Buffer.from([0, 255, 128, 65, 0, 240, 159, 140, 138])
+respond = () => ({headers:{'content-type':'application/octet-stream'},body:binary})
+assert.deepEqual(new Uint8Array(await (await publicFetch('https://public.example.com/bytes')).arrayBuffer()), new Uint8Array(binary), 'Response body copy preserves every binary byte')
+
+reset()
 respond = ({url}) => url.includes('/start') ? {status:302,headers:{location:'https://next.example.com/end'}} : {body:'redirected'}
 const redirected = await publicFetch('https://public.example.com/start',{headers:{Authorization:'secret',Cookie:'session', 'X-Custom-Token':'private',Accept:'text/html'}})
 assert.equal(redirected.url,'https://next.example.com/end')

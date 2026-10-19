@@ -5,6 +5,9 @@ import { profileText } from './_profileText'
 // Vercel does NOT turn this into a route — it's imported by the route handlers.
 import { Client } from 'pg'
 import crypto from 'node:crypto'
+import { excludeSwarmStudioIdentity, registerSwarmStudioHook } from './_swarmStudioContext'
+
+registerSwarmStudioHook('identity')
 
 export function getClient(): Client {
   const connectionString = process.env.DATABASE_URL
@@ -177,6 +180,9 @@ export type UserIdentity = { id: string; name: string; profile: string }
 /** Resolve who is calling (from the Bearer token) + their learned profile.
  *  Best-effort: returns null for anonymous or on any failure. */
 export async function identityForRequest(req: { headers: Record<string, unknown>; body?: unknown }): Promise<UserIdentity | null> {
+  // A validated Swarm generation has an authenticated quota owner, but its
+  // prompt must not inherit that account's profile or ordinary-chat memory.
+  if (excludeSwarmStudioIdentity()) return null
   const token = readToken(req)
   if (process.env.NALU_STORAGE_BACKEND === 'cloudflare') {
     if (!token) return null

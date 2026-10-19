@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events'
+import { validateSwarmStudioArtifact, type SwarmStudioArtifact } from './_swarmStudioArtifact'
+export { validateSwarmStudioArtifact, type SwarmStudioArtifact } from './_swarmStudioArtifact'
 import { withRequestCancellation } from './_requestCancellation'
 import { requireLeasedSwarmGeneration, resolveSwarmGenerationScope, validateSwarmGenerationScope, type SwarmGenerationScope, type SwarmStudioHandoff, type SwarmStudioKind } from './_swarmGeneration'
 import type { SwarmSnapshot, SwarmStore } from './_swarmStore'
@@ -7,14 +9,6 @@ import { assertSwarmStudioHooks, assertSwarmStudioPolicyApplied, withSwarmStudio
 export type SwarmStudioEndpoint = 'doc' | 'slides' | 'sheet' | 'design' | 'cad' | 'image' | 'video' | 'email'
 export type SwarmStudioHandler = (req: any, res: any) => unknown | Promise<unknown>
 export type SwarmStudioHandlers = Partial<Record<SwarmStudioEndpoint, SwarmStudioHandler>>
-export interface SwarmStudioArtifact {
-  type: 'studio-artifact'
-  studioKind: SwarmStudioKind
-  payload: Record<string, unknown>
-  /** CAD source is real output, but not a verified/rendered model yet. */
-  status: 'done' | 'waiting'
-  summary: string
-}
 type GenerationRequest = SwarmStudioHandoff & { executionId: string; leaseToken: string }
 type WorkerStore = Pick<SwarmStore, 'read' | 'mutateLeased'>
 type Route = { endpoint: SwarmStudioEndpoint; kind?: string; quota: string; identity: boolean }
@@ -52,40 +46,6 @@ export function swarmStudioRequestBody(scope: SwarmGenerationScope): Record<stri
   }
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
-const hasText = (value: unknown) => typeof value === 'string' && value.trim().length > 0
-const hasList = (value: unknown) => Array.isArray(value) && value.length > 0
-
-/** Response-shape check, not a replacement for a generator's quality/runtime
- * validation. Preserve its complete payload, diagnostics, and editable content. */
-function artifactFor(kind: SwarmStudioKind, value: unknown): SwarmStudioArtifact {
-  if (!isRecord(value) || value.error) throw new Error('The Studio generator did not return a completed artifact.')
-  let valid = false
-  switch (kind) {
-    case 'document': valid = hasList(value.blocks); break
-    case 'slides': valid = hasList(value.slides); break
-    case 'spreadsheet': valid = hasList(value.sheets); break
-    case 'cad': valid = hasText(value.code); break
-    case 'image': case 'video': valid = hasText(value.url); break
-    case 'email': valid = hasText(value.subject) && hasText(value.body); break
-    case 'canvas': valid = isRecord(value.canvas); break
-    case 'palette': valid = hasList(value.colors); break
-    case 'blueprint': valid = hasList(value.shapes) || hasList(value.floors); break
-    case 'logo': valid = hasText(value.mark) || hasText(value.lockup) || hasText(value.initials) || hasList(value.options); break
-    case 'shopping': valid = hasList(value.items); break
-    case 'carousel': valid = hasList(value.slides) && isRecord(value.theme); break
-    case 'brand': valid = hasText(value.html) || isRecord(value.brand); break
-    default: valid = hasText(value.html)
-  }
-  if (!valid) throw new Error('The Studio generator returned no usable artifact. This work was not marked complete.')
-  if (kind === 'website' && isRecord(value.quality) && isRecord(value.quality.runtime)
-    && ['failed', 'unavailable'].includes(String(value.quality.runtime.status))) throw new Error('The website has not passed its runtime checks.')
-  return { type: 'studio-artifact', studioKind: kind, payload: structuredClone(value),
-    status: kind === 'cad' ? 'waiting' : 'done',
-    summary: kind === 'cad' ? 'Model source generated. Open the 3D workspace to compile and verify its geometry.' : 'The generated artifact is saved with this work item.',
-  }
-}
-
 function cancelled(signal: AbortSignal): void { if (signal.aborted) throw signal.reason || new DOMException('Cancelled', 'AbortError') }
 function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   cancelled(signal)
@@ -109,7 +69,7 @@ async function invokeHandler(handler: SwarmStudioHandler, body: Record<string, u
   await bounded(Promise.resolve(withRequestCancellation(req, res, async () => { await handler(req, res) })), signal)
   cancelled(signal)
   if (!writes || status < 200 || status >= 300) {
-    const message = isRecord(payload) && typeof payload.error === 'string' ? payload.error : 'Studio did not return a successful result.'
+    const message = payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string' ? payload.error : 'Studio did not return a successful result.'
     throw Object.assign(new Error(message), { status: status >= 400 ? status : 502 })
   }
   return payload
@@ -149,7 +109,7 @@ export async function executeSwarmStudio(options: {
     return await withSwarmStudioInvocation({ ownerId: scope.ownerId, projectId: scope.projectId, taskId: scope.taskId, executionId: scope.lease!.jobId }, async () => {
       await options.onProgress?.('Generating the requested artifact with Studio.')
       cancelled(controller.signal)
-      let artifact = artifactFor(scope.studioKind, await invokeHandler(handler, body, controller.signal))
+      let artifact = validateSwarmStudioArtifact(scope.studioKind, await invokeHandler(handler, body, controller.signal))
       assertSwarmStudioPolicyApplied(route.quota, route.identity)
       cancelled(controller.signal)
       // Re-read before a potentially expensive asset save; final commit below
@@ -161,14 +121,19 @@ export async function executeSwarmStudio(options: {
       await options.onProgress?.('Saving the generated artifact to this work item.')
       cancelled(controller.signal)
       let saved: SwarmSnapshot | null
+      let persistencePrepared = false
       try {
         saved = await options.store.mutateLeased(scope.ownerId, scope.lease!.jobId, scope.lease!.token, draft => {
           cancelled(controller.signal)
           const currentScope = validateSwarmGenerationScope(draft, options.ownerId, options.request, now())
           const result: unknown = options.persist(draft, currentScope, artifact, now())
           if (result && typeof (result as { then?: unknown }).then === 'function') throw new Error('Swarm artifact persistence must be synchronous.')
+          persistencePrepared = true
         })
       } catch (error) {
+        // No store write can precede its synchronous mutation callback. A
+        // rejected artifact/lease here is a known failure and must refund.
+        if (!persistencePrepared) throw error
         throw Object.assign(error instanceof Error ? error : new Error('Studio could not confirm artifact persistence.'), { swarmCommitUncertain: true })
       }
       if (!saved) throw new DOMException('The work was stopped before its artifact could be saved.', 'AbortError')

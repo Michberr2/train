@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto'
 import type { SwarmAgentId, SwarmState, SwarmTask, SwarmThread } from '../client/src/components/workspace/design/swarmTypes'
 import type { SwarmJob, SwarmSnapshot } from './_swarmStore'
 import { SWARM_MAX_STATE_BYTES, SWARM_MAX_SNAPSHOT_BYTES } from './_swarmStore'
+import { validateSwarmStudioHandoff, type SwarmStudioKind } from './_swarmGeneration'
+import { validateSwarmStudioArtifact } from './_swarmStudioArtifact'
 
 export class SwarmError extends Error {
   constructor(message: string, public status = 400) { super(message) }
@@ -62,7 +64,7 @@ export function applySwarmAction(snapshot: SwarmSnapshot, owner: string, body: R
   applyAction(snapshot, owner, body, now)
   // Manual tracking/sharing cannot consume space already reserved for pending
   // jobs. Cancellation and reassignment remain available near the limit.
-  if (before !== JSON.stringify(snapshot) && ['create', 'send', 'add-task', 'start-task', 'share-task'].includes(String(body.action))) capacity(snapshot, 0)
+  if (before !== JSON.stringify(snapshot) && ['create', 'send', 'add-task', 'start-task', 'continue-studio', 'update-artifact', 'share-task'].includes(String(body.action))) capacity(snapshot, 0)
 }
 
 function applyAction(snapshot: SwarmSnapshot, owner: string, body: Record<string, unknown>, now: number): void {
@@ -80,6 +82,41 @@ function applyAction(snapshot: SwarmSnapshot, owner: string, body: Record<string
     return
   }
   const project = projectFor(state, body.projectId)
+  if (body.action === 'update-artifact') {
+    const task = taskFor(state, project.id, body.taskId)
+    const { job, artifact, revision } = readSwarmArtifact(snapshot, body)
+    if (task.executionId !== job.id || snapshot.jobs.some(item => item.taskId === task.id && ACTIVE.has(item.status))) {
+      throw new SwarmError('This work has a newer execution. Reopen its current creation before editing.', 409)
+    }
+    if (['image', 'video'].includes(String(artifact.studioKind))) throw new SwarmError('This creation supports viewing and downloading.', 400)
+    if (!Number.isSafeInteger(body.revision) || Number(body.revision) < 1) throw new SwarmError('Invalid creation revision.')
+    const submitted = body.payload
+    if (!submitted || typeof submitted !== 'object' || Array.isArray(submitted) || Buffer.byteLength(JSON.stringify(submitted)) > 600_000) {
+      throw new SwarmError('This creation is too large or invalid. Your saved creation is unchanged.')
+    }
+    const payload = structuredClone(submitted) as Record<string, unknown>
+    if (artifact.studioKind === 'website') {
+      const previous = artifact.payload as Record<string, unknown>
+      const previousQuality = previous.quality && typeof previous.quality === 'object' ? previous.quality as Record<string, unknown> : {}
+      const quality = payload.quality && typeof payload.quality === 'object' && !Array.isArray(payload.quality) ? payload.quality as Record<string, unknown> : {}
+      // Client edits cannot certify their own runtime validation. Preserve an
+      // existing result only for the exact HTML that was checked.
+      const runtime = payload.html === previous.html ? previousQuality.runtime : {
+        status: 'partial', widths: [], checks: [], limitations: ['Edited HTML has not been runtime-tested.'],
+      }
+      payload.quality = { ...quality, runtime }
+    }
+    try { validateSwarmStudioArtifact(artifact.studioKind as SwarmStudioKind, payload) }
+    catch { throw new SwarmError('The edited creation is incomplete. Your saved creation is unchanged.') }
+    // Recover a lost acknowledgement without silently replacing a newer edit.
+    if (JSON.stringify(artifact.payload) === JSON.stringify(payload) && (body.revision === revision || body.revision === revision - 1)) return
+    if (body.revision !== revision) throw new SwarmError('This creation changed elsewhere. Reopen it before saving.', 409)
+    job.artifact = { ...artifact, payload: structuredClone(payload), revision: revision + 1 }
+    job.updatedAt = now; task.updatedAt = now
+    task.artifact = { executionId: job.id, studioKind: String(artifact.studioKind), revision: revision + 1 }
+    if (artifact.studioKind === 'cad') { task.status = 'waiting'; task.summary = 'Updated model source saved. Open it to compile and verify its geometry.' }
+    return
+  }
   if (body.action === 'send') {
     const request = requestId(body), thread = threadFor(state, project.id, body.thread)
     const content = text(body.content, 'message', 12000), messageId = idFor(owner, 'message', request)
@@ -123,8 +160,34 @@ function applyAction(snapshot: SwarmSnapshot, owner: string, body: Record<string
     project.updatedAt = now
     return
   }
-  if (['assign-task', 'start-task', 'stop-task', 'share-task'].includes(String(body.action))) {
+  if (['assign-task', 'start-task', 'stop-task', 'share-task', 'continue-studio'].includes(String(body.action))) {
     const task = taskFor(state, project.id, body.taskId)
+    if (body.action === 'continue-studio') {
+      const request = requestId(body), jobId = idFor(owner, 'studio', request)
+      const sourceId = text(body.sourceJobId, 'Studio source', 300)
+      const previous = snapshot.jobs.find(job => job.id === jobId)
+      if (previous) {
+        if (previous.projectId !== project.id || previous.taskId !== task.id || previous.artifact?.sourceJobId !== sourceId) {
+          throw new SwarmError('This request ID already belongs to different Studio work.', 409)
+        }
+        return
+      }
+      const source = snapshot.jobs.find(job => job.id === sourceId && job.projectId === project.id && job.taskId === task.id)
+      if (!source) throw new SwarmError('This Studio handoff was not found.', 404)
+      const scope = validateSwarmStudioHandoff(snapshot, owner, {
+        sourceJobId: source.id, taskId: task.id, expectedStudioKind: source.artifact?.studioKind as SwarmStudioKind,
+      })
+      if (scope.studioKind === 'book') throw new SwarmError('Create long-form books in Studio. Background book generation is not available here yet.', 400)
+      capacity(snapshot)
+      const marker = { type: 'studio-generation', sourceJobId: source.id, studioKind: scope.studioKind }
+      snapshot.jobs.push({ id: jobId, projectId: project.id, thread: source.thread, kind: 'task', taskId: task.id,
+        speaker: task.assignee, status: 'queued', input: source.input, requestId: `studio:${request}`,
+        createdAt: now, updatedAt: now, attempts: 0, artifact: marker })
+      task.status = 'queued'; task.summary = 'Queued for Studio.'; task.updatedAt = now; task.progress = 0
+      task.executionId = jobId; task.executionRequestId = request
+      delete task.handoff
+      return
+    }
     if (body.action === 'assign-task') {
       if (!project.members.includes(body.assignee as SwarmAgentId)) throw new SwarmError('Select an agent in this project.')
       if (snapshot.jobs.some(job => job.taskId === task.id && ACTIVE.has(job.status))) throw new SwarmError('Stop this work before assigning another agent.', 409)
@@ -164,6 +227,20 @@ function applyAction(snapshot: SwarmSnapshot, owner: string, body: Record<string
 
 export function createdProjectId(owner: string, body: Record<string, unknown>) {
   return body.action === 'create' ? idFor(owner, 'project', requestId(body)) : undefined
+}
+
+/** Call only on a snapshot selected by the authenticated owner. Reads can open
+ * this task's historical creations; updates separately require its current execution. */
+export function readSwarmArtifact(snapshot: SwarmSnapshot, body: Record<string, unknown>) {
+  const project = projectFor(snapshot.state, body.projectId)
+  const task = taskFor(snapshot.state, project.id, body.taskId)
+  const job = snapshot.jobs.find(item => item.id === body.executionId && item.taskId === task.id && item.projectId === project.id)
+  if (!job || !['done', 'waiting'].includes(job.status) || job.artifact?.type !== 'studio-artifact') {
+    throw new SwarmError('This saved creation was not found.', 404)
+  }
+  const revision = Number(job.artifact.revision)
+  if (!Number.isSafeInteger(revision) || revision < 1) throw new SwarmError('This saved creation could not be loaded.', 409)
+  return { job, artifact: job.artifact, revision }
 }
 
 /** Context is built on the server from this group and this private branch only. */

@@ -1001,6 +1001,8 @@ function buildJsonPayload(
       }
     }
   }
+  // HTML-only kinds (including board) have no JSON payload contract.
+  return null
 }
 
 // ---------------------------------------------------------------------------
