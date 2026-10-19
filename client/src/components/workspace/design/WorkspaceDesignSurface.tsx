@@ -1,0 +1,23 @@
+import type { CSSProperties, ReactNode } from 'react'
+import { BACKGROUNDS } from '../../../lib/backgroundAssets'
+import '../../workspace-preview/real/workspace-refined.css'
+import '../../workspace-preview/real/workspace-scenic.css'
+import '../../workspace-preview/real/workspace-studio-scenic.css'
+import '../../workspace-preview/real/workspace-utility-scenic.css'
+import '../../workspace-preview/real/workspace-map-scenic.css'
+import '../../workspace-preview/real/workspace-calm.css'
+import '../../workspace-preview/real/workspace-launcher-shell.css'
+import '../../workspace-preview/real/workspace-memory-refined.css'
+import '../../workspace-preview/real/workspace-palette-consistency.css'
+import '../../workspace-preview/real/workspace-desktop-shell.css'
+import './workspace-design-surface.css'
+
+/** Shared visual surface only. Authentication, storage and network access stay
+ * with the caller; importing this component never initializes sample data. */
+export default function WorkspaceDesignSurface({ children, preview = false }: { children: ReactNode; preview?: boolean }) {
+  return <div className="nalu-design-review workspace-design-surface" data-workspace-design="true" data-workspace-preview={preview || undefined}
+    style={{ '--review-scene': `url(${BACKGROUNDS['/images/bg-sandy-beach.png'].large})` } as CSSProperties}>
+    <div className="review-desktop-scene" aria-hidden="true" />
+    {children}
+  </div>
+}

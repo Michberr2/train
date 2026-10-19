@@ -6,6 +6,7 @@ import './studioStarter.css'
 
 type Example = { title: string; description: string; detail: string; brief: string; style?: string }
 const EXAMPLES: Record<string, Example> = {
+  movie: { title: 'One idea.\nA whole story.', description: 'Follow a character from the opening scene to the final moment. Choose a runtime, then watch your film come together in five-second H3 shots.', detail: 'Local H3 · connected shots · sound · MP4', brief: 'A lighthouse keeper in a yellow raincoat follows a mysterious radio signal through a storm to rescue a lost sailor. A suspenseful opening, a hopeful discovery, and a warm sunrise ending. Cinematic realism, ocean sounds, and sparse dialogue.' },
   logo: { title: 'A small mark.\nA big first impression.', description: 'Give your idea a recognizable signature. Start with a name, a mood, and what makes it different.', detail: 'Primary mark · alternate lockup', brief: 'Aster, an independent botanical skincare brand. A simple botanical vector mark, refined wordmark, and a warm olive and cream palette', style: 'minimal' },
   palette: { title: 'Set the tone.\nFind your colors.', description: 'Build a palette that feels like you, from the quiet backgrounds to the accents that stand out.', detail: 'Five colors · a sample application', brief: 'a calm coastal wellness brand, with deep pine, sage, warm cream, sand, and a muted terracotta accent; include hex codes and accessible text pairings' },
   brand: { title: 'One identity.\nEvery little detail.', description: 'Bring your logo, colors, typography, and voice together in a brand book made to be used.', detail: 'Cover · identity · typography', brief: 'Aster, a botanical skincare brand: a complete brand book with logo usage, olive and cream colors, elegant typography, photography direction, and a warm, honest tone of voice', style: 'editorial' },
@@ -68,6 +69,7 @@ function Product({ kind }: { kind: 'chair' | 'lamp' | 'table' }) {
 
 function Sample({ kind }: { kind: string }) {
   switch (kind) {
+    case 'movie': return <div className="studio-sample-video"><div className="studio-sample-video-shot"><img src="/images/bg-beach-rocks.png" alt="" /><span>A STORY IN FIVE-SECOND SHOTS</span><h4>The last light.</h4></div><div className="studio-sample-filmstrip">{[0,1,2,3].map(i => <div key={i} style={{ backgroundPosition: `${i*33}% center` }} />)}</div><div className="studio-sample-timeline"><i /></div></div>
     case 'logo': return <div className="studio-sample-logo"><div className="studio-sample-logo-main"><AsterMark /><strong>aster</strong><span>BOTANICAL CARE</span></div><div className="studio-sample-logo-footer"><span><AsterMark />aster</span><span>Thoughtfully rooted.</span></div></div>
     case 'palette': return <div className="studio-sample-palette"><div className="studio-sample-swatches">{[['Pine','#294B40'],['Sage','#A3B49B'],['Cream','#F3EEE3'],['Sand','#D4B995'],['Clay','#B7755D']].map(([name,color]) => <div key={name}><i style={{ background: color }} /><strong>{name}</strong><span>{color}</span></div>)}</div><div className="studio-sample-color-card"><span>THE COASTAL COLLECTION</span><h4>A softer kind<br />of everyday.</h4><p>Room to breathe. Colors to come home to.</p><span className="studio-sample-color-chip">Find your balance ↗</span></div></div>
     case 'brand': return <div className="studio-sample-brand"><div className="studio-sample-book-cover"><span>BRAND GUIDELINES / 01</span><AsterMark /><h4>aster</h4><span>A naturally different perspective.</span></div><div className="studio-sample-book-page"><span>THE VISUAL LANGUAGE</span><h4>Rooted<br />in simplicity.</h4><div className="studio-sample-brand-colors"><i /><i /><i /></div><strong>Aa Bb Cc</strong><p>Considered typography.<br />Warm, honest words.</p><span>IDENTITY — 02</span></div></div>
@@ -95,7 +97,7 @@ export default function StudioStarter({ tool, hasBrief, onStart, onWrite }: {
   // Animated examples start still, including for people who prefer reduced motion.
   const [playing, setPlaying] = useState(false)
   if (!example) return null
-  const animated = tool.key === 'motion' || tool.key === 'video'
+  const animated = tool.key === 'motion' || tool.key === 'video' || tool.key === 'movie'
   return <section className="website-starter studio-starter" aria-label={`${tool.name} starting point`}>
     <div className="website-starter-copy">
       <span className="website-starter-eyebrow"><tool.icon size={15} />A little inspiration</span>

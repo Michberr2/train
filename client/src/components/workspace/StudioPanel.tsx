@@ -1,22 +1,25 @@
 import WorkspaceIntro from './WorkspaceIntro'
 import NaluAvatar from '../avatar/NaluAvatar'
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import NaluMark from '../landing/NaluMark'
+import { lazy, Suspense, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import MotionPreview from './MotionPreview'
 import WebsiteStarter from './WebsiteStarter'
 import StudioStarter from './StudioStarter'
 import type { MotionSpec } from './motionFrame'
+import type { ArtifactPreviewSource } from '../workspace-preview/real/ArtifactPreview'
 import {
   Globe, Sparkles, Palette, BookOpen, Ruler, Footprints, Film, ShoppingBag,
   Image as ImageIcon, FileText, BarChart3, Table2, Video, PenTool, LayoutTemplate,
-  ArrowRight, Eye, X, Gamepad2, GalleryHorizontal, type LucideIcon,
+  ArrowRight, Eye, X, Search, Gamepad2, GalleryHorizontal, type LucideIcon,
 } from 'lucide-react'
 
 // A thing Nalu built (across all chats), surfaced in the Studio gallery.
-export type Creation = { key: string; chatId: string; mi: number; kind: string; title: string; html?: string; img?: string; motion?: Partial<MotionSpec> }
+export type Creation = { key: string; chatId: string; mi: number; kind: string; title: string; html?: string; img?: string; motion?: Partial<MotionSpec>; previewData?: ArtifactPreviewSource }
+const ReviewArtifactPreview = lazy(() => import('../workspace-preview/real/ArtifactPreview'))
 const KIND_ICON: Record<string, LucideIcon> = {
   webpage: Globe, poster: LayoutTemplate, motion: Film, brand: BookOpen, canvas: PenTool,
   palette: Palette, blueprint: Ruler, logo: Sparkles, shopping: ShoppingBag,
-  deck: BarChart3, sheet: Table2, doc: FileText, video: Video, cad: Footprints,
+  deck: BarChart3, sheet: Table2, doc: FileText, video: Video, movie: Film, cad: Footprints,
   game: Gamepad2, board: LayoutTemplate, image: ImageIcon, carousel: GalleryHorizontal,
 }
 
@@ -45,8 +48,15 @@ export const TOOLS: Tool[] = [
   { key: 'spreadsheet', name: 'Spreadsheet', desc: 'A real Excel workbook with formulas, on brand.', icon: Table2, ph: 'a monthly household budget with formulas', tmpl: (b) => `Build a spreadsheet for ${b}` },
   { key: 'image', name: 'Image', desc: 'Generate a photoreal image of anything.', icon: ImageIcon, ph: 'a misty pine forest at sunrise', tmpl: (b) => `Generate an image of ${b}` },
   { key: 'video', name: 'Video', desc: 'Cinematic clips — incl. blueprint→3D grow reveals & walkthroughs.', icon: Video, ph: 'a blueprint growing into a photoreal 3D home walkthrough', tmpl: (b) => `Create a video of ${b}` },
+  { key: 'movie', name: 'Movie', desc: 'A complete story, rendered in five-second H3 shots with sound. Watch progress, resume, and download the finished film.', icon: Film, ph: 'A lighthouse keeper follows a mysterious signal to rescue a lost sailor.', tmpl: (b) => `Create a movie: ${b}` },
 ]
 const SYSTEMS = ['none', 'minimal', 'luxury', 'swiss', 'brutalist', 'editorial', 'glassmorphism', 'bauhaus', 'memphis', 'y2k', 'corporate', 'organic', 'dark neon']
+const TOOL_GROUPS = [
+  { name: 'Design & identity', keys: ['website', 'logo', 'palette', 'brand', 'poster', 'carousel', 'canvas'] },
+  { name: 'Words & numbers', keys: ['document', 'presentation', 'spreadsheet'] },
+  { name: 'Spaces & experiences', keys: ['blueprint', 'walkthrough', 'game', 'shopping'] },
+  { name: 'Image & motion', keys: ['image', 'motion', 'video', 'movie'] },
+]
 // Gallery frames are static and cannot run generated scripts. The full preview
 // uses the artifact's actual card, with its editor, downloads and playback.
 const thumbnailHtml = (html: string) => html.replace(/<\/head>/i, '<style>*,*::before,*::after{animation-play-state:paused!important;animation-delay:-4s!important;transition:none!important}html,body{overflow:hidden}</style></head>')
@@ -60,8 +70,10 @@ export default function StudioPanel({
   resultKey,
   feedback,
   onStop,
+  designPreview = false,
+  designEnabled = false,
 }: {
-  onGenerate: (prompt: string, toolKey: string, target?: Creation) => void
+  onGenerate: (prompt: string, toolKey: string, target?: Creation, movieSeconds?: number) => void
   creations?: Creation[]
   onOpen?: (chatId: string, mi: number) => void
   streaming?: boolean
@@ -71,18 +83,24 @@ export default function StudioPanel({
   resultKey?: string
   feedback?: ReactNode
   onStop?: () => void
+  designPreview?: boolean
+  designEnabled?: boolean
 }) {
+  const reviewLayout = designEnabled || import.meta.env.DEV && designPreview
   const [toolKey, setToolKey] = useState('website')
   const [style, setStyle] = useState('none')
   const [studioView, setStudioView] = useState<'create' | 'library'>('create')
   const [showIdeas, setShowIdeas] = useState(false)
   const [mobilePreview, setMobilePreview] = useState(false)
   const [brief, setBrief] = useState('')
+  const [movieSeconds, setMovieSeconds] = useState(10)
   const [preview, setPreview] = useState<Creation | null>(null)
   const [working, setWorking] = useState(false) // a generation kicked off here is in flight
   const [inline, setInline] = useState<Creation | null>(null) // the result shown in-Studio
   const sawStreaming = useRef(false)
   const [dismissFeedback, setDismissFeedback] = useState(false)
+  const [libraryQuery, setLibraryQuery] = useState('')
+  const [libraryKind, setLibraryKind] = useState('all')
   const taRef = useRef<HTMLTextAreaElement>(null)
   const previewRef = useRef<HTMLDivElement>(null)
   const previewCloseRef = useRef<HTMLButtonElement>(null)
@@ -142,13 +160,19 @@ export default function StudioPanel({
     }
   }
   const tool = TOOLS.find((t) => t.key === toolKey) || TOOLS[0]
+  const ToolIcon = tool.icon
+  const libraryKinds = [...new Set(creations.map(creation => creation.kind))]
+  const visibleCreations = reviewLayout ? creations.filter(creation => (libraryKind === 'all' || creation.kind === libraryKind) && `${creation.title} ${creation.kind}`.toLowerCase().includes(libraryQuery.toLowerCase().trim())) : creations
+  const liveMovie = working ? creations.find(c => c.key === resultKey && c.kind === 'movie') : undefined
+  const liveMovieCard = liveMovie ? renderCreation?.(liveMovie) : null
   const inlineCard = inline ? renderCreation?.(inline) : null
   const previewCard = preview ? renderCreation?.(preview) : null
   const run = () => {
     if (working || streaming || (inline && !brief.trim())) return
     setMobilePreview(true)
     setDismissFeedback(false)
-    onGenerate(inline ? brief.trim() : tool.tmpl(brief.trim() || tool.ph, tool.styled ? style : 'none'), tool.key, inline || undefined)
+    const moviePrompt = `Create a ${movieSeconds}-second movie in five-second shots: ${brief.trim() || tool.ph}`
+    onGenerate(tool.key === 'movie' ? moviePrompt : inline ? brief.trim() : tool.tmpl(brief.trim() || tool.ph, tool.styled ? style : 'none'), tool.key, tool.key === 'movie' ? undefined : inline || undefined, tool.key === 'movie' ? movieSeconds : undefined)
     sawStreaming.current = false
     setWorking(true)
   }
@@ -179,9 +203,9 @@ export default function StudioPanel({
   }
 
   return (
-    <div className="ws-studio ws-feature-page flex-1 min-h-0">
+    <div className="ws-studio ws-feature-page flex-1 min-h-0" data-studio-design-preview={reviewLayout || undefined}>
       <div className="ws-studio-layout">
-        <WorkspaceIntro label="Nalu Studio" title="Let's make something." description="A page, a picture, a whole new idea. Pick a tool and tell Nalu what you have in mind."/>
+        <WorkspaceIntro label={reviewLayout ? 'Studio' : 'Nalu Studio'} title={reviewLayout ? 'An idea. A little room to make it.' : "Let's make something."} description={reviewLayout ? 'Choose your medium, find your direction, and make something yours.' : 'A page, a picture, a whole new idea. Pick a tool and tell Nalu what you have in mind.'}/>
 
         <div className="ws-studio-toolbar">
           <nav className="ws-segments" aria-label="Studio views">
@@ -190,16 +214,30 @@ export default function StudioPanel({
           </nav>
           <div role="group" aria-label="Studio tools" className="ws-studio-tools" hidden={studioView !== 'create'}>
             <label>Make <select aria-label="Studio tool" value={toolKey} onChange={e => { pick(e.target.value); setShowIdeas(false) }} disabled={working}>{TOOLS.map(t => <option key={t.key} value={t.key}>{t.name}</option>)}</select></label>
+            {toolKey === 'movie' && <label>Runtime <select aria-label="Movie runtime" value={movieSeconds} onChange={event => setMovieSeconds(Number(event.target.value))} disabled={working}>
+              <option value={10}>10 seconds</option><option value={30}>30 seconds</option><option value={60}>1 minute</option><option value={180}>3 minutes</option><option value={600}>10 minutes</option><option value={1800}>30 minutes</option><option value={5400}>90 minutes</option>
+            </select></label>}
           </div>
         </div>
         <div className="ws-studio-workbench" data-preview={mobilePreview} hidden={studioView !== 'create'}>
+        {reviewLayout && <aside className="review-studio-toolbox" aria-label="Creation tools">
+          <div className="review-toolbox-heading"><span>Your toolkit</span><small>{TOOLS.length} ways to create</small></div>
+          {TOOL_GROUPS.map(group => <section key={group.name}><h3>{group.name}</h3><div>
+            {group.keys.map(key => {
+              const item = TOOLS.find(candidate => candidate.key === key)!
+              const Icon = item.icon
+              return <button key={key} type="button" aria-pressed={toolKey === key} disabled={working} title={item.desc}
+                onClick={() => { pick(key); setShowIdeas(false) }}><Icon size={18} strokeWidth={1.5}/><span>{item.name}</span></button>
+            })}
+          </div></section>)}
+        </aside>}
         {/* Design screen — the result shows HERE, above the prompt bar */}
         <div className="ws-studio-preview">
           <div className="flex items-center justify-between gap-3 border-b border-glass/[0.07] px-4 py-2.5">
             <button className="ws-mobile-preview-toggle" onClick={() => setMobilePreview(false)}>Edit brief</button>
             <span className="flex min-w-0 items-center gap-2 text-[13px] text-ink">
               {working && <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-glass/20 border-t-accent" />}
-              <span className="truncate">{working ? `Designing your ${tool.name.toLowerCase()}…` : inline ? inline.title : toolKey === 'website' ? 'Website canvas' : `${tool.name} preview`}</span>
+              <span className="truncate">{working ? `${toolKey === 'movie' ? 'Rendering' : 'Designing'} your ${tool.name.toLowerCase()}…` : inline ? inline.title : toolKey === 'website' ? 'Website canvas' : `${tool.name} preview`}</span>
             </span>
             {inline && !working && (
               <div className="flex shrink-0 items-center gap-2">
@@ -210,7 +248,7 @@ export default function StudioPanel({
             )}
           </div>
           <div className="ws-studio-preview-body">
-            {working ? (
+            {liveMovieCard ? <div className="ws-studio-result p-4">{liveMovieCard}{onStop && <button onClick={onStop} className="ws-idea-pill">Pause generation</button>}</div> : working ? (
               <div className="ws-studio-wait flex flex-col items-center justify-center gap-2 text-[12px] text-dim">
                 <span className="h-7 w-7 animate-spin rounded-full border-2 border-glass/15 border-t-accent" />
                 <span>Nalu is composing it — it’ll appear here and in your chat.</span>
@@ -226,11 +264,15 @@ export default function StudioPanel({
                 <span className="text-[12px]">Open “{inline.title}” in chat to view &amp; download</span>
               </button>
             ) : !showIdeas ? (
-              <div className="ws-studio-empty">
-                <NaluAvatar size={210} />
-                <h2>A little space for your idea.</h2>
+              <div className={`ws-studio-empty${reviewLayout ? ' review-studio-canvas-empty' : ''}`}>
+                {reviewLayout ? <NaluMark className="review-empty-logo"/> : <NaluAvatar size={210} />}
+                <h2>{reviewLayout ? <>Your next <em>{tool.name.toLowerCase()}.</em></> : 'A little space for your idea.'}</h2>
                 <p>{tool.desc}</p>
+                {toolKey === 'movie' && <p>Requires H3 running on this computer. On a Mac, a few seconds of footage can take hours to render. Start with a 10-second test; feature-length movies may take days or months.</p>}
                 <button className="ws-idea-pill" onClick={() => setShowIdeas(true)}>Explore starting points <ArrowRight size={13}/></button>
+                {reviewLayout && creations.length > 0 && <div className="review-studio-recent"><span>Or pick up where you left off</span><div>{creations.slice(0, 3).map(creation => {
+                  return <button key={creation.key} onClick={event => openPreview(creation, event.currentTarget)}>{ReviewArtifactPreview && <div className="review-recent-preview"><Suspense fallback={<span>Loading saved preview…</span>}><ReviewArtifactPreview source={creation.previewData} title={creation.title} kind={creation.kind} html={creation.html} img={creation.img} compact/></Suspense></div>}<span>{creation.title}</span><ArrowRight size={13}/></button>
+                })}</div></div>}
               </div>
             ) : toolKey === 'website' ? (
               <WebsiteStarter hasBrief={!!brief.trim()} onWrite={() => taRef.current?.focus()} onStart={startExample} />
@@ -244,7 +286,7 @@ export default function StudioPanel({
         <div className="ws-studio-brief">
           <div className="mb-3 flex items-baseline justify-between gap-3">
             <div className="ws-brief-title">{inline ? 'Keep creating.' : tool.name}</div>
-            <div className="ws-brief-description text-[11px] text-dim">{inline ? `Editing ${inline.title}. Describe what to change; the current version stays saved.` : tool.desc}</div>
+            <div className="ws-brief-description text-[11px] text-dim">{inline && toolKey !== 'movie' ? `Editing ${inline.title}. Describe what to change; the current version stays saved.` : tool.desc}</div>
             {inline && <button className="ws-start-new" onClick={startNew} disabled={working}>Start a new creation</button>}
           </div>
 
@@ -257,8 +299,8 @@ export default function StudioPanel({
             value={brief}
             onChange={(e) => setBrief(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run() } }}
-            rows={5}
-            placeholder={inline ? 'What would you like to change or add?' : `Describe your ${tool.name.toLowerCase()} — e.g. “${tool.ph}”`}
+            rows={reviewLayout ? 2 : 5}
+            placeholder={inline && toolKey !== 'movie' ? 'What would you like to change or add?' : `Describe your ${tool.name.toLowerCase()} — e.g. “${tool.ph}”`}
             className="max-h-44 w-full resize-none bg-transparent py-1 text-[15px] leading-relaxed text-ink outline-none placeholder:text-dim"
           />
           <div className="mt-2 flex items-center justify-between border-t border-glass/[0.07] pt-3">
@@ -266,7 +308,7 @@ export default function StudioPanel({
             <button className="ws-mobile-preview-toggle" onClick={() => setMobilePreview(true)}>Preview <Eye size={13}/></button>
             <button onClick={run} disabled={working || streaming || (!!inline && !brief.trim())}
               className="group flex items-center gap-2 rounded-full bg-gradient-to-r from-[#c9a86a] to-accent px-5 py-2 text-[13px] font-semibold tracking-wide text-[#15170f] shadow-md transition-[filter,transform] hover:brightness-110 active:scale-[0.98]">
-              {inline ? 'Update creation' : 'Generate'} <ArrowRight size={14} className="transition-transform group-hover:translate-x-0.5" />
+              {inline && toolKey !== 'movie' ? 'Update creation' : 'Generate'} <ArrowRight size={14} className="transition-transform group-hover:translate-x-0.5" />
             </button>
           </div>
         </div>
@@ -281,15 +323,21 @@ export default function StudioPanel({
               <span className="h-px flex-1 bg-glass/[0.08]" />
               <span className="text-[10px] text-dim">{creations.length}</span>
             </div>
-            {!creations.length && <div className="ws-library-empty"><NaluAvatar size={180}/><h2>Good things start here.</h2><p>Your creations will be waiting in this space.</p><button className="ws-idea-pill" onClick={() => setStudioView('create')}>Make your first creation <ArrowRight size={13}/></button></div>}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {creations.map((c) => {
+            {!creations.length && <div className="ws-library-empty">{reviewLayout ? <NaluMark className="review-empty-logo"/> : <NaluAvatar size={180}/>}<h2>Good things start here.</h2><p>Your creations will be waiting in this space.</p><button className="ws-idea-pill" onClick={() => setStudioView('create')}>Make your first creation <ArrowRight size={13}/></button></div>}
+            {reviewLayout && creations.length > 0 && <div className="review-library-controls">
+              <label><Search size={17}/><input aria-label="Search creations" placeholder="Find something you made…" value={libraryQuery} onChange={event => setLibraryQuery(event.target.value)}/></label>
+              <div className="review-library-filters" aria-label="Filter creations"><button aria-pressed={libraryKind === 'all'} onClick={() => setLibraryKind('all')}>All work <span>{creations.length}</span></button>{libraryKinds.map(kind => <button key={kind} aria-pressed={libraryKind === kind} onClick={() => setLibraryKind(kind)}>{kind}<span>{creations.filter(creation => creation.kind === kind).length}</span></button>)}</div>
+              {!visibleCreations.length && <p role="status">No creations match this search.</p>}
+            </div>}
+            <div className="review-library-grid grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {visibleCreations.map((c) => {
                 const previewable = !!c.html || !!c.img || !!renderCreation
                 return (
                   <button key={c.key} onClick={(event) => (previewable ? openPreview(c, event.currentTarget) : onOpen?.(c.chatId, c.mi))}
+                    data-creation-kind={c.kind}
                     className="group overflow-hidden rounded-xl border border-glass/[0.08] bg-glass/[0.02] text-left transition-all hover:border-accent/40">
                     <div className="relative h-32 w-full overflow-hidden bg-canvas">
-                      {c.html && c.kind === 'motion' ? <MotionPreview html={c.html} motion={c.motion} thumbnail /> : c.html ? (
+                      {reviewLayout && ReviewArtifactPreview ? <Suspense fallback={<div className="artifact-preview-unavailable"><strong>{c.title}</strong><p>Loading saved preview…</p></div>}><ReviewArtifactPreview source={c.previewData} kind={c.kind} title={c.title} html={c.html} img={c.img}/></Suspense> : c.html && c.kind === 'motion' ? <MotionPreview html={c.html} motion={c.motion} thumbnail /> : c.html ? (
                         <iframe title={c.title} srcDoc={thumbnailHtml(c.html)} scrolling="no" tabIndex={-1} sandbox="" aria-hidden="true"
                           className="pointer-events-none h-[420px] w-[200%] origin-top-left scale-50 border-0" />
                       ) : c.img ? (
@@ -297,7 +345,7 @@ export default function StudioPanel({
                       ) : (
                         <div className="flex h-full items-center justify-center px-3 text-center text-[11px] uppercase tracking-[0.14em] text-dim">{c.kind}</div>
                       )}
-                      <span className="absolute right-1.5 top-1.5 rounded bg-canvas px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-ink shadow-sm">{c.kind}</span>
+                      {!reviewLayout && <span className="absolute right-1.5 top-1.5 rounded bg-canvas px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-ink shadow-sm">{c.kind}</span>}
                     </div>
                     <div className="flex items-center justify-between gap-2 px-2.5 py-2">
                       <span className="min-w-0 flex-1 truncate text-[12px] text-ink">{c.title}</span>
@@ -321,7 +369,7 @@ export default function StudioPanel({
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
             <h2 id={previewTitleId} className="min-w-0 flex-1 basis-full truncate text-sm text-ink sm:basis-auto">{preview.title || 'Creation preview'}</h2>
             <div className="flex shrink-0 items-center gap-2">
-              <button onClick={() => continueEditing(preview)} className="rounded-md bg-glass/10 px-2.5 py-1 text-[12px] text-ink hover:bg-glass/20">Continue editing</button>
+              <button onClick={() => continueEditing(preview)} className="rounded-md bg-glass/10 px-2.5 py-1 text-[12px] text-ink hover:bg-glass/20">{preview.kind === 'movie' ? 'Open movie' : 'Continue editing'}</button>
               {onOpen && (
                 <button onClick={() => { onOpen(preview.chatId, preview.mi); setPreview(null) }}
                   className="rounded-md bg-glass/10 px-2.5 py-1 text-[12px] text-ink hover:bg-glass/20">Open in chat</button>

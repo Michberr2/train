@@ -1,11 +1,10 @@
-// Nalu H3 — on-device, zero-cost, omni-modal video engine.
+// Nalu browser video — image animation with synthesized audio, not MiniMax H3.
 // ---------------------------------------------------------------------------
-// This is the "runs on the person's device so it costs everyone zero dollars"
-// path. Nothing here touches a paid API: a real video file (with native STEREO
-// sound) is synthesized entirely in the browser using WebCodecs/MediaRecorder +
-// WebAudio, with WebGPU used opportunistically when present.
+// Video rendering runs in the browser using MediaRecorder and WebAudio.
+// A supplied image can be used directly; generating a seed through /api/image
+// requires connectivity and consumes the account's image allowance.
 //
-// It covers the three MiniMax-H3 / Hailuo-3 modes:
+// Supported inputs (these do not invoke MiniMax-H3 / Hailuo-3):
 //   • text-to-video       — a subject still (from the free image path or a
 //                           WebGPU frame) is animated into a cinematic clip
 //   • image-to-video      — an attached photo becomes the start frame; we build

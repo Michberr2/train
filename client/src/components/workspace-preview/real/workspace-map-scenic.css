@@ -1,0 +1,152 @@
+/* The real map, reordered into a map work surface and a search inspector.
+   Scoped to the local design review; map rendering and handlers are unchanged. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-workspace {
+  gap:18px; border:0; border-radius:0; background:transparent;
+  --map-surface:rgb(var(--ws-panel)/.97); --map-floating:rgb(var(--ws-panel)/.97);
+  --map-ink:rgb(var(--ws-ink)); --map-dim:rgb(var(--ws-dim));
+  --map-accent:var(--review-accent-ink); --map-border:rgb(var(--ws-glass)/.2);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-workspace[data-map-expanded=true] { padding:16px; gap:16px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-surface {
+  order:1; border:1px solid #ffffff90; border-radius:8px; overflow:hidden;
+  box-shadow:0 10px 30px #151a2820;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-workspace:not(.map-compact) .map-search-panel {
+  order:2; position:relative; inset:auto; width:348px; max-width:34%; z-index:auto;
+  border:1px solid #ffffff85; border-radius:8px; box-shadow:0 8px 32px #151a2815;
+  background:var(--map-surface); backdrop-filter:blur(18px);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-header {
+  flex-shrink:0; padding:24px 22px 20px; border-bottom:1px solid var(--map-border);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-heading { gap:12px; margin-bottom:13px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-heading>span:first-child {
+  width:34px; height:34px; border:1px solid rgb(var(--ws-glass)/.15); background:rgb(var(--ws-panel2));
+  color:var(--map-accent); border-radius:5px;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-heading>span:first-child svg { width:17px; height:17px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-heading>span:nth-child(2) { font-size:22px; font-weight:400; letter-spacing:-.04em; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-heading>button { width:34px; height:34px; min-height:34px; border:1px solid rgb(var(--ws-glass)/.12); border-radius:4px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-intro { margin:0 0 18px; font-size:13px; line-height:1.8; color:var(--map-dim); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-field {
+  min-height:49px; gap:9px; border-radius:4px; padding:5px 7px 5px 12px;
+  background:rgb(var(--ws-panel)); border:1px solid rgb(var(--ws-glass)/.26);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-field input { min-width:0; font-size:13px; line-height:1.6; color:var(--map-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-field>button { display:grid; place-items:center; min-width:32px; width:32px; min-height:36px; height:36px; border-radius:3px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-field>button:last-child { background:var(--map-accent); color:rgb(var(--ws-panel)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-place-categories { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; margin-top:16px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-place-categories>button {
+  min-width:0; min-height:35px; padding:7px 4px; font-size:10px; line-height:1.4;
+  border:1px solid rgb(var(--ws-glass)/.14); border-radius:4px;
+  background:rgb(var(--ws-panel2)/.55); color:var(--map-ink); white-space:normal;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-place-categories>button:hover:not(:disabled) { color:var(--map-accent); border-color:var(--map-accent); background:rgb(var(--ws-panel2)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-results { min-height:0; padding:17px; overscroll-behavior:contain; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-empty {
+  display:flex; align-items:center; justify-content:center; min-height:150px; padding:25px;
+  border:1px dashed rgb(var(--ws-glass)/.23); border-radius:5px; color:var(--map-dim); font-size:13px; line-height:1.8;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-place-result {
+  gap:9px; padding:15px 12px; margin-bottom:9px; border:1px solid rgb(var(--ws-glass)/.15);
+  border-radius:5px; background:rgb(var(--ws-panel));
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-place-result:has([aria-pressed=true]) { border-color:var(--map-accent); background:rgb(var(--ws-panel2)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-place-result>button { gap:11px; align-items:flex-start; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-place-result>button>span:first-child { width:25px; height:25px; font:11px 'Nalu Review Mono',monospace; border-radius:4px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-place-result>button>span:last-child>span:first-child { font-size:14px; font-weight:500; line-height:1.5; white-space:normal; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-place-result>button>span:last-child>span:nth-child(2) { font-size:12px; line-height:1.7; white-space:normal; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-place-result>button>span:last-child>span:last-child { margin-top:8px; font-size:11px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-place-result>a { display:grid; place-items:center; width:26px; min-height:30px; color:var(--map-dim); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.map-search-answer,.map-comparison) { border:1px solid rgb(var(--ws-glass)/.18); border-radius:5px; background:rgb(var(--ws-panel2)/.7); margin-bottom:14px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-answer { padding:16px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-answer p { font-size:13px; line-height:1.85; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-comparison table { font-size:11px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-comparison :is(td,th) { padding:9px 7px; }
+
+/* Map tools form two quiet docks. All original layer, camera and drawing
+   controls stay on the map, including Google/MapLibre's own controls. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-toolbar { inset:16px 16px auto; gap:10px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-toolbar>div { gap:7px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-control {
+  min-height:43px; padding:0 13px; border:1px solid var(--map-border); border-radius:5px;
+  background:var(--map-floating); color:var(--map-ink); font-size:12px; box-shadow:0 3px 12px #151a2814;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-control:is(:hover,[aria-pressed=true],[aria-expanded=true]) { background:rgb(var(--ws-panel2)); color:var(--map-accent); border-color:rgb(var(--ws-glass)/.4); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-control-count { background:rgb(var(--ws-panel2)); color:var(--map-accent); border:1px solid rgb(var(--ws-glass)/.18); border-radius:3px; font-size:10px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-bottom-controls { left:16px; bottom:30px; gap:7px; max-width:calc(100% - 78px); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-base-select { min-height:43px; padding:0 12px; gap:10px; border-radius:5px; font:9px 'Nalu Review Mono',monospace; text-transform:uppercase; box-shadow:0 3px 12px #151a2814; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-base-select select { width:94px; padding:8px 0; font:12px Inter,system-ui,sans-serif; text-transform:none; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.map-view-state,.map-data-status) { border:1px solid var(--map-border); border-radius:4px; background:var(--map-floating); color:var(--map-dim); font-size:11px; line-height:1.5; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-view-state { left:16px; bottom:86px; padding:9px 12px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-data-status { bottom:84px; right:16px; max-width:45%; padding:8px 10px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-coverage { left:16px; top:74px; border-radius:5px; padding:14px; font-size:12px; line-height:1.6; }
+
+/* A layer inspector lives opposite the search inspector on wide maps. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-panel {
+  top:74px; left:16px; right:auto; width:326px; max-width:calc(100% - 32px);
+  max-height:calc(100% - 163px); border:1px solid rgb(var(--ws-glass)/.25);
+  border-radius:7px; background:var(--map-floating); box-shadow:0 12px 35px #151a2829;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-panel header { padding:17px 15px 5px 20px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-panel h2 { font-size:19px; font-weight:400; letter-spacing:-.025em; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-intro { margin:6px 20px 17px; font-size:12px; line-height:1.75; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-tabs { gap:0; padding:0; margin:0 17px 14px; border-bottom:1px solid var(--map-border); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-tabs button { min-height:42px; padding:9px 8px; border-radius:0; border-bottom:2px solid transparent; color:var(--map-dim); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-tabs button[aria-selected=true] { color:var(--map-accent); background:transparent; border-bottom-color:var(--map-accent); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-search { margin:0 17px 14px; border-radius:4px; background:rgb(var(--ws-panel)); min-height:44px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-scroll { padding:0 13px 14px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-category>button { min-height:46px; padding:11px 7px; font-size:12px; border-color:rgb(var(--ws-glass)/.14); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-row { border-radius:4px; padding:7px; margin-bottom:7px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-row.is-active { background:rgb(var(--ws-panel2)); border-color:rgb(var(--ws-glass)/.16); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-toggle { gap:11px; padding:6px 2px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-toggle strong { font-size:13px; line-height:1.6; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-description { font-size:11px; line-height:1.75; color:var(--map-dim); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-details { padding-left:29px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-icon-button { min-height:36px; width:36px; border-radius:4px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-panel footer { padding:12px 17px; background:rgb(var(--ws-panel2)/.55); border-color:var(--map-border); line-height:1.5; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-compact .map-search-panel {
+  left:auto; right:16px; top:74px; bottom:auto; width:min(360px,calc(100% - 32px));
+  max-height:calc(100% - 163px); border:1px solid var(--map-border); border-radius:7px;
+  background:var(--map-floating); box-shadow:0 12px 35px #151a2829;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-compact .map-layer-panel { left:auto; right:16px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-compact .map-search-header { padding:16px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-compact .map-search-heading { margin-bottom:12px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-compact .map-search-heading>span:nth-child(2) { font-size:19px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-compact .map-place-categories { margin-top:12px; gap:6px; }
+
+@media(max-width:767px) {
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-workspace { gap:0; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-workspace[data-map-expanded=true] { padding:0; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-workspace[data-map-expanded=true] .map-surface { border:0; border-radius:0; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-toolbar { inset:10px 10px auto; gap:6px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-toolbar>div { gap:5px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-control { min-height:43px; padding:0 10px; gap:6px; font-size:11px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-bottom-controls { left:10px; bottom:29px; gap:5px; max-width:calc(100% - 64px); }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-base-select { gap:6px; padding:0 8px; min-height:43px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-base-select select { width:76px; font-size:11px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-compact :is(.map-search-panel,.map-layer-panel) {
+    inset:63px 10px auto; width:auto; max-width:none; max-height:calc(100% - 158px);
+    border-radius:6px; background:rgb(var(--ws-panel));
+  }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-compact .map-search-header { padding:13px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-heading>span:nth-child(2) { font-size:18px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-heading>span:first-child { width:29px; height:29px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-field { min-height:46px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-field input { font-size:16px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-place-categories { gap:5px; margin-top:10px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-place-categories>button { min-height:32px; padding:6px 3px; font-size:10px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-results { padding:12px; min-height:65px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-search-empty { min-height:90px; padding:15px; font-size:12px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-place-result { padding:12px 10px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-panel header { padding:12px 12px 4px 16px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-intro { margin:3px 16px 10px; font-size:11px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-tabs { margin:0 13px 10px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-search { margin:0 13px 10px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-search input { font-size:16px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-scroll { padding:0 9px 10px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-data-status { right:10px; bottom:81px; max-width:65%; font-size:10px; padding:6px 8px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-view-state { left:10px; bottom:81px; font-size:10px; padding:7px 9px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-coverage { top:auto; left:10px; bottom:116px; padding:11px; font-size:11px; }
+}

@@ -1,0 +1,125 @@
+/* Local preview only. The library and graph share the shared slate-glass language. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory.memory-review {
+  --memory-ink:rgb(var(--ws-ink)); --memory-dim:rgb(var(--ws-dim)); --memory-line:rgb(var(--ws-glass) / 0.173);
+  display:flex; flex:1; flex-direction:column; min-height:0; min-width:0; padding:0;
+  background:transparent; border:0; border-radius:0; overflow:hidden; color:var(--memory-ink); font-family:Inter,Arial,sans-serif;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; flex-shrink:0; padding:5px 0 24px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-eyebrow { display:block; color:rgb(var(--ws-dim)); font:10px/1.4 'Nalu Review Mono',ui-monospace,monospace; letter-spacing:.13em; text-transform:uppercase; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-heading h1 { margin:11px 0 10px; font-size:clamp(27px,2.6vw,37px); line-height:1.12; font-weight:300; letter-spacing:-.04em; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-heading p { margin:0; color:var(--memory-dim); font-size:13px; line-height:1.65; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-summary { display:flex; gap:22px; padding-bottom:3px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-summary button { display:flex; flex-direction:column; align-items:flex-start; gap:7px; min-height:50px; border:0; background:transparent; padding:0; text-align:left; color:var(--memory-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-summary strong { font:300 24px/1 Inter,Arial,sans-serif; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-summary span { white-space:nowrap; color:var(--memory-dim); font-size:10px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-summary button:hover span { color:rgb(var(--ws-ink)); text-decoration:underline; text-underline-offset:4px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-layout { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(320px,.85fr); gap:24px; flex:1; min-height:0; border-radius:0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-library { display:flex; flex-direction:column; min-width:0; min-height:0; border:1px solid var(--memory-line); border-radius:2px; background:linear-gradient(140deg,rgb(var(--ws-panel) / 0.85),rgb(var(--ws-canvas) / 0.93)); box-shadow:0 15px 40px -30px #101421; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-library-tools { flex-shrink:0; padding:20px 20px 0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-search { display:flex; align-items:center; gap:11px; min-height:46px; border:1px solid rgb(var(--ws-glass) / 0.267); padding:0 13px; color:rgb(var(--ws-dim)); background:rgb(var(--ws-canvas) / 0.22); border-radius:2px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-search:focus-within { border-color:rgb(var(--ws-dim)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-search input { width:100%; min-width:0; height:44px; padding:0; border:0; outline:0; border-radius:0; background:transparent; color:var(--memory-ink); font-size:13px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-search input::placeholder { color:rgb(var(--ws-dim)); opacity:1; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-search button { display:grid; place-items:center; flex-shrink:0; width:30px; height:36px; border:0; background:transparent; color:var(--memory-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-filters { display:flex; gap:18px; margin-top:13px; overflow-x:auto; scrollbar-width:thin; border-bottom:1px solid var(--memory-line); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-filters button { min-height:43px; flex-shrink:0; padding:0 0 10px; border:0; border-bottom:1px solid transparent; color:var(--memory-dim); background:transparent; font-size:12px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-filters button[aria-pressed=true] { color:rgb(var(--ws-ink)); border-bottom-color:rgb(var(--ws-dim)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-filters button:hover { color:rgb(var(--ws-ink)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-list-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-shrink:0; padding:10px 20px; color:rgb(var(--ws-dim)); font-size:11px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-list-heading button { display:flex; align-items:center; gap:6px; min-height:32px; padding:0; border:0; background:transparent; color:rgb(var(--ws-dim)); font-size:11px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-list-heading button:hover { color:rgb(var(--ws-ink)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-list { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; list-style:none; padding:0 8px; margin:0; scrollbar-width:thin; scrollbar-color:rgb(var(--ws-glass) / 0.302) transparent; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-list>li { margin:0; padding:0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-item { display:flex; align-items:center; width:100%; min-height:79px; gap:13px; padding:15px 12px; border:1px solid transparent; border-top-color:rgb(var(--ws-glass) / 0.102); background:transparent; color:var(--memory-ink); text-align:left; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-item:hover { background:rgb(var(--ws-glass) / 0.031); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-item[aria-pressed=true] { background:rgb(var(--ws-glass) / 0.063); border-color:rgb(var(--ws-glass) / 0.329); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-item-icon { display:grid; place-items:center; flex-shrink:0; width:35px; height:38px; border:1px solid rgb(var(--ws-glass) / 0.169); background:rgb(var(--ws-glass) / 0.02); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-item-copy { display:flex; flex-direction:column; min-width:0; flex:1; gap:7px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-item-copy strong { font-size:14px; line-height:1.4; font-weight:450; overflow-wrap:anywhere; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-item-copy>span { display:block; color:var(--memory-dim); font-size:11px; line-height:1.5; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-item-copy i { padding:0 7px; font-style:normal; opacity:.7; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-item>svg { flex-shrink:0; color:rgb(var(--ws-dim)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-library-footer { padding:15px 20px; flex-shrink:0; border-top:1px solid var(--memory-line); color:rgb(var(--ws-dim)); font-size:11px; line-height:1.6; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-empty { display:flex; flex:1; flex-direction:column; justify-content:center; align-items:flex-start; gap:14px; padding:25px; color:rgb(var(--ws-dim)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-empty h2 { margin:0; font-size:19px; font-weight:400; color:var(--memory-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-empty p { margin:0; max-width:340px; font-size:13px; line-height:1.7; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-empty button { min-height:40px; padding:0; border:0; background:transparent; color:var(--memory-ink); text-decoration:underline; text-underline-offset:5px; font-size:12px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-inspector { display:flex; flex-direction:column; gap:20px; min-width:0; min-height:0; overflow:auto; padding-right:3px; scrollbar-width:thin; scrollbar-color:rgb(var(--ws-glass) / 0.267) transparent; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-network { flex-shrink:0; border:1px solid rgb(var(--ws-glass) / 0.2); background:linear-gradient(145deg,rgb(var(--ws-panel) / 0.91),rgb(var(--ws-canvas) / 0.93)); border-radius:2px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-network>header { display:flex; align-items:flex-start; justify-content:space-between; gap:15px; padding:18px 18px 0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-network h2 { margin:7px 0 0; font-size:18px; font-weight:350; letter-spacing:-.02em; color:var(--memory-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-network>header>span { font:10px/1.4 'Nalu Review Mono',ui-monospace,monospace; color:rgb(var(--ws-dim)); white-space:nowrap; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-canvas { position:relative; width:100%; height:242px; overflow:hidden; background:transparent; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-canvas canvas { position:absolute; inset:0; display:block; touch-action:none; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-graph-tools { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 11px 10px 17px; color:rgb(var(--ws-dim)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-graph-tools>span { font-size:10px; line-height:1.5; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-graph-tools>div { display:flex; gap:3px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-graph-tools button { display:grid; place-items:center; width:32px; height:32px; background:transparent; color:rgb(var(--ws-dim)); border:1px solid rgb(var(--ws-glass) / 0.192); border-radius:1px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-graph-tools button:hover { background:rgb(var(--ws-glass) / 0.063); border-color:rgb(var(--ws-glass) / 0.522); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-details { padding:20px 18px; border:1px solid rgb(var(--ws-glass) / 0.2); border-radius:2px; background:linear-gradient(145deg,rgb(var(--ws-panel) / 0.87),rgb(var(--ws-canvas) / 0.93)); scroll-margin-block:14px; outline:none; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-details>header { display:flex; align-items:flex-start; gap:12px; padding:0 0 16px; border-bottom:1px solid var(--memory-line); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-details:has([aria-label="Close memory details"]) { order:-1; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-item-icon,
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-detail-icon { display:none!important; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-detail-icon { display:grid; place-items:center; flex-shrink:0; width:35px; height:39px; border:1px solid rgb(var(--ws-glass) / 0.251); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-details>header>div { flex:1; min-width:0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-details h2 { margin:7px 0 0; color:var(--memory-ink); font-size:19px; line-height:1.4; font-weight:400; letter-spacing:-.02em; overflow-wrap:anywhere; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-details>header>button { display:grid; place-items:center; width:32px; height:32px; flex-shrink:0; background:transparent; border:0; color:rgb(var(--ws-dim)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-detail-body>p { color:rgb(var(--ws-dim)); font-size:12px; line-height:1.8; margin:16px 0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-facts { display:grid; grid-template-columns:1fr 1fr; gap:0 22px; margin:0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-facts>div { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid rgb(var(--ws-glass) / 0.11); font-size:11px; line-height:1.6; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-facts dt { color:rgb(var(--ws-dim)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-facts dd { margin:0; text-align:right; color:rgb(var(--ws-ink)); font-size:12px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-open { display:flex; align-items:center; justify-content:space-between; gap:15px; width:100%; min-height:44px; margin:17px 0 4px; padding:11px 15px; border:1px solid var(--review-accent-ink); border-radius:1px; background:var(--review-accent-ink); color:rgb(var(--ws-canvas)); font-size:12px; font-weight:500; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-open:hover { background:rgb(var(--ws-ink)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-related { padding-top:17px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-related h3 { display:flex; align-items:center; justify-content:space-between; margin:0 0 8px; color:rgb(var(--ws-dim)); font-size:11px; font-weight:500; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-related h3>span { font:10px 'Nalu Review Mono',ui-monospace,monospace; color:rgb(var(--ws-dim)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-related ul { list-style:none; padding:0; margin:0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-related button { display:flex; align-items:center; gap:10px; width:100%; min-height:48px; padding:9px 0; border:0; border-bottom:1px solid rgb(var(--ws-glass) / 0.11); color:rgb(var(--ws-dim)); background:transparent; text-align:left; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-related button>span:first-child { width:4px; height:4px; flex-shrink:0; border-radius:50%; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-related button>span:nth-child(2) { flex:1; min-width:0; font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-related small { margin-left:9px; color:rgb(var(--ws-dim)); font-size:10px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-related button>svg { flex-shrink:0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-related button:hover { background:rgb(var(--ws-glass) / 0.031); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review :is(button,input):focus-visible { outline:2px solid rgb(var(--ws-dim)); outline-offset:3px; }
+@media(max-width:1120px) {
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-heading { align-items:flex-start; flex-direction:column; gap:20px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-summary { width:100%; gap:30px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-summary button { flex-direction:row; align-items:baseline; min-height:28px; gap:8px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-summary strong { font-size:20px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-layout { gap:18px; grid-template-columns:minmax(0,1fr) minmax(310px,.85fr); }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-library-tools { padding:17px 15px 0; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-filters { gap:14px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-filters button { font-size:11px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-item { gap:10px; padding:14px 9px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-facts { grid-template-columns:1fr; }
+}
+@media(max-width:760px) {
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory.memory-review { overflow-y:auto; padding-bottom:20px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-heading { padding:5px 2px 22px; gap:19px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-heading h1 { font-size:29px; max-width:320px; line-height:1.15; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-heading p { font-size:12px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-summary button { flex-direction:column; align-items:flex-start; gap:6px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-summary span { font-size:9px; white-space:normal; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-layout { display:flex; flex-direction:column; flex:none; gap:25px; overflow:visible; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-library { height:440px; min-height:350px; max-height:65dvh; flex-shrink:0; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-library-tools { padding:15px 12px 0; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-filters { justify-content:space-between; gap:10px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-filters button { font-size:10px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-list-heading { padding:8px 13px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-item { min-height:74px; padding:13px 7px; gap:10px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-item-copy strong { font-size:13px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-item-copy>span { font-size:10px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-library-footer { padding:12px 14px; font-size:10px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-inspector { overflow:visible; min-height:0; padding:0; gap:24px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-details { order:0; padding:18px 16px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-network { order:1; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-facts { grid-template-columns:1fr 1fr; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-canvas { height:260px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review-graph-tools button { width:38px; height:38px; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .memory-review * { scroll-behavior:auto; }
+}

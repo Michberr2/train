@@ -7,7 +7,7 @@ import WorkspaceIntro from './WorkspaceIntro'
 // what's inside. As you keep asking questions the lobes fill in and the brain grows —
 // the substrate the Inkling model learns you from. Web-only (ships only in the web client).
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Brain, MessageSquare, Palette, MapPin, Bot, ArrowDownToLine, ArrowUpFromLine, X, ExternalLink } from 'lucide-react'
+import { Brain, MessageSquare, Palette, MapPin, Bot, ArrowDownToLine, ArrowUpFromLine, X, ExternalLink, Search, ChevronRight, Network, Minus, Plus, Maximize2 } from 'lucide-react'
 
 // ---- brain regions -------------------------------------------------------------
 // Each lobe owns a family of memory and its own shade of blue (the app's aesthetic).
@@ -82,6 +82,30 @@ type NType = 'core' | 'lobe' | 'chat' | 'topic' | Kind | 'map' | 'flow'
 interface GNode { id: string; label: string; type: NType; color: string; r: number; x: number; y: number; vx: number; vy: number; fixed?: boolean; meta: NodeMeta }
 interface GLink { a: string; b: string; k: number }
 interface Summary { chats: number; studio: number; map: number; autopilot: number; attIn: number; attOut: number; qa: number; lobeCounts: Record<LobeId, number> }
+
+// Presentation-only names for the local redesign. The shared read model and its
+// graph links stay exactly the same as the current Memory page.
+const REVIEW_REGIONS: Record<LobeId, { label: string; color: string; description: string }> = {
+  frontal: { label: 'Planning', color: '#9dc5ee', description: 'Workflows, automations, and conversations about your next steps.' },
+  temporal: { label: 'Conversations', color: '#d8e9fa', description: 'Conversations, writing, and the ideas you have worked through.' },
+  parietal: { label: 'Data & places', color: '#9bd9f4', description: 'Spreadsheets, financial questions, and saved map items.' },
+  occipital: { label: 'Creative work', color: '#b9d1f2', description: 'Designs, presentations, images, and other visual work.' },
+  limbic: { label: 'Knowledge', color: '#e3edf8', description: 'Documents, research, and reference material from your work.' },
+}
+type MemoryFilter = 'all' | 'chat' | 'creations' | 'flow' | 'map'
+const MEMORY_FILTERS: { id: MemoryFilter; label: string }[] = [
+  { id: 'all', label: 'All' }, { id: 'chat', label: 'Conversations' },
+  { id: 'creations', label: 'Creations' }, { id: 'flow', label: 'Workflows' }, { id: 'map', label: 'Places' },
+]
+const isCreation = (node: GNode) => Object.prototype.hasOwnProperty.call(KIND_LABEL, node.type)
+const isSavedNode = (node: GNode) => !['core', 'lobe', 'topic'].includes(node.type)
+const reviewRegion = (node: GNode) => node.meta.lobe || (isCreation(node) ? KIND_LOBE[node.type as Kind] : undefined)
+const reviewNodeColor = (node: GNode) => { const region = reviewRegion(node); return region ? REVIEW_REGIONS[region].color : '#dceafa' }
+const reviewNodeLabel = (node: GNode) => node.type === 'core' ? 'Your workspace' : node.type === 'lobe' && node.meta.lobe ? REVIEW_REGIONS[node.meta.lobe].label : node.label
+const reviewNodeType = (node: GNode) => node.type === 'core' ? 'Overview' : node.type === 'lobe' ? 'Collection' : node.type === 'topic' ? 'Topic' : node.type === 'chat' ? 'Conversation' : node.type === 'map' ? 'Saved place or layer' : node.type === 'flow' ? 'Workflow' : KIND_LABEL[node.type as Kind] || node.type
+function MemoryNodeIcon({ node, size = 17 }: { node: GNode; size?: number }) {
+  return node.type === 'chat' ? <MessageSquare size={size}/> : node.type === 'map' ? <MapPin size={size}/> : node.type === 'flow' ? <Bot size={size}/> : isCreation(node) ? <Palette size={size}/> : <Network size={size}/>
+}
 
 function readJSON<T>(key: string): T | null { try { const s = localStorage.getItem(key); return s ? (JSON.parse(s) as T) : null } catch { return null } }
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
@@ -250,18 +274,32 @@ function brainProgress(s: Summary): { pct: number; activeLobes: number } {
   return { pct, activeLobes: active }
 }
 
-export default function MemoryPanel({ onOpenChat }: { onOpenChat?: (chatId: string) => void }) {
+export default function MemoryPanel({ onOpenChat, designPreview = false, designEnabled = false }: { onOpenChat?: (chatId: string) => void; designPreview?: boolean; designEnabled?: boolean }) {
+  const reviewLayout = designEnabled || import.meta.env.DEV && designPreview
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const detailRef = useRef<HTMLElement>(null)
   const [brain, setBrain] = useState(buildBrain)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [memoryQuery, setMemoryQuery] = useState('')
+  const [memoryFilter, setMemoryFilter] = useState<MemoryFilter>('all')
+  const [allConnections, setAllConnections] = useState(false)
   // Resolve the current node each render, so an open drawer cannot retain an old
   // title/count or an Open chat action for a deleted entry after hydration.
   const selected = brain.nodes.find((node) => node.id === selectedId) || null
   const cam = useRef({ x: 0, y: 0, z: 1 })
+  const fitGraph = useRef<() => void>(() => {})
   const hoverRef = useRef<GNode | null>(null)
   const selRef = useRef<string | null>(null)
   useEffect(() => { selRef.current = selected?.id ?? null }, [selected])
+  const selectMemory = (id: string) => {
+    setSelectedId(id)
+    if (reviewLayout && window.matchMedia('(max-width:760px)').matches) requestAnimationFrame(() => {
+      const detail = detailRef.current
+      detail?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion:reduce)').matches ? 'auto' : 'smooth' })
+      detail?.focus({ preventScroll: true })
+    })
+  }
 
   useEffect(() => {
     const refresh = () => {
@@ -296,7 +334,21 @@ export default function MemoryPanel({ onOpenChat }: { onOpenChat?: (chatId: stri
     for (const l of links) { (adj.get(l.a) || adj.set(l.a, new Set()).get(l.a)!).add(l.b); (adj.get(l.b) || adj.set(l.b, new Set()).get(l.b)!).add(l.a) }
 
     let W = 0, H = 0, dpr = Math.min(2, window.devicePixelRatio || 1)
-    const resize = () => { W = wrap.clientWidth; H = wrap.clientHeight; dpr = Math.min(2, window.devicePixelRatio || 1); canvas.width = W * dpr; canvas.height = H * dpr; canvas.style.width = W + 'px'; canvas.style.height = H + 'px' }
+    let fitted = false
+    const fit = () => {
+      if (!W || !H) return
+      const xs = nodes.map(node => node.x), ys = nodes.map(node => node.y)
+      const left = Math.min(...xs) - 65, right = Math.max(...xs) + 65
+      const top = Math.min(...ys) - 40, bottom = Math.max(...ys) + 55
+      const z = Math.min(1.1, Math.max(0.25, Math.min(W / (right - left), H / (bottom - top))))
+      cam.current = { x: -(left + right) / 2 * z, y: -(top + bottom) / 2 * z, z }
+    }
+    fitGraph.current = fit
+    const resize = () => {
+      W = wrap.clientWidth; H = wrap.clientHeight; dpr = Math.min(2, window.devicePixelRatio || 1)
+      canvas.width = W * dpr; canvas.height = H * dpr; canvas.style.width = W + 'px'; canvas.style.height = H + 'px'
+      if (reviewLayout && !fitted && W && H) { fit(); fitted = true }
+    }
     resize()
     const ro = new ResizeObserver(resize); ro.observe(wrap)
 
@@ -331,7 +383,7 @@ export default function MemoryPanel({ onOpenChat }: { onOpenChat?: (chatId: stri
 
     const draw = () => {
       t += 0.016
-      const isDark = document.documentElement.classList.contains('dark')
+      const isDark = reviewLayout || document.documentElement.classList.contains('dark')
       const hov = hoverRef.current, sel = selRef.current
       const active = hov ? adj.get(hov.id) : sel ? adj.get(sel) : null
       const focusId = hov?.id || sel
@@ -345,12 +397,52 @@ export default function MemoryPanel({ onOpenChat }: { onOpenChat?: (chatId: stri
       for (const l of links) {
         const a = byId.get(l.a), b = byId.get(l.b); if (!a || !b) continue
         const lit = focusId && (l.a === focusId || l.b === focusId)
-        ctx.strokeStyle = lit ? 'rgba(150,195,255,0.5)' : 'rgba(110,160,235,0.11)'
+        ctx.strokeStyle = reviewLayout
+          ? lit ? 'rgba(222,236,226,0.62)' : 'rgba(222,236,226,0.17)'
+          : lit ? 'rgba(150,195,255,0.5)' : 'rgba(110,160,235,0.11)'
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke()
       }
-      // nodes (with glow)
+      // Preview labels avoid both the core mark and previously placed labels.
+      const labelBoxes = reviewLayout ? nodes.filter(node => node.type === 'core' || node.type === 'lobe').map(node => ({ left: node.x - (node.type === 'core' ? 23 : 12), right: node.x + (node.type === 'core' ? 23 : 12), top: node.y - (node.type === 'core' ? 23 : 12), bottom: node.y + (node.type === 'core' ? 23 : 12) })) : []
+      // nodes (with glow in the original production view)
       for (const n of nodes) {
         const dim = focusId && n.id !== focusId && !active?.has(n.id)
+        if (reviewLayout) {
+          const col = reviewNodeColor(n)
+          const r = n.type === 'core' ? 18 : n.type === 'lobe' ? 8 : n.type === 'topic' ? 5 : 4
+          ctx.globalAlpha = dim ? 0.27 : 1
+          ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2)
+          ctx.fillStyle = n.type === 'core' ? '#233e5b' : col
+          ctx.fill(); ctx.strokeStyle = '#e4effb'; ctx.lineWidth = 0.8 / cam.current.z; ctx.stroke()
+          if (n.id === sel || n.id === hov?.id) {
+            ctx.beginPath(); ctx.arc(n.x, n.y, r + 6 / cam.current.z, 0, Math.PI * 2)
+            ctx.strokeStyle = col; ctx.lineWidth = 1 / cam.current.z; ctx.stroke()
+          }
+          if (n.type === 'core') {
+            const mark = tintedWolf('#eef6ff')
+            if (mark) ctx.drawImage(mark, n.x - 13, n.y - 13, 26, 26)
+          }
+          if (!dim && n.type !== 'core' && (n.type === 'lobe' || n.id === focusId)) {
+            ctx.globalAlpha = 1
+            const fontSize = 10 / cam.current.z, gap = 7 / cam.current.z
+            ctx.font = `${fontSize}px Inter, sans-serif`
+            ctx.textAlign = 'center'; ctx.fillStyle = '#e4effb'
+            const label = reviewNodeLabel(n).slice(0, 26), width = ctx.measureText(label).width
+            const above = { x: n.x, y: n.y - r - gap }, below = { x: n.x, y: n.y + r + gap + fontSize }
+            const side = { x: n.x + (n.x < 0 ? -1 : 1) * (r + gap + width / 2), y: n.y + fontSize / 3 }
+            const candidates = [n.y < 0 ? above : below, side, n.y < 0 ? below : above]
+            for (const position of candidates) {
+              const box = { left: position.x - width / 2 - gap / 2, right: position.x + width / 2 + gap / 2, top: position.y - fontSize, bottom: position.y + gap / 2 }
+              if (labelBoxes.some(other => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) continue
+              labelBoxes.push(box)
+              ctx.shadowColor = '#193552'; ctx.shadowBlur = 5
+              ctx.fillText(label, position.x, position.y)
+              ctx.shadowBlur = 0; ctx.shadowColor = 'transparent'
+              break
+            }
+          }
+          continue
+        }
         const pulse = n.type === 'core' ? 1 + Math.sin(t * 1.6) * 0.06 : n.type === 'lobe' ? 1 + Math.sin(t * 1.2 + n.x) * 0.04 : 1
         const r = n.r * pulse
         // The core (primary) wolf renders BLACK in light mode (near-white in dark so it
@@ -418,7 +510,7 @@ export default function MemoryPanel({ onOpenChat }: { onOpenChat?: (chatId: stri
       const clicked = !moved ? pick(e.clientX - r.left, e.clientY - r.top) : null
       if (dragNode && dragNode.type !== 'core') dragNode.fixed = false
       dragNode = null; panning = false
-      if (clicked) setSelectedId(clicked.id) // a click opens the breakdown
+      if (clicked) selectMemory(clicked.id) // a click opens the breakdown
     }
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
@@ -429,17 +521,74 @@ export default function MemoryPanel({ onOpenChat }: { onOpenChat?: (chatId: stri
     canvas.addEventListener('pointerdown', onDown); canvas.addEventListener('pointermove', onMove)
     canvas.addEventListener('pointerup', onUp); canvas.addEventListener('wheel', onWheel, { passive: false })
     return () => { cancelAnimationFrame(raf); ro.disconnect(); canvas.removeEventListener('pointerdown', onDown); canvas.removeEventListener('pointermove', onMove); canvas.removeEventListener('pointerup', onUp); canvas.removeEventListener('wheel', onWheel) }
-  }, [brain])
+  }, [brain, reviewLayout])
 
   const s = brain.summary
   const total = s.chats + s.studio + s.map + s.autopilot
   const prog = brainProgress(s)
 
+  if (reviewLayout) {
+    const sourceFor = (node: GNode) => node.meta.chatId ? brain.nodes.find(item => item.type === 'chat' && item.meta.chatId === node.meta.chatId) : undefined
+    const matchesFilter = (node: GNode) => memoryFilter === 'all' ? allConnections || isSavedNode(node) : memoryFilter === 'creations' ? isCreation(node) : node.type === memoryFilter
+    const query = memoryQuery.trim().toLowerCase()
+    const shown = brain.nodes.filter(node => matchesFilter(node) && (!query || [reviewNodeLabel(node), reviewNodeType(node), sourceFor(node)?.label, node.meta.sub, reviewRegion(node) ? REVIEW_REGIONS[reviewRegion(node)!].label : ''].join(' ').toLowerCase().includes(query)))
+    const detail = selected || brain.nodes.find(node => node.type === 'core')!
+    const relatedIds = new Set(brain.links.flatMap(link => link.a === detail.id ? [link.b] : link.b === detail.id ? [link.a] : []))
+    const related = brain.nodes.filter(node => relatedIds.has(node.id))
+    const selectNode = (node: GNode) => { selectMemory(node.id); hoverRef.current = null }
+    const selectFilter = (id: MemoryFilter) => { setMemoryFilter(id); setAllConnections(false) }
+    return (
+      <section className="ws-memory memory-review" aria-labelledby="memory-review-title">
+        <header className="memory-review-heading">
+          <div><span className="memory-review-eyebrow">Memory</span><h1 id="memory-review-title">Pick up where you left off.</h1><p>Your conversations, creations, and saved work. Connected in one place.</p></div>
+          <div className="memory-review-summary" aria-label="Saved workspace totals">
+            {([{ id: 'chat', value: s.chats, label: 'Conversations' }, { id: 'creations', value: s.studio, label: 'Studio items' }, { id: 'flow', value: s.autopilot, label: 'Workflows' }, { id: 'map', value: s.map, label: 'Map items' }] as const).map(item => <button key={item.id} onClick={() => selectFilter(item.id)}><strong>{item.value}</strong><span>{item.label}</span></button>)}
+          </div>
+        </header>
+        <div className="memory-review-layout">
+          <section className="memory-review-library" aria-label="Saved context library">
+            <div className="memory-review-library-tools">
+              <label className="memory-review-search"><Search size={17}/><input aria-label="Search saved work" placeholder="Search saved work…" value={memoryQuery} onChange={event => setMemoryQuery(event.target.value)}/>{memoryQuery && <button aria-label="Clear memory search" onClick={() => setMemoryQuery('')}><X size={15}/></button>}</label>
+              <div className="memory-review-filters" role="group" aria-label="Filter saved work">{MEMORY_FILTERS.map(filter => <button key={filter.id} aria-pressed={memoryFilter === filter.id && !allConnections} onClick={() => selectFilter(filter.id)}>{filter.label}</button>)}</div>
+            </div>
+            <div className="memory-review-list-heading"><span role="status">{shown.length} {allConnections ? shown.length === 1 ? 'connection' : 'connections' : shown.length === 1 ? 'item' : 'items'}</span><button aria-pressed={allConnections} onClick={() => { setMemoryFilter('all'); setAllConnections(value => !value) }}><Network size={13}/>{allConnections ? 'Saved work' : 'All connections'}</button></div>
+            <ul className="memory-review-list" hidden={!shown.length} aria-label={allConnections ? 'All memory connections' : 'Saved work'}>
+              {shown.map(node => {
+                const source = sourceFor(node)
+                const region = reviewRegion(node)
+                const context = node.type === 'chat' ? node.meta.sub : source && source.id !== node.id ? source.label : node.type === 'lobe' ? `${node.meta.counts?.members || 0} connected items` : node.type === 'core' ? 'Workspace overview' : node.meta.sub || (region ? REVIEW_REGIONS[region].label : 'Workspace memory')
+                return <li key={node.id}><button className="memory-review-item" aria-pressed={selectedId === node.id} aria-controls="memory-review-details" onClick={() => selectNode(node)}>
+                  <span className="memory-review-item-icon" style={{ color: reviewNodeColor(node) }}><MemoryNodeIcon node={node}/></span>
+                  <span className="memory-review-item-copy"><strong>{reviewNodeLabel(node)}</strong><span>{reviewNodeType(node)}<i aria-hidden="true">·</i>{context}</span></span><ChevronRight size={16}/>
+                </button></li>
+              })}
+            </ul>
+            {!shown.length && <div className="memory-review-empty"><Search size={25}/><h2>{query ? 'No matching memories.' : 'A little space for what’s next.'}</h2><p>{query ? 'Try a different title, topic, or type of work.' : total ? 'Nothing saved in this category yet. Your other work is still here.' : 'As you chat, create, and save work in Nalu, you can come back to it here.'}</p>{(query || memoryFilter !== 'all') && <button onClick={() => { setMemoryQuery(''); selectFilter('all') }}>Show all saved work</button>}</div>}
+            <footer className="memory-review-library-footer">Select an item to see its context and connections.</footer>
+          </section>
+          <aside className="memory-review-inspector" aria-label="Memory context and connections">
+            <section className="memory-review-network" aria-labelledby="memory-network-title">
+              <header><div><span className="memory-review-eyebrow">Connected context</span><h2 id="memory-network-title">The bigger picture.</h2></div><span>{brain.nodes.length} nodes</span></header>
+              <div ref={wrapRef} className="memory-review-canvas"><canvas ref={canvasRef} aria-label="Interactive workspace memory graph. Drag to pan, scroll to zoom, or use the saved work list to select a node." className="touch-none"/></div>
+              <div className="memory-review-graph-tools"><span>Drag to explore · Scroll to zoom</span><div><button aria-label="Zoom memory graph out" onClick={() => { cam.current.z = Math.max(0.25, cam.current.z / 1.25) }}><Minus size={15}/></button><button aria-label="Zoom memory graph in" onClick={() => { cam.current.z = Math.min(4, cam.current.z * 1.25) }}><Plus size={15}/></button><button aria-label="Fit all memory connections" onClick={() => fitGraph.current()}><Maximize2 size={14}/></button></div></div>
+            </section>
+            <section ref={detailRef} id="memory-review-details" className="memory-review-details" tabIndex={-1} aria-labelledby="memory-detail-title">
+              <header><span className="memory-review-detail-icon" style={{ color: reviewNodeColor(detail) }}><MemoryNodeIcon node={detail} size={19}/></span><div><span className="memory-review-eyebrow">{reviewNodeType(detail)}</span><h2 id="memory-detail-title">{reviewNodeLabel(detail)}</h2></div>{selected && <button aria-label="Close memory details" onClick={() => setSelectedId(null)}><X size={16}/></button>}</header>
+              <MemoryReviewDetail node={detail} summary={s} source={sourceFor(detail)} onOpenChat={onOpenChat}/>
+              {!!related.length && <div className="memory-review-related"><h3>Connected here <span>{related.length}</span></h3><ul>{related.map(node => <li key={node.id}><button onClick={() => selectNode(node)}><span style={{ backgroundColor: reviewNodeColor(node) }}/><span>{reviewNodeLabel(node)}<small>{reviewNodeType(node)}</small></span><ChevronRight size={14}/></button></li>)}</ul></div>}
+            </section>
+          </aside>
+        </div>
+      </section>
+    )
+  }
+
   return (
     <div className="ws-memory ws-feature-page flex flex-1 min-h-0 flex-col text-ink font-sans">
       <WorkspaceIntro compact label="Memory" title="All the little things." description="The ideas, conversations, and work that make Nalu yours."/>
-      <div ref={wrapRef} className="relative flex-1 min-h-0 overflow-hidden">
-        <canvas ref={canvasRef} className="absolute inset-0 touch-none" />
+      <div className="ws-memory-workbench relative flex flex-1 min-h-0">
+      <div ref={wrapRef} className="ws-memory-graph relative flex-1 min-h-0 overflow-hidden">
+        <canvas ref={canvasRef} aria-label="Interactive workspace memory graph" className="absolute inset-0 touch-none" />
         {total <= 0 && (
           <div className="absolute inset-0 flex items-center justify-center text-center">
             <div className="max-w-sm text-ink/75">
@@ -449,11 +598,12 @@ export default function MemoryPanel({ onOpenChat }: { onOpenChat?: (chatId: stri
           </div>
         )}
         {/* legend: the lobes — a theme-adaptive glass chip (light in light mode) */}
-        <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap gap-x-3 gap-y-1 rounded-lg bg-white/70 px-3 py-2 shadow-sm backdrop-blur-md dark:bg-black/40">
+        <div className="ws-memory-legend pointer-events-none absolute bottom-3 left-3 flex flex-wrap gap-x-3 gap-y-1 rounded-lg bg-white/70 px-3 py-2 shadow-sm backdrop-blur-md dark:bg-black/40">
           {LOBES.map((l) => (
             <span key={l.id} className="flex items-center gap-1.5 text-[11px] text-ink/80"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: l.color, boxShadow: `0 0 6px ${l.color}` }} /> {l.name}</span>
           ))}
         </div>
+      </div>
 
         {/* breakdown panel */}
         {selected && (
@@ -464,12 +614,33 @@ export default function MemoryPanel({ onOpenChat }: { onOpenChat?: (chatId: stri
   )
 }
 
+function MemoryReviewDetail({ node, summary, source, onOpenChat }: { node: GNode; summary: Summary; source?: GNode; onOpenChat?: (id: string) => void }) {
+  const region = reviewRegion(node)
+  const counts = node.meta.counts || {}
+  const overview = [
+    ['Conversations', summary.chats], ['Studio items', summary.studio], ['Map items', summary.map],
+    ['Workflows', summary.autopilot], ['Attachments in', summary.attIn], ['Attachments out', summary.attOut], ['Questions asked', summary.qa],
+  ] as const
+  return <div className="memory-review-detail-body">
+    {node.type === 'core' ? <><p>A view of the work saved in this workspace. Choose a collection below, or find a specific item in your library.</p><dl className="memory-review-facts">{overview.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></> : <>
+      <p>{node.type === 'lobe' && region ? REVIEW_REGIONS[region].description : node.type === 'chat' ? 'The conversation and the work created along the way.' : source ? `Created in “${source.label}”. Open the conversation to continue working with it.` : node.type === 'topic' ? `${node.meta.sub || 'Conversations'} connected with this topic.` : node.type === 'flow' ? 'A saved workflow in your Autopilot workspace.' : node.type === 'map' ? 'A place, layer, or drawing saved in your map workspace.' : 'Saved context from your workspace.'}</p>
+      <dl className="memory-review-facts">
+        {region && <div><dt>Collection</dt><dd>{REVIEW_REGIONS[region].label}</dd></div>}
+        {node.type === 'chat' && <div><dt>Messages</dt><dd>{parseInt(node.meta.sub || '0') || 0}</dd></div>}
+        {node.type === 'lobe' && <div><dt>Connected items</dt><dd>{counts.members || 0}</dd></div>}
+        {Object.entries(counts).filter(([key, value]) => key !== 'members' && value > 0).map(([key, value]) => <div key={key}><dt>{KIND_LABEL[key as Kind] || key}</dt><dd>{value}</dd></div>)}
+      </dl>
+    </>}
+    {node.meta.chatId && onOpenChat && <button className="memory-review-open" onClick={() => onOpenChat(node.meta.chatId!)}>Open conversation<ExternalLink size={15}/></button>}
+  </div>
+}
+
 // The drawer adapts to the theme: a LIGHT frosted-glass panel in light mode, a dark
 // one in dark mode — so it's legible either way and never a "dark background" in light
 // mode. Text uses the theme `ink` token (dark on light, light on dark).
 function Row({ icon, label, value, color }: { icon: ReactNode; label: string; value: number; color?: string }) {
   return (
-    <div className="flex items-center gap-2.5 rounded-xl bg-black/[0.045] dark:bg-white/[0.07] px-3 py-2.5">
+    <div className="ws-memory-stat flex items-center gap-2.5 rounded-xl bg-black/[0.045] dark:bg-white/[0.07] px-3 py-2.5">
       <span className="grid h-6 w-6 place-items-center rounded-md" style={{ color: color || '#3b82f6', background: (color || '#3b82f6') + '26' }}>{icon}</span>
       <span className="flex-1 text-[12.5px] text-ink/90">{label}</span>
       <span className="text-sm font-semibold tabular-nums text-ink">{value}</span>
@@ -485,14 +656,14 @@ function Breakdown({ node, summary: s, prog, onClose, onOpenChat }: { node: GNod
     ? <button onClick={() => onOpenChat!(node.meta.chatId!)} className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#2f6bff] py-2.5 text-[12.5px] font-medium text-white hover:bg-[#4d84ff]"><ExternalLink size={13} /> Open chat</button>
     : null
   return (
-    <div className="absolute right-3 top-3 bottom-3 flex w-[304px] max-w-[80%] flex-col overflow-hidden rounded-2xl bg-white/85 dark:bg-[#0f1420]/90 shadow-2xl shadow-black/20 dark:shadow-black/50 backdrop-blur-2xl">
+    <div className="ws-memory-breakdown absolute right-3 top-3 bottom-3 flex w-[304px] max-w-[80%] flex-col overflow-hidden rounded-2xl bg-white/85 dark:bg-[#0f1420]/90 shadow-2xl shadow-black/20 dark:shadow-black/50 backdrop-blur-2xl">
       <div className="flex items-center gap-2.5 px-4 py-3.5">
         <span className="h-3 w-3 rounded-full" style={{ backgroundColor: node.color, boxShadow: `0 0 8px ${node.color}` }} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-ink">{node.label}</div>
           <div className="text-[11px] text-ink/55">{isCore ? 'Your Nalu brain' : node.type === 'lobe' ? `${lobe?.name} lobe` : node.meta.sub || node.type}</div>
         </div>
-        <button onClick={onClose} className="text-ink/55 hover:text-ink"><X size={16} /></button>
+        <button onClick={onClose} aria-label="Close memory details" className="text-ink/55 hover:text-ink"><X size={16} /></button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 space-y-2.5">
         {isCore && (

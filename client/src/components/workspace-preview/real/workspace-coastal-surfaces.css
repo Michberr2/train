@@ -1,0 +1,84 @@
+/* The existing tiny beach preview becomes a soft coastal wash when enlarged.
+   Backgrounds alone change: no filters, stacking contexts, or clipping that
+   could constrain fixed menus or alter actual map/artifact rendering. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace[data-workspace-design-preview] {
+  --ws-panel:35 57 80;
+  --ws-panel2:49 73 99;
+  --ws-canvas:26 45 67;
+  --ws-sidebar:35 57 80;
+  --ws-glass:232 242 255;
+  --ws-ink:248 251 255;
+  --ws-dim:218 232 247;
+  --ws-accent:185 215 246;
+  --review-accent-ink:#e0e6f6;
+  --review-paper:rgb(var(--ws-panel)/.85);
+  --review-soft-paper:rgb(var(--ws-panel)/.76);
+  --review-coastal-wash:linear-gradient(120deg,#263544bf,#2e3f51c7 55%,#354a5fcc);
+  --review-coastal-border:#ebeff750;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace[data-workspace-theme=dark] {
+  --review-coastal-wash:linear-gradient(120deg,#202634de,#263544df 55%,#2e4053e8);
+  --review-coastal-border:#ebeff738;
+}
+
+/* Apply the artwork to working surfaces, never to generated content. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(
+  .ws-sidebar,.ws-composer,.ws-chat-thread,.ws-chat-composer-dock,.ws-chat-suggestions>button,
+  .ws-studio-toolbar,.review-studio-toolbox,.ws-studio-preview,.ws-studio-brief,
+  .ws-studio-library,.ap-toolbar,.ap-stage,.ws-memory-graph,.ws-memory-breakdown,
+  .ws-skill-cards>li,.ws-settings-content>nav,.ws-settings-group>section,
+  .map-search-panel,.map-layer-panel
+) {
+  background-color:var(--review-soft-paper);
+  background-image:var(--review-coastal-wash),var(--review-panel-scene);
+  background-position:center,center 66%;
+  background-size:cover;
+  border-color:var(--review-coastal-border);
+  box-shadow:0 12px 38px #151a2816,inset 0 1px 0 #f3f8fc30;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-graph {
+  background-image:linear-gradient(rgb(var(--ws-glass)/.04) 1px,transparent 1px),linear-gradient(90deg,rgb(var(--ws-glass)/.04) 1px,transparent 1px),var(--review-coastal-wash),var(--review-panel-scene);
+  background-size:32px 32px,32px 32px,cover,cover;
+}
+
+/* Let the coastal surface carry through nested tool chrome. Actual generated
+   documents, image previews, map tiles, and the memory canvas stay untouched. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-sidebar-footer {
+  background:rgb(var(--ws-panel)/.25);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) [data-studio-design-preview] .ws-studio-preview>div:first-child {
+  background:rgb(var(--ws-panel)/.48);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-flowbar {
+  background:rgb(var(--ws-panel)/.68);
+  border-color:rgb(var(--ws-glass)/.14);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node {
+  background:rgb(var(--ws-panel)/.94);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node-actions {
+  background:rgb(var(--ws-panel2)/.72);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-workspace {
+  --map-surface:rgb(var(--ws-panel)/.9);
+  --map-floating:rgb(var(--ws-panel)/.95);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace[data-workspace-design-preview] .map-workspace :is(.map-search-panel,.map-layer-panel) {
+  background-image:var(--review-coastal-wash),var(--review-panel-scene);
+  background-position:center,center 66%;
+  background-size:cover;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .review-header-nav button[aria-current=page] {
+  background:var(--review-accent-ink);
+  color:rgb(var(--ws-panel));
+  border-color:#e0e6f699;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-chat-suggestions>button:hover {
+  border-color:#e0e6f6cc;
+  background-color:rgb(var(--ws-panel)/.9);
+}
+@media(max-width:767px) {
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-sidebar-history [data-chat-id] {
+    background:rgb(var(--ws-panel)/.55);
+  }
+}

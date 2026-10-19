@@ -4,6 +4,7 @@ import avatarWordmark from '../avatar/wordmark.png'
 import WorkspaceIntro from './WorkspaceIntro'
 import Scenery from '../Scenery'
 import NaluAvatar from '../avatar/NaluAvatar'
+import NaluMark from '../landing/NaluMark'
 import { fallbackStudioIntent, parseStudioIntent, shouldClassifyStudio, studioKind as normalizeStudioKind, type StudioIntent } from '../../../../shared/studioIntent'
 import { buildChatMemory } from './crossChatMemory'
 import { mergeChatMessages } from '../../../../shared/chatMessages'
@@ -56,7 +57,10 @@ import {
 import { streamChat, recoverToolCalls, type WireMessage } from './agentApi'
 import { getModelSettings } from '../../lib/naluSettings'
 import { generateVideo } from '../../lib/videoEngine'
+import H3MoviePlayer from './H3MoviePlayer'
+import { movieIdFromUrl } from '../../lib/h3Movie'
 import { lazy, Suspense } from 'react'
+import type { WorkspaceCarouselView } from '../workspace-preview/real/WorkspaceCarousel'
 import Markdown from './Markdown'
 import { useTheme } from '../ThemeProvider'
 import MediaLoader, { WolfWord } from './MediaLoader'
@@ -85,6 +89,16 @@ const EmailCard = lazy(() => import('./EmailCard'))
 // webpage/poster). Lazy so fabric/jspdf/docx never touch the main bundle.
 const DesignArtifactCard = lazy(() => import('./DesignArtifactCard'))
 const AgentsPanel = lazy(() => import('./AgentsPanel'))
+const WorkspaceCarousel = lazy(() => import('../workspace-preview/real/WorkspaceCarousel'))
+const WorkspaceAppDock = lazy(() => import('../workspace-preview/real/WorkspaceAppDock'))
+const LiveWorkspaceLiveHub = lazy(() => import('../workspace-preview/real/WorkspaceLiveHub'))
+const LiveWorkspaceAgentTray = lazy(() => import('../workspace-preview/real/WorkspaceAgentTray'))
+const LiveWorkspaceAgentScreens = lazy(() => import('../workspace-preview/real/WorkspaceAgentScreens'))
+const LiveWorkspaceChatPopover = lazy(() => import('../workspace-preview/real/WorkspaceChatPopover'))
+const PreviewWorkspaceLiveHub = import.meta.env.DEV ? lazy(() => import('../workspace-preview/real/PreviewWorkspaceLiveHub')) : null
+const PreviewWorkspaceAgentTray = import.meta.env.DEV ? lazy(() => import('../workspace-preview/real/PreviewWorkspaceAgentTray')) : null
+const PreviewWorkspaceAgentScreens = import.meta.env.DEV ? lazy(() => import('../workspace-preview/real/PreviewWorkspaceAgentScreens')) : null
+const PreviewWorkspaceChatPopover = import.meta.env.DEV ? lazy(() => import('../workspace-preview/real/PreviewWorkspaceChatPopover')) : null
 import { TOOLS, execTool, WEB_TOOLS, execWebTool, isWebTool } from './agentTools'
 import {
   getActiveRepo,
@@ -105,6 +119,8 @@ import SettingsPanel from './SettingsPanel'
 import { pushChatsFull, sessionWasCleared, getSyncState, retrySync } from '../../lib/sync'
 import { idbGetChats, idbSetChats } from '../../lib/chatStore'
 import { getToken } from '../../lib/localAuth'
+import WorkspaceAccountMenu from './design/WorkspaceAccountMenu'
+import useLiveWorkspaceActivity from './design/useLiveWorkspaceActivity'
 
 // ---- model ---------------------------------------------------------------
 
@@ -383,8 +399,12 @@ function loadModel(): string {
 }
 
 interface Props {
-  user: { displayName: string } | null
+  user: { id?: string; displayName: string } | null
   onLogout: () => void
+  /** Visual presentation only; does not initialize preview data. */
+  designEnabled?: boolean
+  /** Local-only sample controllers, guarded separately from the design. */
+  designPreview?: boolean
 }
 
 // A pitch/investor deck → also earns a companion "Investor Meeting Playbook" doc.
@@ -699,17 +719,53 @@ function AssistantThink({
   )
 }
 
-export default function Workspace({ user, onLogout }: Props) {
+export default function Workspace({ user, onLogout, designEnabled = false, designPreview = false }: Props) {
+  const previewLayout = import.meta.env.DEV && designPreview
+  const reviewLayout = designEnabled || previewLayout
+  const WorkspaceLiveHub = previewLayout && PreviewWorkspaceLiveHub ? PreviewWorkspaceLiveHub : LiveWorkspaceLiveHub
+  const WorkspaceAgentTray = previewLayout && PreviewWorkspaceAgentTray ? PreviewWorkspaceAgentTray : LiveWorkspaceAgentTray
+  const WorkspaceAgentScreens = previewLayout && PreviewWorkspaceAgentScreens ? PreviewWorkspaceAgentScreens : LiveWorkspaceAgentScreens
+  const WorkspaceChatPopover = previewLayout && PreviewWorkspaceChatPopover ? PreviewWorkspaceChatPopover : LiveWorkspaceChatPopover
   const sessionToken = useRef(getToken()).current
   // Restore the last view on refresh (Studio/Map/AutoPilot/Chats) — back to your
   // last touch point. Skip 'settings' so a refresh never dumps you into settings.
   const [view, setView] = useState<View>(() => {
+    const billingReturn = new URLSearchParams(window.location.search).get('billing')
+    if (window.location.hash === '#settings' || billingReturn === 'success' || billingReturn === 'cancel') return 'settings'
     const v = localStorage.getItem('nalu-view')
     return v && v !== 'settings' && (v === 'chat' || Object.prototype.hasOwnProperty.call(VIEW_TITLES, v)) ? v as View : 'chat'
   })
+  const [launcherOpen, setLauncherOpen] = useState(() => reviewLayout && view !== 'settings' && (previewLayout
+    ? new URLSearchParams(location.search).get('view') !== 'memory'
+    : !localStorage.getItem('nalu-view')))
+  const [launcherSelection, setLauncherSelection] = useState<WorkspaceCarouselView>('studio')
+  const [hasOpenedSpace, setHasOpenedSpace] = useState(!launcherOpen)
+  const [agentScreensOpen, setAgentScreensOpen] = useState(previewLayout && new URLSearchParams(location.search).get('screens') === '1')
+  const [selectedAgentItem, setSelectedAgentItem] = useState<string | null>(null)
+  const agentScreenTrigger = useRef<HTMLElement | null>(null)
+  const [reviewChatOpen, setReviewChatOpenState] = useState(previewLayout && new URLSearchParams(location.search).get('swarm') === '1')
+  const reviewChatOpenRef = useRef(reviewChatOpen)
+  const setReviewChatOpen = useCallback((open: boolean) => {
+    reviewChatOpenRef.current = open
+    setReviewChatOpenState(open)
+  }, [])
+  const reviewMainRef = useRef<HTMLElement>(null)
+  const [chatInlineAnchor, setChatInlineAnchor] = useState<HTMLDivElement | null>(null)
+  const [chatContentVisible, setChatContentVisible] = useState(false)
+  useEffect(() => {
+    if (!reviewLayout || !reviewMainRef.current) return
+    reviewMainRef.current.inert = launcherOpen || agentScreensOpen
+    if (launcherOpen || agentScreensOpen || reviewChatOpenRef.current) return
+    const frame = requestAnimationFrame(() => reviewMainRef.current?.focus({ preventScroll: true }))
+    return () => cancelAnimationFrame(frame)
+  }, [reviewLayout, launcherOpen, agentScreensOpen])
   const [navOpen, setNavOpen] = useState(false) // the nav dropdown open/closed
   const [model] = useState<string>(() => loadModel())
   const [chats, setChats] = useState<Chat[]>(() => loadChats())
+  // Local design review tracks real request IDs separately from the send guard,
+  // whose '__new__' sentinel cannot identify a newly created conversation.
+  const [reviewActiveChats, setReviewActiveChats] = useState<string[]>([])
+  const liveActivity = useLiveWorkspaceActivity({ chats, activeChatIds: reviewActiveChats, accountId: user?.id, enabled: reviewLayout && !previewLayout })
   const [saveState, setSaveState] = useState(getSyncState)
   useEffect(() => {
     const update = () => setSaveState(getSyncState())
@@ -784,9 +840,35 @@ export default function Workspace({ user, onLogout }: Props) {
   // it defaults open on desktop (nav — including AutoPilot — is visible on load)
   // and closed on mobile (chat gets the full width; sidebar opens as an overlay).
   // Initialise from the width directly so there's no collapsed→open flash.
-  const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 768)
+  const [sidebarOpen, setSidebarOpen] = useState(() => !reviewLayout && typeof window !== 'undefined' && window.innerWidth >= 768)
   const closeSidebarOnMobile = useCallback(() => {
-    if (typeof window !== 'undefined' && window.innerWidth < 768) setSidebarOpen(false)
+    if (reviewLayout || (typeof window !== 'undefined' && window.innerWidth < 768)) setSidebarOpen(false)
+  }, [reviewLayout])
+  const openSpace = useCallback((next: WorkspaceCarouselView) => {
+    setReviewChatOpen(false)
+    setAgentScreensOpen(false)
+    setView(next)
+    setLauncherSelection(next)
+    setLauncherOpen(false)
+    setHasOpenedSpace(true)
+    closeSidebarOnMobile()
+  }, [closeSidebarOnMobile, setReviewChatOpen])
+  const openWorkspaceLauncher = useCallback(() => {
+    setReviewChatOpen(false)
+    setAgentScreensOpen(false)
+    if (view !== 'settings' && view !== 'automations') setLauncherSelection(view)
+    setLauncherOpen(true)
+  }, [view, setReviewChatOpen])
+  const openAgentScreens = useCallback((id: string | null) => {
+    if (document.activeElement instanceof HTMLElement) agentScreenTrigger.current = document.activeElement
+    setSelectedAgentItem(id)
+    setAgentScreensOpen(true)
+    setLauncherOpen(false)
+    setHasOpenedSpace(true)
+  }, [])
+  const closeAgentScreens = useCallback(() => {
+    setAgentScreensOpen(false)
+    requestAnimationFrame(() => agentScreenTrigger.current?.focus({ preventScroll: true }))
   }, [])
   const abortRef = useRef<AbortController | null>(null)
   // Synchronous per-target in-flight guard. `streaming` state is stale during the
@@ -929,7 +1011,7 @@ export default function Workspace({ user, onLogout }: Props) {
       if (m.sheet) out.push({ kind: 'sheet', label: m.sheet.title || 'Spreadsheet', mi: i })
       if (m.design) out.push({ kind: 'design', label: m.design.kind === 'brand' ? 'Brand book' : m.design.kind, mi: i })
       if (m.cad) out.push({ kind: 'cad', label: 'CAD model', mi: i })
-      if (m.video) out.push({ kind: 'video', label: 'Video', mi: i })
+      if (m.video) out.push({ kind: 'video', label: movieIdFromUrl(m.video) ? 'Movie' : 'Video', mi: i })
       // Generated IMAGES aren't a structured field — Nalu embeds them as markdown
       // data-URL images in the assistant's text (![alt](data:image/…); api/image always
       // returns a base64 data URL). List EACH one (data-URL only, so a linked web image
@@ -948,14 +1030,14 @@ export default function Workspace({ user, onLogout }: Props) {
     const out: Creation[] = []
     chats.forEach((c) =>
       c.messages.forEach((m, mi) => {
-        const base = { key: `${c.id}:${mi}`, chatId: c.id, mi }
+        const base = { key: `${c.id}:${mi}`, chatId: c.id, mi, ...(reviewLayout ? { previewData: m } : {}) }
         if (m.design) {
           const d = m.design as { kind: string; html?: string; name?: string; motion?: Creation['motion'] }
           out.push({ ...base, kind: d.kind, title: d.name || c.title || d.kind, html: typeof d.html === 'string' ? d.html : undefined, motion: d.motion })
         } else if (m.deck) out.push({ ...base, kind: 'deck', title: m.deck.title || c.title || 'Presentation' })
         else if (m.sheet) out.push({ ...base, kind: 'sheet', title: m.sheet.title || c.title || 'Spreadsheet' })
         else if (m.doc) out.push({ ...base, kind: 'doc', title: m.doc.title || c.title || 'Document' })
-        else if (m.video) out.push({ ...base, kind: 'video', title: c.title || 'Video' })
+        else if (m.video) out.push({ ...base, kind: movieIdFromUrl(m.video) ? 'movie' : 'video', title: c.title || 'Video' })
         else if (m.cad) out.push({ ...base, kind: 'cad', title: c.title || 'CAD model' })
         else if (m.role === 'assistant' && typeof m.content === 'string') {
           // Generated images live as markdown in the message text.
@@ -965,7 +1047,7 @@ export default function Workspace({ user, onLogout }: Props) {
       }),
     )
     return out.reverse()
-  }, [chats])
+  }, [chats, reviewLayout])
 
   const msgRefs = useRef<Record<number, HTMLDivElement | null>>({})
   const scrollToMsg = useCallback((mi: number) => {
@@ -974,10 +1056,9 @@ export default function Workspace({ user, onLogout }: Props) {
   // Open a Studio creation in its chat (switch chat + view, then scroll to it).
   const openCreation = useCallback((chatId: string, mi: number) => {
     setActiveId(chatId)
-    setView('chat')
-    closeSidebarOnMobile()
+    openSpace('chat')
     setTimeout(() => scrollToMsg(mi), 140)
-  }, [scrollToMsg])
+  }, [scrollToMsg, openSpace])
   const deleteMessage = useCallback(
     (mi: number) => {
       if (!activeId) return
@@ -1007,7 +1088,7 @@ export default function Workspace({ user, onLogout }: Props) {
     pinnedRef.current = true
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [activeId])
+  }, [activeId, reviewChatOpen, view])
 
   const newChat = useCallback(() => {
     // Do NOT abort in-flight work — a video/doc generation keeps running in the
@@ -1015,8 +1096,8 @@ export default function Workspace({ user, onLogout }: Props) {
     setStreaming(false)
     setActiveId(null)
     setInput('')
-    setView('chat')
-    taRef.current?.focus()
+    if (!reviewChatOpenRef.current) setView('chat')
+    requestAnimationFrame(() => taRef.current?.focus())
   }, [])
 
   const deleteChat = useCallback((id: string) => {
@@ -1057,7 +1138,7 @@ export default function Workspace({ user, onLogout }: Props) {
     const next = [{ id, title: 'New chat', messages: [], createdAt: Date.now() }, ...chatsRef.current]
     chatsRef.current = next; setChats(next)
     setActiveId(id)
-    setView('chat')
+    if (!reviewChatOpenRef.current) setView('chat')
     return id
   }, [activeId, chats])
 
@@ -1124,9 +1205,11 @@ export default function Workspace({ user, onLogout }: Props) {
   )
 
   const send = useCallback(
-    async (text: string, opts?: { keepView?: boolean; userMessageId?: string; assistantMessageId?: string; studioKind?: string; studioTarget?: Creation; attachments?: Attachment[] }) => {
+    async (text: string, opts?: { keepView?: boolean; userMessageId?: string; assistantMessageId?: string; studioKind?: string; studioTarget?: Creation; movieSeconds?: number; attachments?: Attachment[] }) => {
       const content = text.trim()
       if (!content || streaming) return
+      // A floating conversation keeps its original space, including after async attachment work.
+      const keepCurrentView = opts?.keepView || reviewChatOpenRef.current
       // Per-target re-entry guard (see sendingChatsRef): block a second fire into
       // the same chat while its turn is still starting/streaming, but allow a
       // deliberate send into a different chat (background builds keep running).
@@ -1154,6 +1237,8 @@ export default function Workspace({ user, onLogout }: Props) {
       // of leaving you on the home screen having to click into the chat.
       lastSentPromptRef.current = content
       const chatId = targetChatId ?? uid()
+      if (reviewLayout) setReviewActiveChats(ids => ids.includes(chatId) ? ids : [...ids, chatId])
+      const finishReviewActivity = () => { if (reviewLayout) setReviewActiveChats(ids => ids.filter(id => id !== chatId)) }
       // Read history from the always-current ref (not the closure `chats`), so a
       // programmatic caller like regenerate() — which slices the chat then calls
       // send() in the same tick — builds on the freshest message list.
@@ -1169,7 +1254,7 @@ export default function Workspace({ user, onLogout }: Props) {
       chatsRef.current = checkpointChats; setChats(checkpointChats)
       persistChats(checkpointChats, sessionToken)
       setActiveId(chatId)
-      if (!opts?.keepView) setView('chat')
+      if (!keepCurrentView) setView('chat')
       const ctrl = new AbortController()
       abortRef.current = ctrl
       setStreaming(true)
@@ -1186,7 +1271,7 @@ export default function Workspace({ user, onLogout }: Props) {
       // Notes + attached documents for THIS chat (read from the freshest state,
       // post-await), so the AI references them in EVERY path — a text answer or a
       // generated doc/sheet/deck/design/CAD.
-      if (ctrl.signal.aborted) { sendingChatsRef.current.delete(guardKey); return }
+      if (ctrl.signal.aborted) { sendingChatsRef.current.delete(guardKey); finishReviewActivity(); return }
       const ctxChat = chatsRef.current.find((c) => c.id === chatId) || existing
       const sentAttachments = opts?.attachments || (ctxChat?.attachments || []).filter(a => pendingIdsRef.current.includes(a.id))
       if (sentAttachments.length) history[history.length - 1].attachments = sentAttachments
@@ -1205,7 +1290,7 @@ export default function Workspace({ user, onLogout }: Props) {
           imageAtts.push(restored)
         } catch (error) { imageLoadError = error instanceof Error ? error.message : 'An attached image could not load. Please retry.' }
       }
-      if (ctrl.signal.aborted || localStorage.getItem('nalu-token') !== sessionToken) { sendingChatsRef.current.delete(guardKey); return }
+      if (ctrl.signal.aborted || localStorage.getItem('nalu-token') !== sessionToken) { sendingChatsRef.current.delete(guardKey); finishReviewActivity(); return }
       if (imageAtts.length) {
         if (imageAtts.every(a => a.storage)) setAttachmentError('')
         const restored = new Map(imageAtts.map(a => [a.id, a]))
@@ -1287,7 +1372,7 @@ export default function Workspace({ user, onLogout }: Props) {
       setActiveId(chatId)
       // Generating from the Studio keeps you IN the Studio (the result previews
       // there); every other path jumps to the chat where the reply streams.
-      if (!opts?.keepView) setView('chat')
+      if (!keepCurrentView) setView('chat')
 
       const wire: WireMessage[] = history.map((m) => ({ role: m.role, content: m.clarify ? `${m.content}\n${m.clarify.questions.map(q => q.q + (q.options.length ? ' (' + q.options.join('; ') + ')' : '')).join('\n')}` : m.content }))
       // Enter "streaming" NOW — before the intent/clarify preflight round-trips — so
@@ -1303,7 +1388,7 @@ export default function Workspace({ user, onLogout }: Props) {
         artifacts: [m.doc && 'document', m.sheet && 'spreadsheet', m.deck && 'slides', m.cad && 'cad', m.video && 'video', m.email && 'email', m.design?.kind].map(normalizeStudioKind).filter(Boolean),
       }))
       const recentKind = intentContext.slice().reverse().find(m => m.artifacts.length)?.artifacts[0]
-      const selectedKind = normalizeStudioKind(opts?.studioKind)
+      const selectedKind = normalizeStudioKind(opts?.studioKind === 'movie' || /^\/movie\b/i.test(content) ? 'video' : opts?.studioKind)
       let intent: StudioIntent = plain
         ? { kind: 'chat', mode: 'chat', additionalKinds: [] }
         : selectedKind
@@ -1353,6 +1438,7 @@ export default function Workspace({ user, onLogout }: Props) {
             abortRef.current = null
             setStreaming(false) // this turn is done — it asked, now it waits
             sendingChatsRef.current.delete(guardKey)
+            finishReviewActivity()
             return
           }
         } catch {
@@ -2038,9 +2124,11 @@ export default function Workspace({ user, onLogout }: Props) {
           // → free cloud pool. Each rung reports progress into the loading pill.
           const out = await generateVideo({
             prompt: vidPrompt,
+            seconds: opts?.movieSeconds,
             ...(vImage ? { image: vImage } : {}),
             signal: ctrl.signal,
             onProgress: (_f, phase) => { setRouteName(`Nalu Video · ${phase}`) },
+            onPreview: (url) => { accVideo = url; flush() },
           })
           accLoading = undefined
           accVideo = out.url
@@ -2222,9 +2310,10 @@ export default function Workspace({ user, onLogout }: Props) {
         setStreaming(false)
         abortRef.current = null
         sendingChatsRef.current.delete(guardKey)
+        finishReviewActivity()
       }
     },
-    [activeId, chats, streaming, model, activeRepo, dismissedIntent, thinkLevel],
+    [activeId, chats, streaming, model, activeRepo, dismissedIntent, thinkLevel, reviewLayout],
   )
 
   const stop = useCallback(() => {
@@ -2287,8 +2376,9 @@ export default function Workspace({ user, onLogout }: Props) {
 
   const selectChat = useCallback((id: string) => {
     setActiveId(id)
-    setView('chat')
+    if (!reviewChatOpenRef.current) setView('chat')
     closeSidebarOnMobile()
+    if (reviewChatOpenRef.current) requestAnimationFrame(() => taRef.current?.focus())
   }, [closeSidebarOnMobile])
 
   const matchesQuery = (c: Chat) => (query.trim() ? c.title.toLowerCase().includes(query.toLowerCase()) : true)
@@ -2297,8 +2387,8 @@ export default function Workspace({ user, onLogout }: Props) {
   const CHATS_PREVIEW = 8
   const visibleChats = chatsExpanded || query.trim() ? filteredChats : filteredChats.slice(0, CHATS_PREVIEW)
 
-  const renderChatRow = (c: Chat) => (
-    <div key={c.id} data-chat-id={c.id} className="mb-0.5">
+  const renderChatRow = (c: Chat, showDetails = true) => (
+    <div key={c.id} data-chat-id={c.id} data-active={c.id === activeId} className="mb-0.5">
       {renamingChat?.id === c.id ? (
         <form className="flex items-center gap-1 rounded-lg bg-glass/[0.08] p-1" onSubmit={event => { event.preventDefault(); saveChatName() }}>
           <input autoFocus aria-label="Chat name" maxLength={120} value={renamingChat.title}
@@ -2311,14 +2401,14 @@ export default function Workspace({ user, onLogout }: Props) {
         </form>
       ) : (
         <div className={`group flex items-center gap-1 rounded-lg pl-2.5 pr-1 text-[13px] ${c.id === activeId ? 'bg-glass/10' : 'hover:bg-glass/5'}`}>
-          <button onClick={() => selectChat(c.id)} title={c.title} className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left">
+          <button data-chat-history-select aria-current={c.id === activeId ? true : undefined} onClick={() => selectChat(c.id)} title={c.title} className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left">
             <MessageSquare size={13} className="shrink-0 text-dim" /><span className="truncate">{c.title}</span>
           </button>
           <button onClick={() => startRename(c)} aria-label={`Rename chat: ${c.title}`} title="Rename chat" className="shrink-0 rounded-md p-2 text-dim hover:bg-glass/10 hover:text-ink"><Pencil size={13} /></button>
           <button onClick={() => deleteChat(c.id)} aria-label="Delete chat" title="Delete chat" className="shrink-0 rounded-md p-2 text-dim hover:bg-glass/10 hover:text-ink"><Trash2 size={13} /></button>
         </div>
       )}
-      {c.id === activeId && (
+      {showDetails && c.id === activeId && (
         <ChatDrawer
           attachments={c.attachments || []}
           built={builtArtifacts}
@@ -2338,17 +2428,303 @@ export default function Workspace({ user, onLogout }: Props) {
   const studioMessageIndex = studioTurn ? studioChat?.messages.findIndex(m => m.id === studioTurn.messageId) ?? -1 : (studioChat?.messages.length ?? 0) - 1
   const studioMessage = studioChat?.messages[studioMessageIndex]
   const studioResultKey = studioChat && studioMessageIndex >= 0 ? `${studioChat.id}:${studioMessageIndex}` : undefined
+  const visibleSidebar = reviewLayout ? view === 'chat' : sidebarOpen
+
+  const renderChatTools = () => (
+    <div className="flex shrink-0 items-center gap-2">
+              <PlaygroundControls />
+              {activeRepo ? (
+                <>
+                  {changeCount > 0 && (
+                    <button
+                      onClick={commit}
+                      disabled={committing}
+                      className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 disabled:opacity-50"
+                    >
+                      <GitCommit size={13} /> {committing ? 'Committing…' : `Commit ${changeCount}`}
+                    </button>
+                  )}
+                  <button
+                    onClick={disconnectRepo}
+                    title={`Disconnect ${activeRepo.owner}/${activeRepo.repo}`}
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-glass/[0.06] hover:bg-glass/10 text-dim"
+                  >
+                    <GitBranch size={13} /> <span className="hidden sm:inline">{activeRepo.owner}/{activeRepo.repo}</span>
+                  </button>
+                </>
+              ) : null}
+              <div className="hidden sm:flex items-center text-xs text-dim px-2.5 py-1.5 rounded-lg bg-glass/[0.06]">
+                Talking to {routeName}
+              </div>
+            </div>
+  )
+
+  const renderChatContent = () => (messages.length === 0 ? (
+    <div className="ws-chat-home">
+      <div className="ws-chat-welcome">
+        {reviewLayout ? <NaluMark className="review-welcome-logo" /> : <NaluAvatar size={286} />}
+        <span className="ws-eyebrow"><i />Right here with you</span>
+        <h1>{reviewLayout ? <><span>Your space.</span><strong>Your Nalu.</strong></> : "I'm right here."}</h1>
+        <p>A thought, a question, a new idea.<br/>A little help for whatever comes next.</p>
+      </div>
+      <div className="ws-home-composer w-full max-w-2xl">
+        <Composer
+          visible={!reviewLayout || chatContentVisible}
+          contextKey={active?.id || 'new-chat'}
+          accountToken={sessionToken || ''}
+          input={input}
+          setInput={setInput}
+          streaming={streaming}
+          onSend={() => void send(input)}
+          onStop={stop}
+          onKey={onKey}
+          taRef={taRef}
+          onAttach={(files) => void addAttachments(files)}
+          attaching={attaching}
+          attachments={(active?.attachments || []).filter((a) => pendingIds.includes(a.id))}
+          onRemoveAttachment={removeAttachment}
+          dismissedIntent={dismissedIntent}
+          onDismissIntent={() => setDismissedIntent(input.trim())}
+          thinkLevel={thinkLevel}
+        />
+      </div>
+      <div className="ws-chat-suggestions" aria-label="Ways to begin">
+        <button onClick={() => { setInput('Help me plan my day.'); taRef.current?.focus() }}><StickyNote size={18}/><span>Plan my day<small>A little room to think</small></span></button>
+        <button onClick={() => reviewLayout ? openSpace('studio') : setView('studio')}><Palette size={18}/><span>Make something<small>Bring an idea to life</small></span></button>
+        <button onClick={() => reviewLayout ? openSpace('agents') : setView('agents')}><Bot size={18}/><span>Leave it with Nalu<small>Your work, moving forward</small></span></button>
+      </div>
+    </div>
+  ) : (
+    <>
+      <div ref={scrollRef} onScroll={onChatScroll} className="ws-chat-thread flex-1 overflow-y-auto overscroll-contain">
+        <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+          {attachmentError && <p role="alert" className="rounded-xl border border-glass/20 bg-panel/80 p-3 text-sm text-ink">{attachmentError}</p>}
+          {messages.map((m, i) => (
+            <div
+              key={i}
+              ref={(el) => {
+                msgRefs.current[i] = el
+              }}
+              className={`ws-chat-message scroll-mt-20 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              {m.role === 'user' ? (
+                // Your messages render as an iMessage-style blue bubble on the
+                // right — no avatar — so it's obvious which side is you.
+                <div dir="auto" className="ws-user-message max-w-[78%] rounded-2xl rounded-br-md bg-gradient-to-b from-[#3b82f6] to-[#2f6fed] px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-white shadow-sm">
+                  {m.content}
+                  <MessageAttachments attachments={m.attachments || (i === messages.findIndex(message => message.role === 'user') ? active?.attachments || [] : [])} />
+                </div>
+              ) : (
+                // Nalu's answer: full-width, left-aligned, no avatar.
+                <div className="w-full min-w-0">
+                  <div className="ws-assistant-identity">
+                    {reviewLayout ? <NaluMark className="review-assistant-logo" /> : streaming && i === messages.length - 1 ? <NaluAvatar size={42} phase="thinking"/> : <img src={avatarArtwork} alt=""/>}
+                    <span>Nalu<small>{streaming && i === messages.length - 1 ? 'Thinking with you' : 'Here to help'}</small></span>
+                  </div>
+                  <AssistantThink reasoning={m.reasoning} isLive={streaming && i === messages.length - 1}>
+                  <>
+                    {m.loading ? (
+                      <MediaLoader kind={m.loading} />
+                    ) : m.content ? (
+                      // Render full Markdown LIVE while streaming, so the
+                      // styling appears as the text arrives (rAF-throttled
+                      // upstream keeps it smooth). A subtle caret trails it.
+                      <div className={streaming && i === messages.length - 1 ? 'streaming-caret nalu-stream-fade' : undefined}>
+                        <Markdown>{cleanForDisplay(m.content)}</Markdown>
+                        {m.clarify && !m.clarify.answered && !streaming && (
+                          <ClarifyBlock questions={m.clarify.questions} onSubmit={(ans) => submitClarify(i, ans)} />
+                        )}
+                      </div>
+                    ) : !m.sheet && !m.doc && !m.video && !m.cad && !m.design && !m.deck && streaming && i === messages.length - 1 ? (
+                      // Waiting for the first token — the Nalu mark breathes
+                      // with three soft dots while waiting for the first token.
+                      <div className="flex items-center gap-2 py-0.5">
+                        {reviewLayout ? <NaluMark className="review-assistant-logo nalu-think" /> : <img src={avatarArtwork} alt="" className="w-7 h-7 rounded-lg nalu-think" />}
+                        <WolfWord className="text-[13px]" />
+                      </div>
+                    ) : null}
+                    <div
+                      className={i === messages.length - 1 && (m.sheet || m.doc || m.deck || m.design || m.cad || m.video) ? 'nalu-materialize' : undefined}
+                      onAnimationEnd={(e) => e.currentTarget.classList.remove('nalu-materialize')}
+                    >
+                    {m.sheet && (
+                      <CardErrorBoundary label="The spreadsheet">
+                        <Suspense fallback={<MediaLoader kind="sheet" />}>
+                          <SheetCard data={m.sheet} />
+                        </Suspense>
+                      </CardErrorBoundary>
+                    )}
+                    {m.doc && (
+                      <CardErrorBoundary label="The document">
+                        <Suspense fallback={<MediaLoader kind="doc" />}>
+                          <DocCard data={m.doc} />
+                        </Suspense>
+                      </CardErrorBoundary>
+                    )}
+                    {m.email && (
+                      <CardErrorBoundary label="The email">
+                        <Suspense fallback={<MediaLoader kind="doc" />}>
+                          <EmailCard data={m.email} />
+                        </Suspense>
+                      </CardErrorBoundary>
+                    )}
+                    {m.deck && (
+                      <CardErrorBoundary label="The deck">
+                        <Suspense fallback={<div role="status" className="flex items-center gap-2 py-6 text-sm text-dim"><Loader2 size={18} className="motion-safe:animate-spin" />Opening deck…</div>}>
+                          <SlidesCard data={m.deck} onUpdate={deck => setChats(cs => cs.map(ch =>
+                            ch.id === activeId ? { ...ch, messages: ch.messages.map((mm, k) => k === i ? { ...mm, deck } : mm) } : ch
+                          ))} />
+                        </Suspense>
+                      </CardErrorBoundary>
+                    )}
+                    {m.cad && (
+                      <CardErrorBoundary label="The 3D model">
+                        <Suspense fallback={<MediaLoader kind="cad" />}>
+                          <CADCard
+                            code={m.cad}
+                            prompt={(() => {
+                              // the design intent = the user message that asked for it
+                              for (let k = i - 1; k >= 0; k--) if (messages[k].role === 'user') return messages[k].content
+                              return undefined
+                            })()}
+                          />
+                        </Suspense>
+                      </CardErrorBoundary>
+                    )}
+                    {m.design && (
+                      <CardErrorBoundary label="The design" resetKey={m.design} previewHtml={typeof m.design === 'object' && 'html' in m.design && typeof m.design.html === 'string' ? m.design.html : undefined}>
+                        <Suspense fallback={<MediaLoader kind="design" />}>
+                          <DesignArtifactCard
+                            art={m.design}
+                            onUpdate={(art) => {
+                              // "Finish build" (and future in-card edits) persist onto the message
+                              if (!activeId) return
+                              setChats((cs) =>
+                                cs.map((c) =>
+                                  c.id === activeId
+                                    ? { ...c, messages: c.messages.map((mm, k) => (k === i ? { ...mm, design: art } : mm)) }
+                                    : c,
+                                ),
+                              )
+                            }}
+                          />
+                        </Suspense>
+                      </CardErrorBoundary>
+                    )}
+                    {m.video && (
+                      <div className="block">
+                        <H3MoviePlayer
+                          url={m.video}
+                          className="my-2 max-h-[28rem] w-auto max-w-full rounded-xl border border-glass/[0.14]"
+                        />
+                        {!movieIdFromUrl(m.video) && <button
+                          onClick={() => void downloadMedia(m.video as string, 'nalu-video.mp4')}
+                          className="mb-2 text-xs font-medium text-gold underline-offset-4 hover:underline"
+                        >
+                          Download video
+                        </button>}
+                      </div>
+                    )}
+                    </div>
+                  </>
+                  </AssistantThink>
+                  {/* Message actions — Copy the answer + Retry (regenerate).
+                      Hidden while THIS message is still streaming or loading
+                      a media card; retry is the recovery path after an error
+                      or a dropped stream. */}
+                  {!m.loading && !(streaming && i === messages.length - 1) && (typeof m.content === 'string' && (m.content.trim().length > 0 || !!m.id)) && (
+                    <div className="mt-1.5 flex items-center gap-1 text-dim">
+                      <button
+                        onClick={() => {
+                          const t = cleanForDisplay(typeof m.content === 'string' ? m.content : '')
+                          navigator.clipboard?.writeText(t)
+                            .then(() => { setCopiedMsg(i); setTimeout(() => setCopiedMsg((c) => (c === i ? null : c)), 1500) })
+                            .catch(() => {})
+                        }}
+                        title="Copy"
+                        aria-label="Copy message"
+                        className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] hover:bg-glass/10 hover:text-ink"
+                      >
+                        {copiedMsg === i ? <><Check size={12} className="text-emerald-400" /> Copied</> : <><Copy size={12} /> Copy</>}
+                      </button>
+                      <button
+                        onClick={() => regenerate(i)}
+                        disabled={streaming}
+                        title="Regenerate this response"
+                        aria-label="Retry"
+                        className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] hover:bg-glass/10 hover:text-ink disabled:opacity-40"
+                      >
+                        <RotateCw size={12} /> Retry
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="ws-chat-composer-dock px-4 py-3">
+        <div className="max-w-3xl mx-auto">
+          <BrandBar />
+          <Composer
+          visible={!reviewLayout || chatContentVisible}
+            contextKey={active?.id || 'new-chat'}
+            accountToken={sessionToken || ''}
+            input={input}
+            setInput={setInput}
+            streaming={streaming}
+            onSend={() => void send(input)}
+            onStop={stop}
+            onKey={onKey}
+            taRef={taRef}
+            onAttach={(files) => void addAttachments(files)}
+            attaching={attaching}
+            attachments={(active?.attachments || []).filter((a) => pendingIds.includes(a.id))}
+            onRemoveAttachment={removeAttachment}
+            dismissedIntent={dismissedIntent}
+            onDismissIntent={() => setDismissedIntent(input.trim())}
+            thinkLevel={thinkLevel}
+          />
+        </div>
+      </div>
+    </>
+  ))
 
   return (
     <div
       className="nalu-workspace relative isolate h-[100dvh] w-screen flex text-ink overflow-hidden font-sans" data-workspace-theme={isDark ? 'dark' : 'light'}
+      data-workspace-view={view} data-workspace-design-preview={reviewLayout || undefined}
+      data-workspace-launcher={reviewLayout && launcherOpen || undefined}
+      data-agent-screens={reviewLayout && agentScreensOpen || undefined}
+      onKeyDownCapture={reviewLayout && launcherOpen && !reviewChatOpen ? event => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          event.stopPropagation()
+          if (hasOpenedSpace) setLauncherOpen(false)
+        }
+      } : undefined}
     >
       {/* The avatar workspace is scoped to the authenticated app. */}
 
+      {reviewLayout && <header className="review-workspace-header">
+        <button className="review-header-brand" aria-label="Nalu home" onClick={openWorkspaceLauncher}>
+          <span className="review-logo-wordmark"><NaluMark/><b>nalu</b></span>
+        </button>
+        {WorkspaceAppDock && <Suspense fallback={<nav aria-label="Workspace navigation"/>}><WorkspaceAppDock currentView={view} launcherOpen={launcherOpen || agentScreensOpen} onOpen={openSpace}/></Suspense>}
+        <WorkspaceAccountMenu displayName={user?.displayName} saveState={saveState} onLogout={onLogout} onRetrySave={retrySync}
+          onSettings={() => { setReviewChatOpen(false); setLauncherOpen(false); setAgentScreensOpen(false); setHasOpenedSpace(true); setView('settings'); closeSidebarOnMobile() }}/>
+
+      </header>}
+
+      {reviewLayout && launcherOpen && WorkspaceCarousel && <Suspense fallback={<div className="review-launcher-loading" role="status">Opening your spaces…</div>}>
+        <WorkspaceCarousel initialView={launcherSelection} onOpen={openSpace} onClose={hasOpenedSpace ? () => setLauncherOpen(false) : undefined}/>
+      </Suspense>}
+
       {/* Mobile backdrop — taps close the off-canvas sidebar. */}
-      {sidebarOpen && (
+      {!reviewLayout && sidebarOpen && (
         <div
-          className="fixed inset-0 z-30 bg-black/50 md:hidden"
+          className={`${reviewLayout ? 'review-sidebar-backdrop ' : ''}fixed inset-0 z-30 bg-black/50 md:hidden`}
           onClick={() => setSidebarOpen(false)}
           aria-hidden
         />
@@ -2356,15 +2732,17 @@ export default function Workspace({ user, onLogout }: Props) {
 
       {/* Sidebar — push column on desktop, off-canvas overlay on phones. */}
       <aside
-        ref={element => { if (element) element.inert = !sidebarOpen }}
-        aria-hidden={!sidebarOpen}
-        className={`ws-sidebar ${sidebarOpen ? 'w-64' : 'w-0'} fixed inset-y-0 left-0 z-40 md:static md:z-auto transition-[width] duration-200 shrink-0 overflow-hidden border-r border-glass/[0.18] ws-glass flex flex-col`}
+        ref={element => { if (element) element.inert = !visibleSidebar || reviewLayout && (launcherOpen || agentScreensOpen) }}
+        aria-hidden={!visibleSidebar || reviewLayout && (launcherOpen || agentScreensOpen)}
+        data-launcher-hidden={reviewLayout && (launcherOpen || agentScreensOpen) || undefined}
+        className={`ws-sidebar ${visibleSidebar ? 'w-64' : 'w-0'} fixed inset-y-0 left-0 z-40 md:static md:z-auto transition-[width] duration-200 shrink-0 overflow-hidden border-r border-glass/[0.18] ws-glass flex flex-col`}
       >
+        {reviewLayout && <div className="review-history-heading"><span>Your conversations</span><small>{chats.length} saved</small></div>}
         <div className="ws-brand flex items-center gap-2 px-5 shrink-0">
           <button aria-label="Nalu home" onClick={() => { newChat(); closeSidebarOnMobile() }}><img src={avatarWordmark} alt="nalu" /></button>
         </div>
 
-        <div className="px-3 pb-2">
+        <div className="ws-sidebar-new-chat px-3 pb-2">
           <button
             onClick={() => { newChat(); closeSidebarOnMobile() }}
             className="ws-new-chat w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors"
@@ -2373,7 +2751,7 @@ export default function Workspace({ user, onLogout }: Props) {
           </button>
         </div>
 
-        <div className="px-3 pb-2">
+        <div className="ws-sidebar-search px-3 pb-2">
           <div className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 bg-glass/5">
             <Search size={14} className="text-dim" />
             <input
@@ -2402,14 +2780,14 @@ export default function Workspace({ user, onLogout }: Props) {
               {(saveState === 'pending' || saveState === 'error') && <button className="ml-2 underline hover:text-ink" onClick={retrySync}>Retry save</button>}
             </div>
             {/* Every saved chat, including former project chats. */}
-            <div className="flex-1 overflow-y-auto px-2 pb-2">
+            <div className="ws-sidebar-history flex-1 overflow-y-auto px-2 pb-2">
               {filteredChats.length > 0 && (
                 <div className="px-1 pt-2 pb-1 text-[11px] uppercase tracking-wide text-dim">Chats</div>
               )}
               {filteredChats.length === 0 && (
                 <div className="px-2 py-3 text-xs text-dim">No chats yet.</div>
               )}
-              {visibleChats.map(renderChatRow)}
+              {visibleChats.map(chat => renderChatRow(chat))}
               {!query.trim() && filteredChats.length > CHATS_PREVIEW && (
                 <button
                   onClick={() => setChatsExpanded((v) => !v)}
@@ -2423,7 +2801,7 @@ export default function Workspace({ user, onLogout }: Props) {
         )}
         {view !== 'chat' && <div className="flex-1" />}
 
-        <div className="border-t border-glass/[0.18] p-2 space-y-0.5">
+        <div className="ws-sidebar-footer border-t border-glass/[0.18] p-2 space-y-0.5">
           <button
             onClick={() => { setView('settings'); closeSidebarOnMobile() }}
             className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[12px] transition-colors ${
@@ -2436,7 +2814,7 @@ export default function Workspace({ user, onLogout }: Props) {
             href="/download.html" target="_blank" rel="noreferrer"
             className="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[12px] text-dim hover:bg-glass/5 transition-colors"
           >
-            <img src={avatarArtwork} alt="" className="w-5 h-5 rounded shrink-0 object-contain" /> Download Nalu Desktop
+            {reviewLayout ? <NaluMark className="w-5 h-5 shrink-0" /> : <img src={avatarArtwork} alt="" className="w-5 h-5 rounded shrink-0 object-contain" />} Download Nalu Desktop
           </a>
           <a
             href="/privacy.html"
@@ -2448,7 +2826,7 @@ export default function Workspace({ user, onLogout }: Props) {
           </a>
           <div className="flex items-center gap-2 rounded-lg px-2.5 py-2 hover:bg-glass/5">
             <div className="w-7 h-7 rounded-full bg-glass/10 flex items-center justify-center text-xs font-medium">
-              {(user?.displayName || 'N').charAt(0).toUpperCase()}
+              {reviewLayout ? <NaluMark className="w-5 h-5"/> : (user?.displayName || 'N').charAt(0).toUpperCase()}
             </div>
             <span className="text-sm truncate flex-1">{user?.displayName || 'You'}</span>
             <button
@@ -2464,18 +2842,18 @@ export default function Workspace({ user, onLogout }: Props) {
       </aside>
 
       {/* Main */}
-      <main className="ws-main flex-1 flex flex-col min-w-0">
+      <main ref={reviewMainRef} tabIndex={reviewLayout ? -1 : undefined} aria-hidden={reviewLayout && (launcherOpen || agentScreensOpen) || undefined} data-launcher-hidden={reviewLayout && (launcherOpen || agentScreensOpen) || undefined} className="ws-main flex-1 flex flex-col min-w-0">
         <div className="ws-topbar flex items-center gap-2 px-5 shrink-0">
-          <button
+          {!reviewLayout && <button
             onClick={() => setSidebarOpen((v) => !v)}
             className="w-8 h-8 rounded-md hover:bg-glass/10 flex items-center justify-center text-ink"
             aria-label="Toggle sidebar"
           >
             <PanelLeft size={16} />
-          </button>
+          </button>}
           <span className="truncate text-sm text-dim">{topBarTitle}</span>
           {view === 'chat' && active && <button onClick={() => startRename(active)} aria-label="Rename current chat" title="Rename chat" className="shrink-0 rounded-md p-1.5 text-dim hover:bg-glass/10 hover:text-ink"><Pencil size={13} /></button>}
-          <button
+          {!reviewLayout && <button
             onClick={toggleTheme}
             className="ml-auto flex shrink-0 items-center gap-1.5 rounded-lg border border-glass/[0.14] bg-glass/[0.06] px-2.5 py-1.5 text-xs text-dim hover:bg-glass/10 hover:text-ink transition-colors"
             aria-label="Toggle light or dark theme"
@@ -2483,35 +2861,8 @@ export default function Workspace({ user, onLogout }: Props) {
           >
             {isDark ? <Sun size={14} /> : <Moon size={14} />}
             <span className="hidden sm:inline">{isDark ? 'Light' : 'Dark'}</span>
-          </button>
-          {view === 'chat' && (
-            <div className="flex shrink-0 items-center gap-2">
-              <PlaygroundControls />
-              {activeRepo ? (
-                <>
-                  {changeCount > 0 && (
-                    <button
-                      onClick={commit}
-                      disabled={committing}
-                      className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 disabled:opacity-50"
-                    >
-                      <GitCommit size={13} /> {committing ? 'Committing…' : `Commit ${changeCount}`}
-                    </button>
-                  )}
-                  <button
-                    onClick={disconnectRepo}
-                    title={`Disconnect ${activeRepo.owner}/${activeRepo.repo}`}
-                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-glass/[0.06] hover:bg-glass/10 text-dim"
-                  >
-                    <GitBranch size={13} /> <span className="hidden sm:inline">{activeRepo.owner}/{activeRepo.repo}</span>
-                  </button>
-                </>
-              ) : null}
-              <div className="hidden sm:flex items-center text-xs text-dim px-2.5 py-1.5 rounded-lg bg-glass/[0.06]">
-                Talking to {routeName}
-              </div>
-            </div>
-          )}
+          </button>}
+          {view === 'chat' && renderChatTools()}
         </div>
 
         {showConnect && (
@@ -2563,6 +2914,7 @@ export default function Workspace({ user, onLogout }: Props) {
 
         {view === 'studio' && (
           <StudioPanel
+            designEnabled={reviewLayout}
             creations={creations}
             onOpen={openCreation}
             streaming={streaming}
@@ -2626,269 +2978,84 @@ export default function Workspace({ user, onLogout }: Props) {
                     <Suspense fallback={<MediaLoader kind="cad" />}><CADCard code={m.cad} /></Suspense>
                   </CardErrorBoundary>
                 )
-              if (m.video) return <video src={m.video} controls className="mx-auto max-h-[70vh] w-auto max-w-full rounded-xl" />
+              if (m.video) return <H3MoviePlayer url={m.video} className="mx-auto max-h-[70vh] w-auto max-w-full rounded-xl" />
               if (typeof m.content === 'string') {
                 const im = m.content.match(/^!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/)
                 if (im) return <img src={im[1]} alt={m.content.slice(2, 80)} className="mx-auto max-h-[70vh] w-auto max-w-full rounded-xl" />
               }
               return null
             }}
-            onGenerate={(prompt, toolKey, target) => {
+            onGenerate={(prompt, toolKey, target, movieSeconds) => {
               // Stay in the Studio so the design renders here first; it also lands in chat.
               closeSidebarOnMobile()
-              void send(prompt, { keepView: true, studioKind: toolKey, studioTarget: target })
+              void send(prompt, { keepView: true, studioKind: toolKey, studioTarget: target, movieSeconds })
             }}
           />
         )}
         {view === 'map' && <MapPanel />}
-        {view === 'memory' && IS_WEB_APP && <MemoryPanel onOpenChat={(id) => { setActiveId(id); setView('chat') }} />}
+        {view === 'memory' && IS_WEB_APP && (reviewLayout && WorkspaceLiveHub ? (
+          <Suspense fallback={<div className="review-launcher-loading" role="status">Opening your work…</div>}>
+            <WorkspaceLiveHub chats={chats} activeChatIds={reviewActiveChats} activity={liveActivity}
+              onOpenChat={id => { setActiveId(id); openSpace('chat') }}
+              onOpenSpace={openSpace}
+              onNewChat={() => { newChat(); openSpace('chat') }}
+              savedMemory={<MemoryPanel designEnabled onOpenChat={id => { setActiveId(id); openSpace('chat') }} />}/>
+          </Suspense>
+        ) : <MemoryPanel onOpenChat={selectChat} />)}
         {view === 'agents' && (
           <Suspense fallback={<div className="flex flex-1 items-center justify-center text-sm text-dim"><Loader2 size={18} className="mr-2 animate-spin" /> Loading AutoPilot…</div>}>
             <div className="ws-feature-shell"><WorkspaceIntro compact label="AutoPilot" title="Leave it with me." description="Plan the steps, connect your tools, and follow your work as it happens."/><AgentsPanel /></div>
           </Suspense>
         )}
-        {view === 'skills' && <SkillsPanel onDraft={prompt => { setInput(prompt); setView('chat'); requestAnimationFrame(() => taRef.current?.focus()) }} />}
+        {view === 'skills' && <SkillsPanel onDraft={prompt => { setInput(prompt); openSpace('chat'); requestAnimationFrame(() => taRef.current?.focus()) }} />}
         {view === 'automations' && <AutomationsPanel />}
         {view === 'settings' && (
           <SettingsPanel displayName={user?.displayName} onLogout={onLogout} />
         )}
 
-        {view === 'chat' &&
-          (messages.length === 0 ? (
-            <div className="ws-chat-home">
-              <div className="ws-chat-welcome">
-                <NaluAvatar size={286} />
-                <span className="ws-eyebrow"><i />Right here with you</span>
-                <h1>I'm right here.</h1>
-                <p>A thought, a question, a new idea.<br/>A little help for whatever comes next.</p>
-              </div>
-              <div className="ws-home-composer w-full max-w-2xl">
-                <Composer
-                  visible={view === 'chat'}
-                  contextKey={active?.id || 'new-chat'}
-                  accountToken={sessionToken || ''}
-                  input={input}
-                  setInput={setInput}
-                  streaming={streaming}
-                  onSend={() => void send(input)}
-                  onStop={stop}
-                  onKey={onKey}
-                  taRef={taRef}
-                  onAttach={(files) => void addAttachments(files)}
-                  attaching={attaching}
-                  attachments={(active?.attachments || []).filter((a) => pendingIds.includes(a.id))}
-                  onRemoveAttachment={removeAttachment}
-                  dismissedIntent={dismissedIntent}
-                  onDismissIntent={() => setDismissedIntent(input.trim())}
-                  thinkLevel={thinkLevel}
-                  
-                />
-              </div>
-              <div className="ws-chat-suggestions" aria-label="Ways to begin">
-                <button onClick={() => { setInput('Help me plan my day.'); taRef.current?.focus() }}><StickyNote size={18}/><span>Plan my day<small>A little room to think</small></span></button>
-                <button onClick={() => setView('studio')}><Palette size={18}/><span>Make something<small>Bring an idea to life</small></span></button>
-                <button onClick={() => setView('agents')}><Bot size={18}/><span>Leave it with Nalu<small>Your work, moving forward</small></span></button>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div ref={scrollRef} onScroll={onChatScroll} className="ws-chat-thread flex-1 overflow-y-auto overscroll-contain">
-                <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-                  {attachmentError && <p role="alert" className="rounded-xl border border-glass/20 bg-panel/80 p-3 text-sm text-ink">{attachmentError}</p>}
-                  {messages.map((m, i) => (
-                    <div
-                      key={i}
-                      ref={(el) => {
-                        msgRefs.current[i] = el
-                      }}
-                      className={`ws-chat-message scroll-mt-20 flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                    >
-                      {m.role === 'user' ? (
-                        // Your messages render as an iMessage-style blue bubble on the
-                        // right — no avatar — so it's obvious which side is you.
-                        <div dir="auto" className="ws-user-message max-w-[78%] rounded-2xl rounded-br-md bg-gradient-to-b from-[#3b82f6] to-[#2f6fed] px-3.5 py-2 text-[14px] leading-relaxed whitespace-pre-wrap break-words text-white shadow-sm">
-                          {m.content}
-                          <MessageAttachments attachments={m.attachments || (i === messages.findIndex(message => message.role === 'user') ? active?.attachments || [] : [])} />
-                        </div>
-                      ) : (
-                        // Nalu's answer: full-width, left-aligned, no avatar.
-                        <div className="w-full min-w-0">
-                          <div className="ws-assistant-identity">
-                            {streaming && i === messages.length - 1 ? <NaluAvatar size={42} phase="thinking"/> : <img src={avatarArtwork} alt=""/>}
-                            <span>Nalu<small>{streaming && i === messages.length - 1 ? 'Thinking with you' : 'Here to help'}</small></span>
-                          </div>
-                          <AssistantThink reasoning={m.reasoning} isLive={streaming && i === messages.length - 1}>
-                          <>
-                            {m.loading ? (
-                              <MediaLoader kind={m.loading} />
-                            ) : m.content ? (
-                              // Render full Markdown LIVE while streaming, so the
-                              // styling appears as the text arrives (rAF-throttled
-                              // upstream keeps it smooth). A subtle caret trails it.
-                              <div className={streaming && i === messages.length - 1 ? 'streaming-caret nalu-stream-fade' : undefined}>
-                                <Markdown>{cleanForDisplay(m.content)}</Markdown>
-                                {m.clarify && !m.clarify.answered && !streaming && (
-                                  <ClarifyBlock questions={m.clarify.questions} onSubmit={(ans) => submitClarify(i, ans)} />
-                                )}
-                              </div>
-                            ) : !m.sheet && !m.doc && !m.video && !m.cad && !m.design && !m.deck && streaming && i === messages.length - 1 ? (
-                              // Waiting for the first token — the Nalu mark breathes
-                              // with three soft dots while waiting for the first token.
-                              <div className="flex items-center gap-2 py-0.5">
-                                <img src={avatarArtwork} alt="" className="w-7 h-7 rounded-lg nalu-think" />
-                                <WolfWord className="text-[13px]" />
-                              </div>
-                            ) : null}
-                            <div
-                              className={i === messages.length - 1 && (m.sheet || m.doc || m.deck || m.design || m.cad || m.video) ? 'nalu-materialize' : undefined}
-                              onAnimationEnd={(e) => e.currentTarget.classList.remove('nalu-materialize')}
-                            >
-                            {m.sheet && (
-                              <CardErrorBoundary label="The spreadsheet">
-                                <Suspense fallback={<MediaLoader kind="sheet" />}>
-                                  <SheetCard data={m.sheet} />
-                                </Suspense>
-                              </CardErrorBoundary>
-                            )}
-                            {m.doc && (
-                              <CardErrorBoundary label="The document">
-                                <Suspense fallback={<MediaLoader kind="doc" />}>
-                                  <DocCard data={m.doc} />
-                                </Suspense>
-                              </CardErrorBoundary>
-                            )}
-                            {m.email && (
-                              <CardErrorBoundary label="The email">
-                                <Suspense fallback={<MediaLoader kind="doc" />}>
-                                  <EmailCard data={m.email} />
-                                </Suspense>
-                              </CardErrorBoundary>
-                            )}
-                            {m.deck && (
-                              <CardErrorBoundary label="The deck">
-                                <Suspense fallback={<div role="status" className="flex items-center gap-2 py-6 text-sm text-dim"><Loader2 size={18} className="motion-safe:animate-spin" />Opening deck…</div>}>
-                                  <SlidesCard data={m.deck} onUpdate={deck => setChats(cs => cs.map(ch =>
-                                    ch.id === activeId ? { ...ch, messages: ch.messages.map((mm, k) => k === i ? { ...mm, deck } : mm) } : ch
-                                  ))} />
-                                </Suspense>
-                              </CardErrorBoundary>
-                            )}
-                            {m.cad && (
-                              <CardErrorBoundary label="The 3D model">
-                                <Suspense fallback={<MediaLoader kind="cad" />}>
-                                  <CADCard
-                                    code={m.cad}
-                                    prompt={(() => {
-                                      // the design intent = the user message that asked for it
-                                      for (let k = i - 1; k >= 0; k--) if (messages[k].role === 'user') return messages[k].content
-                                      return undefined
-                                    })()}
-                                  />
-                                </Suspense>
-                              </CardErrorBoundary>
-                            )}
-                            {m.design && (
-                              <CardErrorBoundary label="The design" resetKey={m.design} previewHtml={typeof m.design === 'object' && 'html' in m.design && typeof m.design.html === 'string' ? m.design.html : undefined}>
-                                <Suspense fallback={<MediaLoader kind="design" />}>
-                                  <DesignArtifactCard
-                                    art={m.design}
-                                    onUpdate={(art) => {
-                                      // "Finish build" (and future in-card edits) persist onto the message
-                                      if (!activeId) return
-                                      setChats((cs) =>
-                                        cs.map((c) =>
-                                          c.id === activeId
-                                            ? { ...c, messages: c.messages.map((mm, k) => (k === i ? { ...mm, design: art } : mm)) }
-                                            : c,
-                                        ),
-                                      )
-                                    }}
-                                  />
-                                </Suspense>
-                              </CardErrorBoundary>
-                            )}
-                            {m.video && (
-                              <span className="block">
-                                <video
-                                  src={m.video}
-                                  controls
-                                  className="my-2 max-h-[28rem] w-auto max-w-full rounded-xl border border-glass/[0.14]"
-                                />
-                                <button
-                                  onClick={() => void downloadMedia(m.video as string, 'nalu-video.mp4')}
-                                  className="mb-2 text-xs font-medium text-gold underline-offset-4 hover:underline"
-                                >
-                                  Download video
-                                </button>
-                              </span>
-                            )}
-                            </div>
-                          </>
-                          </AssistantThink>
-                          {/* Message actions — Copy the answer + Retry (regenerate).
-                              Hidden while THIS message is still streaming or loading
-                              a media card; retry is the recovery path after an error
-                              or a dropped stream. */}
-                          {!m.loading && !(streaming && i === messages.length - 1) && (typeof m.content === 'string' && (m.content.trim().length > 0 || !!m.id)) && (
-                            <div className="mt-1.5 flex items-center gap-1 text-dim">
-                              <button
-                                onClick={() => {
-                                  const t = cleanForDisplay(typeof m.content === 'string' ? m.content : '')
-                                  navigator.clipboard?.writeText(t)
-                                    .then(() => { setCopiedMsg(i); setTimeout(() => setCopiedMsg((c) => (c === i ? null : c)), 1500) })
-                                    .catch(() => {})
-                                }}
-                                title="Copy"
-                                aria-label="Copy message"
-                                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] hover:bg-glass/10 hover:text-ink"
-                              >
-                                {copiedMsg === i ? <><Check size={12} className="text-emerald-400" /> Copied</> : <><Copy size={12} /> Copy</>}
-                              </button>
-                              <button
-                                onClick={() => regenerate(i)}
-                                disabled={streaming}
-                                title="Regenerate this response"
-                                aria-label="Retry"
-                                className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] hover:bg-glass/10 hover:text-ink disabled:opacity-40"
-                              >
-                                <RotateCw size={12} /> Retry
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="ws-chat-composer-dock px-4 py-3">
-                <div className="max-w-3xl mx-auto">
-                  <BrandBar />
-                  <Composer
-                    visible={view === 'chat'}
-                    contextKey={active?.id || 'new-chat'}
-                    accountToken={sessionToken || ''}
-                    input={input}
-                    setInput={setInput}
-                    streaming={streaming}
-                    onSend={() => void send(input)}
-                    onStop={stop}
-                    onKey={onKey}
-                    taRef={taRef}
-                    onAttach={(files) => void addAttachments(files)}
-                    attaching={attaching}
-                    attachments={(active?.attachments || []).filter((a) => pendingIds.includes(a.id))}
-                    onRemoveAttachment={removeAttachment}
-                    dismissedIntent={dismissedIntent}
-                    onDismissIntent={() => setDismissedIntent(input.trim())}
-                    thinkLevel={thinkLevel}
-                    
-                  />
-                </div>
-              </div>
-            </>
-          ))}
+        {view === 'chat' && (reviewLayout ? (reviewChatOpen ? (
+          <div className="review-chat-detached">
+            <NaluMark />
+            <h2>Your conversation is open below.</h2>
+            <button type="button" onClick={() => openSpace('chat')}>Open full chat</button>
+          </div>
+        ) : <div ref={setChatInlineAnchor} className="workspace-chat-inline-slot" aria-hidden="true" />) : renderChatContent())}
       </main>
+
+      {reviewLayout && agentScreensOpen && WorkspaceAgentScreens && <Suspense fallback={<div className="review-launcher-loading" role="status">Opening agent screens…</div>}>
+        <WorkspaceAgentScreens chats={chats} activeChatIds={reviewActiveChats} activity={liveActivity} selectedItemId={selectedAgentItem}
+          onSelectItem={setSelectedAgentItem} onOpenChat={id => { setActiveId(id); openSpace('chat') }} onOpenSpace={openSpace} onClose={closeAgentScreens}/>
+      </Suspense>}
+      {reviewLayout && WorkspaceAgentTray && <Suspense fallback={null}>
+        <WorkspaceAgentTray chats={chats} activeChatIds={reviewActiveChats} activity={liveActivity}
+          onOpenChat={id => { setActiveId(id); openSpace('chat') }}
+          onOpenPicker={() => setReviewChatOpen(false)}
+          onOpenMemory={() => openSpace('memory')} selectedItemId={agentScreensOpen ? selectedAgentItem || undefined : undefined}
+          onSelectItem={openAgentScreens} onOpenScreens={() => openAgentScreens(null)}/>
+      </Suspense>}
+
+      {reviewLayout && WorkspaceChatPopover && <Suspense fallback={null}>
+        <WorkspaceChatPopover open={reviewChatOpen} onOpen={() => setReviewChatOpen(true)}
+          fullPageAnchor={chatInlineAnchor}
+          fullPageVisible={view === 'chat' && !launcherOpen && !agentScreensOpen}
+          onChatVisibilityChange={setChatContentVisible}
+          onClose={() => setReviewChatOpen(false)}
+          onNewChat={newChat} title={active?.title || 'A little space to think'}
+          chatItems={chats.map(chat => ({ id: chat.id, title: chat.title }))} activeChatId={activeId} onSelectChat={selectChat}
+          chatTools={activeRepo || routeName !== 'Nalu' ? renderChatTools() : undefined}
+          persistenceKey={previewLayout ? undefined : `workspace-chat-tabs:${encodeURIComponent(user?.id || 'account')}`}
+          history={showChatDetails => reviewChatOpen ? <>
+            <div className="workspace-chat-history-heading"><h3>All chats</h3><span>{chats.length}</span></div>
+            <label className="workspace-chat-history-search"><Search size={15} aria-hidden="true"/><input
+              type="search" aria-label="Search all chats" placeholder="Search chats" value={query} onChange={event => setQuery(event.target.value)}/></label>
+            <nav className="workspace-chat-history-list" aria-label="Chat history">
+              {filteredChats.map(chat => renderChatRow(chat, showChatDetails))}
+              {filteredChats.length === 0 && <p>{query.trim() ? 'No chats match your search.' : 'Your conversations will appear here.'}</p>}
+            </nav>
+          </> : null}>
+          {renderChatContent()}
+        </WorkspaceChatPopover>
+      </Suspense>}
 
       {/* No right drawer — everything Nalu builds renders IN FULL in the chat. */}
     </div>

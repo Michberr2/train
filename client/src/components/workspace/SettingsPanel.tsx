@@ -1,4 +1,6 @@
 import WorkspaceIntro from './WorkspaceIntro'
+import AiBudgetPanel from './AiBudgetPanel'
+import { getBillingReturn } from '../../lib/billing'
 import {
   Settings,
   User as UserIcon,
@@ -47,7 +49,7 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
   const [{ reasoning, maxTokens, webSearch, streaming }, setSettings] = useState(getModelSettings())
   // Settings persist the instant you change them (naluSettings → localStorage). This
   // flashes a "Saved" confirmation so it's obvious the change stuck.
-  const [category, setCategory] = useState('Account')
+  const [category, setCategory] = useState(() => getBillingReturn() ? 'Support Nalu' : 'Account')
   const [saved, setSaved] = useState(false)
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flashSaved = () => {
@@ -71,8 +73,8 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
           <WorkspaceIntro label="Your Nalu" title="Make yourself at home." description="Your account, your preferences, your way of working.">
             <span role="status" className="ws-save-status">{saved ? 'Changes saved' : 'Preferences save automatically'}</span>
           </WorkspaceIntro>
-          <nav className="ws-segments" aria-label="Settings categories">
-            {['Account', 'Thinking', 'Video & engine'].map(item => <button key={item} aria-pressed={category === item} onClick={() => setCategory(item)}>{item}</button>)}
+          <nav className="ws-segments flex-wrap" aria-label="Settings categories">
+            {['Account', 'Support Nalu', 'Thinking', 'Video & engine'].map(item => <button key={item} aria-pressed={category === item} onClick={() => setCategory(item)}>{item}</button>)}
           </nav>
           <div className="ws-settings-group" hidden={category !== 'Account'}>
           {/* Account */}
@@ -117,6 +119,7 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
           <PhoneSection />
 
           </div>
+          {category === 'Support Nalu' && <div className="ws-settings-group"><AiBudgetPanel /></div>}
           <div className="ws-settings-group" hidden={category !== 'Thinking'}>
           {/* Reasoning & capacity */}
           <Section icon={<Gauge size={15} />} title="Reasoning &amp; capacity" desc="How hard Nalu thinks + answer length">

@@ -90,8 +90,8 @@ export async function generateWithH3(req: H3Request): Promise<H3Result> {
       }),
       signal: ctrl.signal,
     })
-    const j = (await r.json().catch(() => ({}))) as { url?: string; error?: string; seconds?: number; seed?: number }
-    if (!r.ok || !j.url) throw new Error(j.error || `h3 ${r.status}`)
+    const j = (await r.json().catch(() => ({}))) as { url?: string; error?: string; detail?: string; seconds?: number; seed?: number }
+    if (!r.ok || !j.url) throw new Error(j.error || j.detail || `h3 ${r.status}`)
     return { url: j.url, seconds: j.seconds ?? req.seconds ?? 6, seed: j.seed ?? 0, onDevice: true, engine: 'minimax-h3' }
   } finally {
     clearTimeout(t)

@@ -1,0 +1,39 @@
+/* Keep the active tool mounted and measured while browsing other spaces. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace [data-launcher-hidden] { visibility:hidden; pointer-events:none; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-main:focus { outline:none; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .workspace-carousel-root,
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .review-launcher-loading {
+  position:absolute; grid-row:auto; grid-column:auto; inset:98px 0 22px; width:100%; height:auto; z-index:20;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .review-launcher-loading { display:grid; place-items:center; color:#eef2f6; font-size:13px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .review-space-navigation { justify-content:flex-start; flex:1; gap:18px; padding-left:22px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .review-header-nav .review-switch-space {
+  gap:9px; padding:10px 14px; border:1px solid #e2e9ef50; border-radius:6px; color:#eef2f6; background:#26354438;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .review-header-nav .review-switch-space:hover { background:#26354488; border-color:#e2e9efa0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .review-header-nav .review-switch-space svg { display:block; flex-shrink:0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .review-current-space { color:#e5ebf1; font-size:12px; border-left:1px solid #e2e9ef50; padding-left:18px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .review-header-nav .review-resume-space { color:#e5ebf1; font-size:11px; text-decoration:underline; text-underline-offset:4px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .review-header-nav .review-live-work-link { display:flex; gap:8px; padding:9px 11px; background:transparent; border:1px solid #dce4ec2c; color:#e5ebf1; border-radius:3px; font-size:11px; white-space:nowrap; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .review-header-nav .review-live-work-link[aria-current=page] { background:#dce4ec11; border-color:#dce4ec77; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .review-live-work-link i { width:5px; height:5px; border:1px solid #c7d3e0; border-radius:50%; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .review-live-work-link i[data-working=true] { background:#c7d3e0; box-shadow:0 0 0 3px #c7d3e01a; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .review-live-work-link strong { font:10px 'Nalu Review Mono',monospace; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .review-header-account>.review-account-logo { display:block; width:27px; height:27px; flex-shrink:0; color:rgb(var(--ws-ink)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .review-header-account { min-width:44px; min-height:44px; justify-content:center; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .ws-chat-welcome>.review-welcome-logo { grid-column:2; grid-row:1/3; width:65px; height:65px; justify-self:end; align-self:center; color:rgb(var(--ws-ink)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .review-assistant-logo { width:32px; height:32px; flex-shrink:0; color:rgb(var(--ws-ink)); }
+@media(max-width:950px) {
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .workspace-carousel-root,
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .review-launcher-loading { top:143px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .review-space-navigation { padding-left:0; justify-content:center; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .review-space-navigation button { flex:0 0 auto; }
+}
+@media(max-width:767px) {
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .ws-chat-welcome>.review-welcome-logo { grid-row:1; width:44px; height:44px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .workspace-carousel-root { top:135px; bottom:12px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .review-space-navigation { gap:12px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .review-current-space { padding-left:12px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .review-space-navigation .review-current-space,
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .review-space-navigation .review-resume-space { display:none; }
+}

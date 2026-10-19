@@ -1,0 +1,96 @@
+/* Local preview: three overlapping circular avatars inside the white footer. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .workspace-agent-tray {
+  position:absolute; left:68px; bottom:6px; z-index:40; display:flex; align-items:center; gap:6px;
+  width:max-content; height:44px; max-width:calc(50vw - 110px); color:#183750;
+  font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-cards { display:flex; align-items:center; isolation:isolate; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .workspace-agent-tray [data-agent=nalu] { --agent-scene:url('/backgrounds/bg-sandy-beach-671d120950-960.webp'); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .workspace-agent-tray [data-agent=rocky] { --agent-scene:url('/backgrounds/bg-hills-teal-c24a09c980-960.webp'); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .workspace-agent-tray [data-agent=milo] { --agent-scene:url('/backgrounds/bg-meadow-sunset-aa0c5d51db-960.webp'); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-card {
+  position:relative; display:flex; align-items:center; justify-content:center; flex:0 0 44px; width:44px; height:44px;
+  padding:4px; border:2px solid #fff; border-radius:50%;
+  background-color:#edf3f8; background-image:linear-gradient(#ffffff30,#ffffff30),var(--agent-scene);
+  background-position:center bottom; background-size:auto 135%;
+  color:#183b57; text-align:left; box-shadow:0 1px 5px #193f5726; transition:background .15s,border-color .15s;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-card + .agent-tray-card { margin-left:-32px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-card[data-stack-layer="3"] { z-index:3; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-card[data-stack-layer="2"] { z-index:2; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-card[data-stack-layer="1"] { z-index:1; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-card[data-primary=true] { z-index:4; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-card-head { display:block; flex:0 0 30px; width:30px; height:32px; overflow:visible; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-head-nalu,
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-head-nalu .nalu-mark-outline { color:#000; fill:#000; stroke:#000; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-card-copy { display:none; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-card-copy strong { overflow:hidden; text-overflow:ellipsis; color:#193e5b; font-size:10px; font-weight:700; line-height:11px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-card-status { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#46637b; font-size:8px; line-height:10px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-card-copy small { color:#436e91; font-size:7px; font-weight:600; line-height:8px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-card[data-status=waiting] .agent-card-status { color:#25618e; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-card[data-status=failed] .agent-card-status { color:#94485a; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-card[aria-pressed=true] { border-color:#c2d7e8; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-card[aria-expanded=true] { border-color:#a9c8df; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-card:hover:not(:disabled) { z-index:5; border-color:#84afd0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-card:disabled { cursor:default; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-overview {
+  display:grid; place-items:center; flex:0 0 28px; width:28px; height:44px; padding:0;
+  border:0; border-radius:6px; background:transparent; color:#53728d;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-overview:hover { background:#edf3f8; color:#244f72; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .workspace-agent-tray button:focus-visible { z-index:6; outline:2px solid #367bb3; outline-offset:2px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .workspace-agent-tray .agent-tray-card:focus-visible { border-radius:50%; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker {
+  position:absolute; left:0; bottom:calc(100% + 12px); z-index:10; display:flex; flex-direction:column;
+  width:354px; max-width:calc(100vw - 40px); max-height:55dvh; min-height:0; overflow:hidden; outline:none;
+  border:1px solid #ffffffeb; border-radius:28px; color:#243044; background:#f7f9fcf7;
+  backdrop-filter:blur(32px) saturate(1.12); -webkit-backdrop-filter:blur(32px) saturate(1.12);
+  box-shadow:0 24px 70px #20314a24,0 6px 20px #20314a12,0 0 0 .5px #3a4b5f18,inset 0 1px 0 #fff;
+  animation:nalu-agent-picker-in 140ms ease-out;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-header {
+  display:flex; flex:0 0 auto; align-items:center; justify-content:space-between; gap:12px;
+  padding:15px 14px 11px 22px; border-bottom:1px solid #35465a09;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-header h2 { margin:0; color:#243044; font:650 15px/1.4 Inter,sans-serif; letter-spacing:-.025em; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-header p { margin:3px 0 0; color:#657284; font-size:11px; line-height:1.4; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-close {
+  display:grid; place-items:center; flex:0 0 44px; width:44px; height:44px; padding:0; border:0;
+  border-radius:50%; background:transparent; color:#7a8796;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-close>svg { box-sizing:content-box; padding:6px; border-radius:50%; background:#e8edf4; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-close:hover>svg { color:#243044; background:#dce4ee; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-list { min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:8px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-task {
+  display:flex; align-items:center; gap:12px; width:100%; min-height:81px; margin:0; padding:11px 13px;
+  border:1px solid transparent; border-radius:19px; color:#243044; background:transparent; text-align:left;
+  transition:background .15s,border-color .15s;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-task:hover:not(:disabled) { background:#e8edf4b0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-task[aria-pressed=true] { border-color:#fff; background:#fff; box-shadow:0 2px 8px #23334b06; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-task:disabled { opacity:.65; cursor:default; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-picker-face { display:grid; place-items:center; flex:0 0 44px; width:44px; height:44px; border:1px solid #ffffffd9; border-radius:50%; background-color:#edf3f8; background-image:linear-gradient(#ffffff30,#ffffff30),var(--agent-scene); background-position:center bottom; background-size:auto 135%; box-shadow:0 2px 5px #23334b07; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-picker-head { display:block; width:32px; height:32px; overflow:visible; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-copy { display:flex; flex-direction:column; gap:3px; min-width:0; flex:1; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-copy>strong { color:#243044; font-size:13px; font-weight:650; line-height:1.3; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-task-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#536276; font-size:11px; line-height:1.4; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-task-status { color:#657284; font-size:10px; font-weight:500; line-height:1.4; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-task[data-status=waiting] .agent-tray-picker-task-status { color:#2e638c; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-task[data-status=failed] .agent-tray-picker-task-status { color:#94485a; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker-footer { flex:0 0 auto; padding:8px; border-top:1px solid #35465a09; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-all-workspaces {
+  display:flex; align-items:center; justify-content:center; gap:8px; width:100%; min-height:44px; padding:8px 12px;
+  border:1px solid transparent; border-radius:18px; background:transparent; color:#536276; font-size:12px; font-weight:500;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-all-workspaces:hover { background:#e8edf4b0; color:#243044; }
+@media(max-width:767px) {
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .workspace-agent-tray { left:20px; bottom:8px; height:44px; max-width:calc(50vw - 48px); gap:0; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-card-head { flex-basis:30px; width:30px; height:32px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-card-copy,
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-overview { display:none; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-card { transition:none; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .agent-tray-picker { animation:none; }
+}
+@keyframes nalu-agent-picker-in { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }

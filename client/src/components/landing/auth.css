@@ -1,0 +1,54 @@
+.nalu-auth-overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 28px 20px; color: #fff; }
+.nalu-auth-backdrop { position: absolute; inset: 0; background: #142f3c6b; backdrop-filter: blur(16px); }
+.nalu-auth-dialog, .nalu-auth-reset-card { position: relative; width: 100%; max-width: 480px; max-height: calc(100dvh - 56px); overflow: auto; overscroll-behavior: contain; border: 1px solid #ffffff65; background: #294c4a; color: #fff; box-shadow: 0 30px 120px #10282740; scrollbar-width: thin; scrollbar-color: #ffffff60 transparent; color-scheme: dark; }
+.nalu-auth-dialog:focus { outline: none; }
+.nalu-auth-shade { position: absolute; inset: 0; background: linear-gradient(135deg, #163c43bf, #254b45e8 60%, #304d49d9); pointer-events: none; }
+.nalu-auth-grid { position: absolute; inset: 0; background-image: linear-gradient(90deg, #ffffff07 1px, transparent 1px), linear-gradient(#ffffff07 1px, transparent 1px); background-size: 25% 100%, 100% 160px; pointer-events: none; }
+.nalu-auth-content { position: relative; z-index: 1; padding: 36px 38px 30px; }
+.nalu-auth-brand { display: flex; align-items: center; gap: 8px; margin-bottom: 36px; }
+.nalu-auth-brand > svg { width: 33px; height: 35px; }
+.nalu-auth-brand > span { font-size: 34px; letter-spacing: -.07em; line-height: 1; font-weight: 500; }
+.nalu-auth-brand > small { margin-left: 14px; padding-left: 15px; border-left: 1px solid #ffffff45; font: 7px/1.65 'Nalu Mono', monospace; letter-spacing: .08em; }
+.nalu-auth-close { position: absolute; z-index: 2; top: 12px; right: 12px; width: 38px; height: 38px; display: grid; place-items: center; color: #ffffffbf; background: transparent; transition: background .2s, color .2s; }
+.nalu-auth-close:hover { background: #ffffff12; color: #fff; }
+.nalu-auth-title { font-size: 38px; font-weight: 300; line-height: 1.08; letter-spacing: -.045em; margin: 0 0 13px; }
+.nalu-auth-description { color: #ffffffe0; font-size: 12px; line-height: 1.75; margin: 0 0 25px; max-width: 360px; }
+.nalu-auth-tabs { display: flex; border-bottom: 1px solid #ffffff35; margin-bottom: 23px; }
+.nalu-auth-tab { position: relative; flex: 1; padding: 12px 5px; min-height: 44px; font: 9px 'Nalu Mono', monospace; letter-spacing: .07em; text-transform: uppercase; color: #ffffffb3; transition: color .2s; }
+.nalu-auth-tab::after { content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 1px; background: #fff; transform: scaleX(0); transform-origin: left; transition: transform .3s; }
+.nalu-auth-tab.is-active { color: #fff; }
+.nalu-auth-tab.is-active::after { transform: scaleX(1); }
+.nalu-auth-form, .nalu-auth-stack { display: flex; flex-direction: column; gap: 13px; }
+.nalu-auth-input { width: 100%; min-height: 49px; border: 1px solid #ffffff45; border-radius: 0; background: #f2fff808; color: #fff; padding: 13px 15px; font-size: 13px; outline: none; transition: border-color .2s, background .2s; }
+.nalu-auth-input::placeholder { color: #ffffffb3; opacity: 1; }
+.nalu-auth-input:hover { border-color: #ffffff80; }
+.nalu-auth-input:focus { border-color: #fff; background: #ffffff12; box-shadow: 0 0 0 1px #ffffff40; }
+.nalu-auth-input:-webkit-autofill { -webkit-text-fill-color: #fff; box-shadow: 0 0 0 100px #355c59 inset; caret-color: #fff; }
+.nalu-auth-primary { display: flex; align-items: center; justify-content: center; min-height: 50px; padding: 13px 22px; margin-top: 5px; border: 1px solid #fff; background: #fff; color: #25433f; font: 10px 'Nalu Mono', monospace; letter-spacing: .07em; text-transform: uppercase; transition: background .2s; }
+.nalu-auth-primary:hover { background: #e5eeea; }
+.nalu-auth-primary:disabled { opacity: .55; cursor: wait; }
+.nalu-auth-secondary { min-height: 40px; color: #ffffffd6; font-size: 11px; text-align: center; }
+.nalu-auth-secondary:hover, .nalu-auth-link:hover { color: #fff; }
+.nalu-auth-footer { margin-top: 22px; padding-top: 20px; border-top: 1px solid #ffffff30; color: #ffffffc4; font-size: 11px; text-align: center; line-height: 1.7; }
+.nalu-auth-link { display: inline-flex; align-items: center; min-height: 32px; color: #fff; text-decoration: underline; text-underline-offset: 4px; text-decoration-color: #ffffff65; }
+.nalu-auth-error { padding: 10px 12px; border-left: 2px solid #ffbdac; background: #722d2d40; color: #ffe5dc; font-size: 12px; line-height: 1.6; }
+.nalu-auth-recovery { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #ffffff60; padding: 14px; background: #ffffff08; }
+.nalu-auth-recovery > span { font: 14px 'Nalu Mono', monospace; letter-spacing: .07em; user-select: all; }
+.nalu-auth-copy { flex-shrink: 0; color: #fff; min-height: 32px; font-size: 11px; text-decoration: underline; text-underline-offset: 4px; }
+.nalu-auth-note { color: #ffffffc4; font-size: 11px; line-height: 1.75; }
+.nalu-auth-message { color: #ffffffeb; font-size: 13px; line-height: 1.8; }
+.nalu-auth-dialog button:focus-visible, .nalu-auth-dialog a:focus-visible, .nalu-auth-reset-card button:focus-visible, .nalu-auth-reset-card a:focus-visible { outline: 2px solid #fff; outline-offset: 4px; }
+.nalu-auth-reset { min-height: 100dvh; position: relative; display: flex; align-items: center; justify-content: center; padding: 28px 20px; background: #365d59; }
+.nalu-auth-reset > .nalu-auth-reset-card { background: #163c43a3; backdrop-filter: blur(18px); }
+@media (max-width: 600px) {
+  .nalu-auth-overlay, .nalu-auth-reset { padding: 16px; }
+  .nalu-auth-dialog, .nalu-auth-reset-card { max-height: calc(100dvh - 32px); }
+  .nalu-auth-content { padding: 29px 25px 24px; }
+  .nalu-auth-brand { margin-bottom: 28px; }
+  .nalu-auth-title { font-size: 34px; }
+  .nalu-auth-input { font-size: 16px; }
+  .nalu-auth-brand > small { font-size: 6px; }
+  .nalu-auth-recovery { padding: 12px 10px; gap: 8px; }
+  .nalu-auth-recovery > span { font-size: 12px; letter-spacing: .025em; }
+}
+@media (prefers-reduced-motion: reduce) { .nalu-auth-overlay *, .nalu-auth-reset * { transition-duration: .01ms !important; animation: none !important; } }

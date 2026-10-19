@@ -1,0 +1,276 @@
+@font-face { font-family: 'Nalu Mono'; src: url('/fonts/JetBrainsMono-Regular.ttf') format('truetype'); font-weight: 400; font-display: swap; }
+
+.nalu-landing { --nalu-ink: #fff; --nalu-line: #ffffff30; height: 100vh; height: 100dvh; overflow: auto; overflow-x: hidden; position: relative; background: #496d68; color: #fff; overscroll-behavior-y: contain; }
+.nalu-landing button, .nalu-landing a { -webkit-tap-highlight-color: transparent; }
+.nalu-landing button:focus-visible, .nalu-landing a:focus-visible { outline: 2px solid #fff; outline-offset: 5px; border-radius: 0; }
+.nalu-landing h1, .nalu-landing h2, .nalu-landing h3 { text-wrap: balance; }
+.nalu-landing p { text-wrap: pretty; }
+.nalu-skip-link { position: fixed; left: 20px; top: -100px; z-index: 70; background: #28453f; padding: 15px 20px; }
+.nalu-skip-link:focus { top: 10px; }
+.nalu-landing-header { position: fixed; inset: 0 0 auto; height: 88px; padding: 0 5.5vw; z-index: 50; display: flex; align-items: center; justify-content: space-between; gap: 30px; border-bottom: 1px solid #ffffff1a; background: #153a3629; backdrop-filter: blur(16px); }
+.nalu-brand { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; color: #fff; }
+.nalu-brand svg { width: 36px; height: 34px; }
+.nalu-brand span { font-size: 33px; line-height: 1; letter-spacing: -.065em; font-weight: 500; padding-bottom: 3px; }
+.nalu-desktop-navigation { display: flex; align-items: center; gap: 35px; margin-left: auto; margin-right: auto; }
+.nalu-desktop-navigation a { display: flex; align-items: center; min-height: 44px; font-size: 13px; opacity: .9; transition: opacity .2s; }
+.nalu-desktop-navigation a:hover, .nalu-desktop-navigation a[aria-current] { opacity: 1; }
+.nalu-header-actions { display: flex; align-items: center; gap: 28px; }
+.nalu-motion-toggle { min-height: 44px; display: flex; align-items: center; gap: 17px; font: 8px 'Nalu Mono', monospace; letter-spacing: .12em; border-bottom: 1px solid #ffffff60; }
+.nalu-motion-toggle:disabled { opacity: .5; }
+.nalu-header-signin { display: flex; align-items: center; justify-content: center; gap: 28px; min-height: 42px; padding: 0 22px; font-size: 12px; background: #fff; color: #23332f; }
+.nalu-header-signin:hover { background: #e8f1e7; }
+.nalu-menu-toggle, .nalu-mobile-navigation { display: none; }
+.nalu-reading-progress { position: absolute; bottom: -1px; left: 0; width: 100%; height: 1px; background: #ffffffaa; transform-origin: left; }
+.nalu-scene { position: absolute; inset: 0; pointer-events: none; }
+.nalu-scene-shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, #153c3b40 0%, #173e394a 45%, #163e3866 100%); }
+.nalu-scene-grid { position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(90deg, #ffffff16 1px, transparent 1px), linear-gradient(#ffffff0c 1px, transparent 1px); background-size: 25% 100%, 100% 25%; }
+.nalu-hero { position: relative; height: 100svh; min-height: 750px; display: flex; align-items: center; padding: 130px 5.5vw 120px; overflow: hidden; outline: none; }
+.nalu-hero-content { position: relative; z-index: 2; width: 100%; }
+.nalu-eyebrow { font: 9px 'Nalu Mono', monospace; letter-spacing: .15em; }
+.nalu-hero .nalu-eyebrow { display: block; margin-bottom: 32px; }
+.nalu-hero h1 { font-size: clamp(74px, 8.15vw, 150px); font-weight: 200; letter-spacing: -.05em; line-height: .98; margin: 0 0 45px; text-transform: uppercase; text-shadow: 0 2px 35px #17403c15; }
+.nalu-hero h1 > span, .nalu-hero h1 > strong { display: block; }
+.nalu-hero h1 > span { font-weight: 200; }
+.nalu-hero h1 > strong { font-weight: 650; letter-spacing: -.055em; }
+.nalu-hero-content > p { font: 12px/1.8 'Nalu Mono', monospace; letter-spacing: .07em; color: #fffffff2; }
+.nalu-hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 30px; margin-top: 34px; }
+.nalu-button-outline { display: inline-flex; align-items: center; justify-content: space-between; gap: 32px; min-height: 52px; min-width: 228px; padding: 0 25px; border: 1px solid #ffffff80; background: #23473d1a; color: #fff; font: 9px 'Nalu Mono', monospace; letter-spacing: .13em; transition: background .2s, border-color .2s; }
+.nalu-button-outline:hover { background: #ffffff1c; border-color: #fff; }
+.nalu-button-text { min-height: 44px; display: inline-flex; align-items: center; gap: 18px; font-size: 12px; }
+.nalu-hero-bottom { position: absolute; bottom: 24px; left: 5.5vw; right: 5.5vw; display: flex; align-items: center; justify-content: space-between; padding-top: 18px; border-top: 1px solid #ffffff40; font: 8px 'Nalu Mono', monospace; letter-spacing: .12em; }
+.nalu-hero-bottom button { display: flex; align-items: center; gap: 14px; min-height: 44px; }
+.nalu-section-topline { display: flex; justify-content: space-between; align-items: center; gap: 30px; font: 9px 'Nalu Mono', monospace; letter-spacing: .12em; }
+.nalu-section-rule { height: 1px; background: #ffffff55; flex: 1; max-width: 250px; margin-right: auto; }
+.nalu-manifesto { height: 230svh; position: relative; }
+.nalu-manifesto-sticky { position: sticky; top: 0; height: 100svh; min-height: 650px; display: flex; align-items: center; padding: 140px 5.5vw 100px; overflow: hidden; }
+.nalu-manifesto .nalu-scene-shade { background: #183d4059; }
+.nalu-manifesto-content { position: relative; width: 100%; }
+.nalu-manifesto h2 { font-size: clamp(42px, 4.65vw, 79px); line-height: 1.13; letter-spacing: -.035em; text-transform: uppercase; font-weight: 250; margin: 46px 0; max-width: 1550px; }
+.nalu-reveal-word { display: inline-block; position: relative; margin-right: .23em; }
+.nalu-reveal-word.is-bold { font-weight: 650; }
+.nalu-reveal-outline { color: #ffffff0f; -webkit-text-stroke: .7px #ffffff85; }
+.nalu-reveal-fill { position: absolute; inset: 0; color: #fff; }
+.nalu-story-caption { display: block; font: 8px 'Nalu Mono', monospace; letter-spacing: .15em; }
+.nalu-process { height: 360svh; position: relative; }
+.nalu-process-sticky { position: sticky; top: 0; height: 100svh; min-height: 700px; padding: 120px 5.5vw 48px; overflow: hidden; }
+.nalu-process .nalu-scene-shade { background: linear-gradient(100deg, #20404591, #193c454d 70%, #28474b59); }
+.nalu-process-content { position: relative; height: 100%; display: flex; flex-direction: column; }
+.nalu-scroll-direction { display: flex; align-items: center; gap: 12px; }
+.nalu-process h2 { font-size: clamp(45px, 4.3vw, 76px); font-weight: 350; letter-spacing: -.035em; line-height: 1.1; margin: 17px 0 28px; }
+.nalu-process-layout { display: grid; grid-template-columns: minmax(180px, .75fr) minmax(0, 2.8fr); gap: 35px; flex: 1; min-height: 0; align-items: center; }
+.nalu-process-steps { display: flex; flex-direction: column; align-self: center; }
+.nalu-step { padding: 9px 0 9px 19px; text-align: left; display: grid; grid-template-columns: 23px 1fr; align-items: center; gap: 7px; border-left: 1px solid #ffffff20; color: #ffffffa6; transition: color .25s, border-color .25s; }
+.nalu-step > span:nth-child(2) { font-size: 13px; letter-spacing: -.015em; }
+.nalu-step-number { font: 8px 'Nalu Mono', monospace; letter-spacing: .08em; }
+.nalu-step.is-active { color: #fff; border-color: #ffffffcc; }
+.nalu-step-description { grid-column: 1 / -1; font-size: 12px; line-height: 1.8; padding: 2px 0 10px; color: #ffffffeb; max-width: 255px; }
+.nalu-process-visual { min-width: 0; height: 100%; display: flex; flex-direction: column; }
+.nalu-core-diagram { position: relative; width: 100%; flex: 1; min-height: 330px; max-height: 650px; border: 1px solid #ffffff38; background: #16383e30; backdrop-filter: blur(7px); }
+.nalu-diagram-heading { position: absolute; top: 6%; left: 3%; }
+.nalu-diagram-heading h3 { font-size: clamp(15px, 1.45vw, 22px); font-weight: 400; letter-spacing: -.04em; line-height: 1.25; }
+.nalu-diagram-heading > p { display: flex; align-items: center; gap: 5px; margin-top: 14px; font: 6px 'Nalu Mono', monospace; letter-spacing: .07em; }
+.nalu-diagram-heading p > span { width: 4px; height: 4px; background: #ffffff60; }
+.nalu-diagram-heading p > span:nth-child(2) { margin-left: 7px; }
+.nalu-diagram-example { position: absolute; top: 7%; right: 3%; font: 7px 'Nalu Mono', monospace; letter-spacing: .12em; color: #ffffffbf; text-transform: uppercase; }
+.nalu-core-wires { position: absolute; inset: 0; width: 100%; height: 100%; }
+.nalu-work-plane, .nalu-control-plane { fill: #ffffff03; stroke: #ffffff29; stroke-width: .8; stroke-dasharray: 2 5; }
+.nalu-wire-track { stroke: #ffffff0b; stroke-width: .8; }
+.nalu-wire-drawn { stroke: #e2f1ee; stroke-width: 1; opacity: .5; }
+.nalu-wire-drawn.is-control { opacity: .28; }
+.nalu-wire-arrow { stroke: transparent; stroke-width: 1; color: #ffffff60; }
+.nalu-signal-packet { fill: #fff; filter: drop-shadow(0 0 3px #d8f5f2aa); }
+.nalu-plane-label { position: absolute; font: 6px 'Nalu Mono', monospace; letter-spacing: .2em; color: #ffffff8c; }
+.nalu-plane-think { top: 14%; left: 46%; }
+.nalu-plane-do { bottom: 11%; left: 43%; }
+.nalu-process-node, .nalu-plan-node { position: absolute; border: 1px solid #ffffff40; color: #ffffffbf; background: #23414724; display: flex; align-items: center; flex-direction: column; transition: background .4s, border-color .4s, color .4s, box-shadow .4s; }
+.nalu-process-node { width: 13%; height: 23.3%; top: 53.3%; padding: 12px 5px 10px; justify-content: space-between; }
+.nalu-process-node > span { font-size: clamp(8px, .85vw, 13px); }
+.nalu-node-symbol { display: grid; place-items: center; width: 36%; height: 36%; }
+.nalu-node-symbol > svg { width: 100%; height: 100%; stroke-width: 1; }
+.nalu-process-node small, .nalu-plan-node small { font: 5px 'Nalu Mono', monospace; letter-spacing: .05em; border: 1px solid #ffffff20; padding: 3px 4px; white-space: nowrap; }
+.nalu-process-node.is-active, .nalu-plan-node.is-active { color: #fff; background: #e6ddef0a; }
+.nalu-process-node:hover, .nalu-plan-node:hover, .nalu-process-node:focus-visible, .nalu-plan-node:focus-visible { color: #fff; background: #ffffff14; box-shadow: 0 0 0 1px #ffffff60, 0 0 30px #ffffff0a; }
+.nalu-node-request { left: 4.5%; }
+.nalu-node-core { left: 30%; }
+.nalu-node-core .nalu-node-symbol { width: 40%; height: 40%; }
+.nalu-node-research { left: 49%; }
+.nalu-node-create { left: 68%; }
+.nalu-node-result { left: 85%; }
+.nalu-plan-node { top: 20%; width: 16%; height: 10.8%; justify-content: center; gap: 5px; }
+.nalu-plan-node > span { font-size: clamp(8px, .8vw, 12px); }
+.nalu-node-context { left: 28.5%; }
+.nalu-node-plan { left: 59.5%; }
+.nalu-core-caption { position: absolute; bottom: 16%; left: 3%; right: 3%; display: flex; align-items: center; justify-content: space-between; gap: 18px; font: 7px/1.6 'Nalu Mono', monospace; letter-spacing: .09em; text-transform: uppercase; }
+.nalu-core-caption.is-inspecting { letter-spacing: 0; text-transform: none; }
+.nalu-core-caption > span:last-child { flex-shrink: 0; }
+.nalu-core-status { position: absolute; bottom: 5%; left: 3%; right: 3%; display: flex; align-items: center; justify-content: space-between; gap: 20px; font: 6px 'Nalu Mono', monospace; text-transform: uppercase; letter-spacing: .06em; color: #ffffffa6; }
+.nalu-core-status > div { display: flex; gap: 5px; width: 90px; }
+.nalu-core-status i { flex: 1; height: 2px; background: #ffffff25; transition: background .3s; }
+.nalu-core-status i.is-active { background: #ffffffc9; }
+.nalu-process-detail { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-top: 15px; padding: 0 1px; min-height: 36px; }
+.nalu-process-detail > span { font: 6px 'Nalu Mono', monospace; letter-spacing: .07em; opacity: .8; }
+.nalu-process-detail p { font-size: 10px; }
+.nalu-process-detail .nalu-process-mobile-description { display: none; }
+.nalu-process-progress { display: flex; gap: 5px; width: 85px; margin-left: auto; }
+.nalu-process-progress > i { height: 2px; background: #ffffff30; flex: 1; transition: background .3s; }
+.nalu-process-progress > i.is-active { background: #fff; }
+.nalu-capabilities { position: relative; height: 460svh; }
+.nalu-capabilities-sticky { position: sticky; top: 0; height: 100svh; min-height: 700px; padding: 120px 0 65px; overflow: hidden; }
+.nalu-capabilities .nalu-scene-shade { background: linear-gradient(110deg, #34333978, #3e373254); }
+.nalu-capabilities-content { position: relative; height: 100%; display: flex; flex-direction: column; }
+.nalu-capabilities .nalu-section-topline { padding: 0 5.5vw; }
+.nalu-capabilities h2 { font-size: clamp(46px, 4.5vw, 80px); text-transform: uppercase; line-height: .97; font-weight: 200; letter-spacing: -.045em; margin: 30px 5.5vw 34px; }
+.nalu-capabilities h2 strong { font-weight: 650; }
+.nalu-capabilities-window { min-height: 290px; flex: 1; display: flex; }
+.nalu-capabilities-track { display: flex; gap: 32px; padding: 0 5.5vw; width: 100%; will-change: transform; }
+.nalu-capability-card { position: relative; flex: 0 0 59vw; max-width: 1050px; border: 1px solid #ffffff55; background: #262e3526; backdrop-filter: blur(14px); padding: 32px 36px; display: flex; flex-direction: column; overflow: hidden; }
+.nalu-capability-meta { display: flex; justify-content: space-between; align-items: flex-start; gap: 30px; font: 8px/1.8 'Nalu Mono', monospace; letter-spacing: .1em; color: #ffffffe0; }
+.nalu-capability-meta > span:last-child { max-width: 80%; text-align: right; }
+.nalu-capability-copy { margin: auto 0; padding: 28px 0; }
+.nalu-capability-copy h3 { position: relative; width: fit-content; font-size: clamp(26px, 3.1vw, 52px); font-weight: 350; letter-spacing: -.045em; line-height: 1.15; margin-bottom: 18px; }
+.nalu-capability-copy h3 > span:first-child { color: transparent; -webkit-text-stroke: .6px #ffffff99; }
+.nalu-capability-title-fill { position: absolute; inset: 0; clip-path: inset(0 100% 0 0); transition: clip-path .7s cubic-bezier(.2,.6,.2,1); }
+.nalu-capability-card.is-active .nalu-capability-title-fill { clip-path: inset(0); }
+.nalu-capability-copy > p { max-width: 365px; font-size: 13px; line-height: 1.8; color: #ffffffe0; }
+.nalu-capability-cta { position: relative; z-index: 1; align-self: flex-start; display: flex; align-items: center; gap: 14px; min-height: 44px; font: 8px 'Nalu Mono', monospace; letter-spacing: .12em; }
+.nalu-capability-number { position: absolute; bottom: 24px; right: 32px; font-size: clamp(72px, 9vw, 135px); font-weight: 200; line-height: 1; letter-spacing: -.07em; color: transparent; -webkit-text-stroke: .75px #ffffff45; pointer-events: none; }
+.nalu-capability-rail { position: relative; display: flex; justify-content: space-between; gap: 20px; margin: 32px 5.5vw 0; padding-top: 15px; }
+.nalu-capability-rail-line { position: absolute; top: 0; left: 0; right: 0; height: 1px; background: #ffffff35; }
+.nalu-capability-rail-line > span { display: block; width: 100%; height: 100%; background: #fff; transform-origin: left; }
+.nalu-capability-rail > button { min-height: 35px; display: flex; align-items: center; gap: 9px; font: 8px 'Nalu Mono', monospace; letter-spacing: .1em; text-transform: uppercase; color: #ffffffa3; }
+.nalu-capability-rail > button[aria-current] { color: #fff; }
+.nalu-capabilities[data-reduced-motion='true'] { height: auto; }
+.nalu-capabilities[data-reduced-motion='true'] .nalu-capabilities-sticky { height: auto; position: relative; min-height: 0; }
+.nalu-capabilities[data-reduced-motion='true'] .nalu-capabilities-track { flex-direction: column; gap: 24px; }
+.nalu-capabilities[data-reduced-motion='true'] .nalu-capability-card { flex-basis: auto; min-height: 350px; max-width: none; }
+.nalu-landing-footer { position: relative; padding: 140px 5.5vw 0; min-height: 100svh; overflow: hidden; display: flex; flex-direction: column; }
+.nalu-landing-footer .nalu-scene-shade { background: linear-gradient(100deg, #33332c69, #342c2e33); }
+.nalu-footer-content { position: relative; }
+.nalu-landing-footer h2 { font-size: clamp(55px, 5.6vw, 100px); font-weight: 250; letter-spacing: -.045em; line-height: 1.05; margin: 38px 0 30px; }
+.nalu-landing-footer h2 strong { font-weight: 600; }
+.nalu-footer-content > p { font-size: 13px; line-height: 1.8; margin-bottom: 30px; }
+.nalu-footer-signin { display: inline-flex; align-items: center; min-height: 44px; margin: 0 0 0 30px; font-size: 11px; }
+.nalu-landing-playground { position: relative; height: 200px; flex: 1; min-height: 200px; margin-top: 25px; }
+.nalu-footer-bottom { position: relative; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #ffffff40; min-height: 110px; gap: 25px; }
+.nalu-footer-bottom > span { font: 7px 'Nalu Mono', monospace; letter-spacing: .12em; }
+.nalu-footer-bottom nav { display: flex; align-items: center; gap: 23px; font-size: 10px; }
+.nalu-footer-bottom nav a, .nalu-footer-bottom nav button { display: inline-flex; align-items: center; min-height: 44px; }
+.nalu-intro-layer { position: fixed; inset: 0; z-index: 9999; }
+.nalu-process[data-reduced-motion='true'], .nalu-manifesto[data-reduced-motion='true'] { height: auto; }
+.nalu-process[data-reduced-motion='true'] .nalu-process-sticky, .nalu-manifesto[data-reduced-motion='true'] .nalu-manifesto-sticky { position: relative; top: auto; }
+.nalu-landing[data-motion='reduced'] *, .nalu-landing[data-motion='reduced'] *::before, .nalu-landing[data-motion='reduced'] *::after { animation: none !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+
+@media (max-width: 1100px) {
+  .nalu-hero { min-height: 700px; }
+  .nalu-hero h1 { font-size: 9vw; }
+  .nalu-process-layout { grid-template-columns: 180px minmax(0, 1fr); gap: 25px; }
+  .nalu-diagram-heading > p { font-size: 5px; }
+  .nalu-process-node { padding-top: 11px; padding-bottom: 8px; }
+  .nalu-process-node small, .nalu-plan-node small { font-size: 4px; padding: 3px; }
+  .nalu-process-detail > span { display: none; }
+}
+@media (max-width: 900px) {
+  .nalu-capability-card { flex-basis: 75vw; padding: 26px; }
+  .nalu-capability-copy > p { font-size: 12px; }
+  .nalu-desktop-navigation { display: none; }
+  .nalu-menu-toggle { display: grid; place-items: center; width: 36px; min-height: 44px; }
+  .nalu-header-actions { gap: 20px; }
+  .nalu-mobile-navigation { position: absolute; top: 100%; left: 0; right: 0; display: flex; flex-direction: column; padding: 16px 5.5vw 23px; background: #294a48f5; border-bottom: 1px solid #ffffff40; }
+  .nalu-mobile-navigation a { display: flex; align-items: center; justify-content: space-between; min-height: 48px; font-size: 14px; border-bottom: 1px solid #ffffff20; }
+  .nalu-hero { min-height: 680px; }
+  .nalu-manifesto h2 { font-size: 6vw; }
+  .nalu-process-sticky { padding-top: 115px; padding-bottom: 30px; min-height: 690px; }
+  .nalu-process h2 { margin-bottom: 24px; }
+  .nalu-process-layout { display: flex; flex-direction: column; gap: 18px; align-items: stretch; }
+  .nalu-process-steps { flex-direction: row; gap: 14px; align-self: stretch; }
+  .nalu-step { flex: 1; align-content: start; padding: 0 0 12px; gap: 7px; grid-template-columns: 22px 1fr; border-left: none; border-bottom: 1px solid #ffffff40; }
+  .nalu-step > span:nth-child(2) { font-size: 11px; }
+  .nalu-step-description { display: none; }
+  .nalu-process-visual { flex: 1; height: auto; }
+  .nalu-core-diagram { min-height: 330px; }
+  .nalu-process-node > span { font-size: 10px; }
+  .nalu-process-node small, .nalu-plan-node small { font-size: 5px; }
+  .nalu-process-detail .nalu-process-mobile-description { display: block; flex-basis: 100%; max-width: 560px; font-size: 11px; line-height: 1.65; color: #ffffffe0; }
+  .nalu-landing-footer { padding-top: 110px; }
+}
+@media (max-width: 600px) {
+  .nalu-capabilities-sticky { min-height: 640px; padding-top: 105px; padding-bottom: 35px; }
+  .nalu-capabilities h2 { font-size: 36px; margin-top: 25px; margin-bottom: 28px; }
+  .nalu-capabilities .nalu-section-topline { font-size: 6px; gap: 8px; }
+  .nalu-capabilities .nalu-section-rule { display: none; }
+  .nalu-capabilities-track { gap: 16px; }
+  .nalu-capability-card { flex-basis: 86vw; padding: 23px; }
+  .nalu-capability-meta { font-size: 6px; gap: 15px; }
+  .nalu-capability-copy { padding: 25px 0; }
+  .nalu-capability-copy h3 { font-size: 30px; }
+  .nalu-capability-copy > p { font-size: 12px; max-width: 255px; }
+  .nalu-capability-number { font-size: 75px; right: 20px; bottom: 20px; }
+  .nalu-capability-cta { font-size: 7px; }
+  .nalu-capability-rail { margin-top: 23px; gap: 8px; }
+  .nalu-capability-rail > button { font-size: 6px; flex-direction: column; align-items: flex-start; gap: 5px; letter-spacing: 0; }
+  .nalu-landing-header { height: 72px; padding: 0 5vw; gap: 12px; }
+  .nalu-brand { gap: 5px; }
+  .nalu-brand svg { width: 28px; height: 27px; }
+  .nalu-brand span { font-size: 28px; }
+  .nalu-header-actions { gap: 14px; }
+  .nalu-motion-toggle { gap: 7px; font-size: 6px; min-height: 38px; }
+  .nalu-motion-toggle > svg { display: none; }
+  .nalu-header-signin { padding: 0 13px; gap: 15px; font-size: 11px; min-height: 39px; }
+  .nalu-menu-toggle { width: 26px; }
+  .nalu-hero { padding: 120px 5.5vw 110px; min-height: 640px; }
+  .nalu-hero h1 { font-size: 12.2vw; line-height: 1.04; margin-bottom: 32px; }
+  .nalu-hero .nalu-eyebrow { margin-bottom: 26px; font-size: 7px; }
+  .nalu-hero-content > p { font-size: 9px; line-height: 1.9; letter-spacing: .01em; }
+  .nalu-hero-actions { gap: 17px; margin-top: 28px; }
+  .nalu-button-outline { min-width: 180px; min-height: 48px; font-size: 7px; padding: 0 17px; gap: 15px; }
+  .nalu-button-text { font-size: 10px; gap: 8px; }
+  .nalu-hero-bottom { font-size: 6px; letter-spacing: .05em; gap: 12px; }
+  .nalu-hero-bottom > span:last-child { display: none; }
+  .nalu-hero-bottom button { gap: 6px; }
+  .nalu-section-topline { font-size: 7px; gap: 12px; letter-spacing: .06em; }
+  .nalu-section-rule { max-width: 60px; }
+  .nalu-manifesto-sticky { padding: 115px 5.5vw 75px; min-height: 600px; }
+  .nalu-manifesto h2 { font-size: 8.1vw; line-height: 1.2; margin: 35px 0; }
+  .nalu-story-caption { font-size: 6px; }
+  .nalu-process-sticky { padding: 105px 4vw 30px; min-height: 640px; }
+  .nalu-scroll-direction { font-size: 6px; gap: 6px; }
+  .nalu-process h2 { font-size: 42px; margin-top: 18px; margin-bottom: 28px; }
+  .nalu-process-steps { gap: 8px; }
+  .nalu-step { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; padding-bottom: 10px; }
+  .nalu-step > span:nth-child(2) { font-size: 10px; line-height: 1.4; }
+  .nalu-step .nalu-step-description { display: none; }
+  .nalu-core-diagram { min-height: 290px; max-height: 400px; }
+  .nalu-diagram-heading h3 { font-size: 12px; }
+  .nalu-diagram-heading p { display: none; }
+  .nalu-diagram-example { font-size: 4px; }
+  .nalu-plane-label { font-size: 4px; }
+  .nalu-process-node { width: 14%; padding: 9px 2px 8px; }
+  .nalu-process-node > span { font-size: 7px; }
+  .nalu-node-symbol { width: 19px; height: 19px; }
+  .nalu-node-core .nalu-node-symbol { width: 24px; height: 24px; }
+  .nalu-process-node small { font-size: 3px; letter-spacing: 0; padding: 2px 1px; }
+  .nalu-plan-node { width: 20%; left: 26.5%; height: 12%; }
+  .nalu-node-plan { left: 57.5%; }
+  .nalu-plan-node > span { font-size: 7px; }
+  .nalu-plan-node small { font-size: 3px; letter-spacing: 0; padding: 2px; }
+  .nalu-core-caption { font-size: 5px; letter-spacing: .03em; }
+  .nalu-core-status { font-size: 4px; gap: 8px; }
+  .nalu-core-status > div { width: 50px; gap: 3px; flex-shrink: 0; }
+  .nalu-process-detail { margin-top: 12px; min-height: 35px; align-items: flex-start; }
+  .nalu-process-detail p { font-size: 9px; max-width: 230px; line-height: 1.6; }
+  .nalu-process-progress { width: 60px; margin-top: 5px; }
+  .nalu-landing-footer { padding: 100px 5.5vw 0; }
+  .nalu-landing-footer h2 { font-size: 12vw; margin: 30px 0 25px; }
+  .nalu-footer-content > p { font-size: 12px; }
+  .nalu-footer-signin { display: flex; margin: 12px 0 0; font-size: 10px; }
+  .nalu-landing-playground { min-height: 170px; }
+  .nalu-footer-bottom { flex-wrap: wrap; padding: 25px 0; gap: 15px; }
+  .nalu-footer-bottom > span { font-size: 5px; }
+  .nalu-footer-bottom nav { width: 100%; justify-content: space-between; gap: 10px; font-size: 10px; }
+}
+@media (max-height: 700px) and (max-width: 900px) {
+  .nalu-process, .nalu-manifesto { height: auto; }
+  .nalu-process-sticky, .nalu-manifesto-sticky { position: relative; top: auto; height: auto; min-height: 640px; }
+  .nalu-manifesto .nalu-reveal-fill { opacity: 1 !important; }
+}
+@media (prefers-reduced-motion: reduce) { .nalu-landing *, .nalu-landing *::before, .nalu-landing *::after { animation: none !important; scroll-behavior: auto !important; transition-duration: .01ms !important; } }

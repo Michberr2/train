@@ -1,0 +1,26 @@
+.workspace-core-visual { position:relative; width:100%; aspect-ratio:300/174; flex-shrink:0; min-width:0; color:rgb(var(--ws-ink)); background:none; isolation:isolate; font-family:Inter,Arial,sans-serif; }
+.workspace-core-visual-title { position:absolute; left:2%; top:1%; font:5.5px/1.3 'Nalu Review Mono',ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.12em; color:rgb(var(--ws-glass) / 0.722); }
+.workspace-core-control-label { position:absolute; left:27%; top:11%; transform:translateY(-50%); padding:0 4px; font:4.5px/1 'Nalu Review Mono',ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.14em; color:rgb(var(--ws-glass) / 0.525); }
+.workspace-core-wire-layer { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
+.workspace-core-plane { fill:rgb(var(--ws-glass) / 0.012); stroke:rgb(var(--ws-glass) / 0.231); stroke-width:.65; stroke-dasharray:2 4; }
+.workspace-core-wire { stroke:rgb(var(--ws-dim)); stroke-width:.8; opacity:.64; }
+.workspace-core-control-wire { stroke:rgb(var(--ws-dim)); stroke-width:.7; opacity:.35; }
+.workspace-core-arrow { stroke:rgb(var(--ws-glass) / 0.522); stroke-width:.65; }
+.workspace-core-packet { fill:rgb(var(--ws-ink)); filter:drop-shadow(0 0 2px rgb(var(--ws-glass) / 0.667)); }
+.workspace-core-control-node { position:absolute; left:36%; top:17.25%; width:28%; height:17.25%; border:1px solid rgb(var(--ws-glass) / 0.361); background:rgb(var(--ws-panel) / 0.27); display:flex; flex-direction:column; justify-content:center; align-items:center; gap:4px; }
+.workspace-core-control-node strong { color:rgb(var(--ws-ink)); font:400 7px/1.1 Inter,Arial,sans-serif; letter-spacing:-.015em; }
+.workspace-core-control-node small { color:rgb(var(--ws-glass) / 0.651); font:4px/1.1 'Nalu Review Mono',ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.055em; white-space:nowrap; }
+.workspace-core-mini-node { position:absolute; top:50.575%; height:33.33%; border:1px solid rgb(var(--ws-glass) / 0.431); background:rgb(var(--ws-panel) / 0.27); display:flex; flex-direction:column; align-items:center; justify-content:space-between; padding:6px 2px 5px; transition:border-color .35s,background .35s; }
+.workspace-core-mini-node strong { font:400 7.5px/1.1 Inter,Arial,sans-serif; letter-spacing:-.015em; color:rgb(var(--ws-glass) / 0.922); }
+.workspace-core-mini-node>span { display:grid; place-items:center; width:19px; height:19px; color:rgb(var(--ws-glass) / 0.855); }
+.workspace-core-mini-node>span>svg { width:100%; height:100%; }
+.workspace-core-mini-node small { display:block; max-width:100%; border:1px solid rgb(var(--ws-glass) / 0.145); padding:2px 2px 1px; color:rgb(var(--ws-glass) / 0.678); font:3.5px/1.1 'Nalu Review Mono',ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.015em; white-space:nowrap; }
+.workspace-core-mini-router>span { width:21px; height:21px; color:rgb(var(--ws-ink)); }
+.workspace-core-mini-router .nalu-mark-outline { fill:currentColor; stroke:currentColor; stroke-width:1.2; }
+.workspace-core-execution-label { position:absolute; bottom:1%; left:0; right:0; text-align:center; font:4.5px/1.1 'Nalu Review Mono',ui-monospace,SFMono-Regular,Consolas,monospace; letter-spacing:.2em; color:rgb(var(--ws-glass) / 0.565); }
+.workspace-core-visual[data-core-active=true] .workspace-core-mini-router { border-color:rgb(var(--ws-glass) / 0.678); background:rgb(var(--ws-glass) / 0.063); }
+.workspace-core-visual[data-core-active=false] .workspace-core-wire { opacity:.45; }
+@media(prefers-reduced-motion:reduce) {
+  .workspace-core-packet { display:none; }
+  .workspace-core-mini-node { transition:none; }
+}
