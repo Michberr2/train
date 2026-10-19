@@ -26,7 +26,11 @@ try {
         commitCalls++
         return options.commitChangedAt === commitCalls ? '2'.repeat(40) : commit
       }
-      if (command === process.execPath) { if (options.gateFailure) throw new Error('offline check failed'); return 'PASS fixtures' }
+      if (command === process.execPath) {
+        if (options.gateFailure) throw new Error('offline check failed')
+        if (options.flowFailure && args.includes('scripts/flow-cross-client-integration.mjs')) throw new Error('cross-client integration failed')
+        return 'PASS fixtures'
+      }
       assert.equal(command, 'vercel', 'Tests must never invoke a real command')
       if (args[0] === 'whoami') return 'synthetic-release-user'
       if (args[0] === 'deploy') {
@@ -72,10 +76,18 @@ try {
   assert.deepEqual(Object.values(success.aliases), Array(4).fill(deploymentId))
   assert.equal(JSON.parse(await readFile(join(directory, '.vercel/last-release.json'), 'utf8')).complete, true)
   assert.match(success.logs.at(-1), /^Live and verified:/)
+  assert.deepEqual(success.calls.filter(call => call.command === process.execPath).map(call => call.args), [
+    ['scripts/offline-release-checks.mjs'],
+    ['scripts/check-nalu-sync.mjs'],
+    ['--experimental-strip-types', 'scripts/native-chat-contract-regressions.mjs'],
+    ['scripts/flow-cross-client-integration.mjs'],
+  ], 'publication requires the flow integration after existing offline/sibling/native gates')
+  assert.ok(success.calls.findIndex(call => call.args.includes('scripts/flow-cross-client-integration.mjs')) < success.calls.findIndex(call => call.command === 'vercel'), 'all compatibility gates run before any deployment tooling')
   report.push('successful release verifies all four aliases, exact deployment IDs, health and app bytes')
   const failures = [
     ['dirty source', { dirty: true }, /clean, reviewed checkout/, false],
     ['offline gate', { gateFailure: true }, /offline check failed/, false],
+    ['cross-client workflow gate', { flowFailure: true }, /cross-client integration failed/, false],
     ['source edited by checks', { sourceChangedAt: 2 }, /Checks changed/, false],
     ['commit changed by checks', { commitChangedAt: 2 }, /Source commit changed while checks/, false],
     ['source edited during build', { sourceChangedAt: 3 }, /Source changed while the candidate/, false],
@@ -109,6 +121,7 @@ try {
     await assert.rejects(release({ cwd: directory, ...test, log: line => test.logs.push(line) }), message)
     assert.ok(!test.logs.some(line => line.startsWith('Live and verified:')), name + ': never print false success')
     if (!mayAssign) assert.equal(test.calls.filter(call => call.command === 'vercel' && call.args[0] === 'alias').length, 0, name + ': no domains changed before validation')
+    if (options.flowFailure) assert.equal(test.calls.filter(call => call.command === 'vercel').length, 0, 'failed flow integration stops before deployment tooling')
     report.push(name + ' fails without reporting live')
   }
   const rollback = fixture()

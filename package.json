@@ -18,7 +18,7 @@
     "build:checked": "npm run check:sync && npm run build",
     "check:offline": "node scripts/offline-release-checks.mjs",
     "check:preview": "node scripts/preview-release-checks.mjs",
-    "check:release": "npm run check:offline && npm run check:sync && node --experimental-strip-types scripts/native-chat-contract-regressions.mjs"
+    "check:release": "npm run check:offline && npm run check:sync && node --experimental-strip-types scripts/native-chat-contract-regressions.mjs && node scripts/flow-cross-client-integration.mjs"
   },
   "dependencies": {
     "@vercel/functions": "^3.9.5",

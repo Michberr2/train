@@ -108,6 +108,23 @@ preview check on an existing deployment.
 
 The separate sibling checks verify published CLI bytes, API origins, route
 presence and native stream contracts. They do not prove full feature parity.
+The sibling flow integration mounts the actual web editor and exercises its save
+through the API/Cloudflare Worker, in-memory SQLite, and mobile list/run dispatch.
+Its synthetic jobs remain queued; it does not execute providers or verify physical
+iPhone UI interaction. Run `node scripts/flow-cross-client-integration.mjs` with
+the reviewed mobile checkout beside this repository.
+
+Dependency reviews bind audit results to the committed lockfile. Vite 6.4.4
+patches the development-server issues while retaining the existing React plugin.
+The remaining Tailwind 3 [brace-pattern](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
+and [selector-parser](https://github.com/advisories/GHSA-rj75-hqrm-r3gf) advisories
+are not reachable from application requests, uploads, or generated Studio HTML
+in the reviewed implementation: Tailwind consumes repository CSS/classes and
+fixed file patterns; generated HTML is validated and rendered separately. This
+assessment does not cover malicious repository changes or untrusted PR builds.
+Reassess it when content patterns, build plugins, or user-content compilation
+change. Keep the call chains and source hashes with release dependency evidence;
+a clean production audit does not imply a clean full audit.
 
 The preview checker makes read-only requests. It requires healthy database/model
 configuration, a real JavaScript entry, and exact JSON error contracts from
