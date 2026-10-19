@@ -734,9 +734,10 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     const v = localStorage.getItem('nalu-view')
     return v && v !== 'settings' && (v === 'chat' || Object.prototype.hasOwnProperty.call(VIEW_TITLES, v)) ? v as View : 'chat'
   })
-  const [launcherOpen, setLauncherOpen] = useState(() => reviewLayout && view !== 'settings' && (previewLayout
-    ? new URLSearchParams(location.search).get('view') !== 'memory'
-    : !localStorage.getItem('nalu-view')))
+  // The carousel is the entry point on every authenticated visit. Retain the
+  // saved view underneath it without letting that preference bypass the picker.
+  const [launcherOpen, setLauncherOpen] = useState(() => reviewLayout && (!previewLayout
+    || new URLSearchParams(location.search).get('view') !== 'memory'))
   const [launcherSelection, setLauncherSelection] = useState<WorkspaceCarouselView>('studio')
   const [hasOpenedSpace, setHasOpenedSpace] = useState(!launcherOpen)
   const [agentScreensOpen, setAgentScreensOpen] = useState(previewLayout && new URLSearchParams(location.search).get('screens') === '1')
