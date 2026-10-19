@@ -1,0 +1,11 @@
+.nalu-design-review .workspace-map-visual { position:relative; width:100%; height:148px; margin:12px 0 14px; flex-shrink:0; overflow:hidden; border:1px solid #ebeff750; background:#263544; color:#f9fbfc; isolation:isolate; }
+.nalu-design-review .workspace-map-tiles { position:absolute; inset:0; overflow:hidden; opacity:.85; }
+.nalu-design-review .workspace-map-tiles::after { content:''; position:absolute; inset:0; background:#506f8f; mix-blend-mode:color; pointer-events:none; }
+.nalu-design-review .workspace-map-tiles img { position:absolute; width:256px; height:256px; max-width:none; filter:grayscale(1) invert(1) contrast(.83) brightness(1.4); }
+.nalu-design-review .workspace-map-preview-search { position:absolute; top:8px; left:8px; display:flex; align-items:center; gap:7px; background:#263544e8; border:1px solid #ebeff750; padding:6px 9px; font:7px 'Nalu Review Mono',monospace; }
+.nalu-design-review .workspace-map-preview-pin { position:absolute; left:50%; top:50%; width:22px; height:22px; display:grid; place-items:center; background:#405972; border:1px solid #e0e6f6; border-radius:2px; color:#f9fbfc; transform:translate(-50%,-70%); box-shadow:0 0 0 5px #e0e6f612; }
+.nalu-design-review .workspace-map-preview-layers { position:absolute; right:8px; top:8px; padding:6px; background:#3a4050e8; border:1px solid #ebeff750; }
+.nalu-design-review .workspace-map-preview-credit { position:absolute; bottom:0; right:0; padding:3px 5px; background:#202634f0; color:#dce0eb; font-size:8px; line-height:1; }
+.nalu-design-review .workspace-map-preview-error { position:absolute; inset:40% 0 auto; background:#263544f5; padding:12px; text-align:center; font-size:10px; }
+@media(max-width:767px) { .nalu-design-review .workspace-map-visual { height:118px; margin:10px 0; } }
+@media(max-height:780px) { .nalu-design-review .workspace-map-visual { height:100px; margin:10px 0; } }

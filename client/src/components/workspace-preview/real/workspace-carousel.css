@@ -1,0 +1,72 @@
+.nalu-design-review .workspace-carousel-root { grid-column:1/-1; grid-row:2; position:relative; display:flex; flex-direction:column; align-items:center; width:100%; min-width:0; min-height:0; padding:24px 0 18px; overflow-x:clip; overflow-y:auto; color:rgb(var(--ws-ink)); outline:none; font-family:Inter,Arial,sans-serif; }
+.nalu-design-review .workspace-carousel-heading { text-align:center; padding:0 22px; flex-shrink:0; }
+.nalu-design-review .workspace-carousel-heading>span { font-size:9px; letter-spacing:.25em; font-weight:500; color:rgb(var(--ws-dim)); }
+.nalu-design-review .workspace-carousel-heading h1 { margin:11px 0 9px; font-size:clamp(29px,3.2vw,46px); line-height:1.14; font-weight:300; letter-spacing:-.045em; text-shadow:0 2px 20px #10142130; }
+.nalu-design-review .workspace-carousel-heading p { margin:0; font-size:13px; line-height:1.7; color:rgb(var(--ws-dim)); }
+.nalu-design-review .workspace-carousel-stage { --carousel-radius:380px; --carousel-depth:340px; --carousel-card-width:350px; position:relative; width:100%; max-width:1120px; height:476px; min-height:476px; flex:1 0 476px; perspective:1300px; touch-action:pan-y; user-select:none; }
+.nalu-design-review .workspace-carousel-ring { position:absolute; top:27px; left:50%; width:0; height:430px; transform-style:preserve-3d; }
+.nalu-design-review .workspace-carousel-card { --card-accent:rgb(var(--ws-dim)); position:absolute; left:calc(var(--carousel-card-width) / -2); top:0; width:var(--carousel-card-width); height:430px; display:flex; flex-direction:column; padding:22px; color:rgb(var(--ws-ink)); background:linear-gradient(145deg,rgb(var(--ws-panel) / 0.85),rgb(var(--ws-canvas) / 0.91)); border:1px solid rgb(var(--ws-glass) / 0.322); border-radius:2px; box-shadow:0 20px 55px -30px #10142180; transform:translate3d(calc(var(--carousel-x) * var(--carousel-radius)),0,calc(var(--carousel-z) * var(--carousel-depth))) rotateY(var(--carousel-tilt)); opacity:var(--carousel-opacity); transition:transform .65s cubic-bezier(.2,.7,.2,1),opacity .4s,border-color .3s,box-shadow .3s; backface-visibility:hidden; }
+.nalu-design-review .workspace-carousel-card::before { content:''; position:absolute; pointer-events:none; inset:-1px; background:linear-gradient(rgb(var(--ws-dim)),rgb(var(--ws-dim))) left top/15px 1px no-repeat,linear-gradient(rgb(var(--ws-dim)),rgb(var(--ws-dim))) left top/1px 15px no-repeat,linear-gradient(rgb(var(--ws-dim)),rgb(var(--ws-dim))) right bottom/15px 1px no-repeat,linear-gradient(rgb(var(--ws-dim)),rgb(var(--ws-dim))) right bottom/1px 15px no-repeat; opacity:.7; }
+.nalu-design-review .workspace-carousel-card[data-space=studio] { background:linear-gradient(145deg,rgb(var(--ws-panel2) / 0.86),rgb(var(--ws-panel) / 0.93)); }
+.nalu-design-review .workspace-carousel-card[data-space=agents] { background:linear-gradient(145deg,rgb(var(--ws-panel2) / 0.86),rgb(var(--ws-canvas) / 0.93)); }
+.nalu-design-review .workspace-carousel-card[data-visible=false] { visibility:hidden; pointer-events:none; opacity:0; }
+.nalu-design-review .workspace-carousel-card[data-active=true] { border-color:rgb(var(--ws-glass) / 0.749); backdrop-filter:blur(18px); box-shadow:0 25px 60px -30px #101421b0,inset 0 0 55px rgb(var(--ws-glass) / 0.027); }
+.nalu-design-review .workspace-carousel-select { display:flex; flex-direction:column; align-items:stretch; width:100%; min-width:0; flex:1; background:none; border:0; padding:0; color:inherit; text-align:left; cursor:pointer; }
+.nalu-design-review .workspace-carousel-card[data-active=true] .workspace-carousel-select { cursor:pointer; }
+.nalu-design-review .workspace-carousel-card-label { display:flex; align-items:center; gap:8px; padding-bottom:14px; border-bottom:1px solid rgb(var(--ws-glass) / 0.169); font:650 24px/1.1 Inter,sans-serif; letter-spacing:-.04em; text-transform:uppercase; color:rgb(var(--ws-ink)); }
+.nalu-design-review .workspace-carousel-card-label i { display:none; }
+.nalu-design-review .workspace-carousel-card-label>span { margin-left:auto; color:rgb(var(--ws-dim)); font:9px 'Nalu Review Mono',monospace; letter-spacing:.12em; }
+.nalu-design-review .workspace-carousel-card .workspace-core-visual { height:148px; aspect-ratio:auto; margin:12px 0 14px; }
+.nalu-design-review .workspace-carousel-select > h2 { font-size:20px; line-height:1.2; font-weight:400; letter-spacing:-.025em; margin:3px 0 10px; max-width:290px; }
+.nalu-design-review .workspace-carousel-select > p { color:rgb(var(--ws-dim)); font-size:12px; line-height:1.7; margin:0; max-width:290px; }
+.nalu-design-review .workspace-carousel-open { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; min-height:44px; flex-shrink:0; padding:12px 14px; margin-top:16px; background:var(--review-accent-ink); color:rgb(var(--ws-canvas)); border:1px solid var(--review-accent-ink); border-radius:1px; font-size:11px; font-weight:500; text-align:left; transition:background .15s; }
+.nalu-design-review .workspace-carousel-open:hover { background:rgb(var(--ws-ink)); }
+.nalu-design-review .workspace-carousel-side-hint { display:flex; align-items:center; justify-content:space-between; padding:15px 0 0; margin-top:16px; border-top:1px solid rgb(var(--ws-glass) / 0.231); font:8px 'Nalu Review Mono',monospace; letter-spacing:.08em; text-transform:uppercase; color:rgb(var(--ws-dim)); }
+.nalu-design-review .workspace-carousel-orbit { position:absolute; left:50%; top:320px; width:940px; height:150px; transform:translateX(-50%) rotateX(55deg); border:1px solid rgb(var(--ws-glass) / 0.29); border-radius:50%; box-shadow:0 18px 65px -25px #10142166; pointer-events:none; }
+.nalu-design-review .workspace-carousel-orbit::after { content:''; position:absolute; inset:22px 65px; border:1px solid rgb(var(--ws-glass) / 0.149); border-radius:50%; }
+.nalu-design-review .workspace-carousel-controls { display:flex; justify-content:center; align-items:center; gap:17px; flex-shrink:0; position:relative; z-index:12; margin-top:-2px; }
+.nalu-design-review .workspace-carousel-controls>button { display:grid; place-items:center; width:44px; height:44px; flex-shrink:0; border:1px solid rgb(var(--ws-glass) / 0.529); border-radius:50%; color:rgb(var(--ws-ink)); background:rgb(var(--ws-panel) / 0.25); transition:background .15s; }
+.nalu-design-review .workspace-carousel-controls>button:hover { background:rgb(var(--ws-panel2) / 0.5); }
+.nalu-design-review .workspace-carousel-dots { display:flex; gap:4px; align-items:center; }
+.nalu-design-review .workspace-carousel-dots button { min-height:44px; display:flex; gap:7px; align-items:center; justify-content:center; border:1px solid transparent; border-radius:0; background:none; padding:0 11px; color:rgb(var(--ws-ink)); font-size:11px; }
+.nalu-design-review .workspace-carousel-dots button:hover { background:rgb(var(--ws-panel) / 0.22); }
+.nalu-design-review .workspace-carousel-dots [aria-pressed=true] { background:transparent; border-color:transparent; border-bottom-color:rgb(var(--ws-dim)); }
+.nalu-design-review .workspace-carousel-dots span { width:4px; height:4px; border-radius:50%; background:rgb(var(--ws-glass) / 0.502); transition:transform .2s,background .2s; }
+.nalu-design-review .workspace-carousel-dots [aria-pressed=true] span { background:rgb(var(--ws-ink)); transform:scale(1.5); }
+.nalu-design-review .workspace-carousel-key-hint { display:flex; align-items:center; justify-content:center; gap:5px; flex-shrink:0; margin:13px 0 0; color:rgb(var(--ws-dim)); font-size:9px; line-height:1.6; }
+.nalu-design-review .workspace-carousel-key-hint>span { padding:0 3px; }
+.nalu-design-review .workspace-carousel-root button:focus-visible { outline:2px solid rgb(var(--ws-ink)); outline-offset:4px; }
+.nalu-design-review .workspace-carousel-controls button:focus-visible { outline-color:rgb(var(--ws-ink)); }
+.nalu-design-review .workspace-carousel-announcement { position:absolute; width:1px; height:1px; margin:-1px; padding:0; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+@media(max-width:767px) {
+  .nalu-design-review .workspace-carousel-card .workspace-core-visual { height:118px; margin:10px 0; }
+  .nalu-design-review .workspace-carousel-root { padding:14px 0 16px; }
+  .nalu-design-review .workspace-carousel-heading h1 { font-size:28px; margin:9px auto; }
+  .nalu-design-review .workspace-carousel-heading p { font-size:11px; }
+  .nalu-design-review .workspace-carousel-stage { --carousel-radius:211px; --carousel-depth:330px; --carousel-card-width:min(310px,calc(100vw - 64px)); height:422px; min-height:422px; flex-basis:422px; perspective:1100px; }
+  .nalu-design-review .workspace-carousel-ring { top:21px; }
+  .nalu-design-review .workspace-carousel-card { height:384px; padding:18px; border-radius:2px; }
+  .nalu-design-review .workspace-carousel-card-label { padding-bottom:11px; font-size:22px; }
+  .nalu-design-review .workspace-carousel-select > h2 { font-size:19px; margin:0 0 10px; }
+  .nalu-design-review .workspace-carousel-select > p { font-size:11px; line-height:1.7; }
+  .nalu-design-review .workspace-carousel-open { margin-top:12px; }
+  .nalu-design-review .workspace-carousel-orbit { top:290px; width:590px; height:130px; }
+  .nalu-design-review .workspace-carousel-controls { gap:9px; }
+  .nalu-design-review .workspace-carousel-dots { display:grid; grid-template-columns:repeat(3,1fr); gap:0 3px; width:min(242px,calc(100vw - 118px)); }
+  .nalu-design-review .workspace-carousel-dots button { padding:0 5px; gap:5px; font-size:10px; }
+  .nalu-design-review .workspace-carousel-key-hint { font-size:8px; }
+}
+@media(max-height:780px) {
+  .nalu-design-review .workspace-carousel-card .workspace-core-visual { height:100px; margin:10px 0; }
+  .nalu-design-review .workspace-carousel-heading h1 { font-size:30px; margin:8px 0; }
+  .nalu-design-review .workspace-carousel-root { padding-top:8px; }
+  .nalu-design-review .workspace-carousel-stage { height:385px; min-height:385px; flex-basis:385px; }
+  .nalu-design-review .workspace-carousel-ring { top:18px; }
+  .nalu-design-review .workspace-carousel-card { height:350px; padding:16px 20px; }
+  .nalu-design-review .workspace-carousel-select > h2 { font-size:19px; margin-bottom:9px; }
+  .nalu-design-review .workspace-carousel-card-label { padding-bottom:10px; }
+  .nalu-design-review .workspace-carousel-orbit { top:260px; height:120px; }
+}
+@media(prefers-reduced-motion:reduce) {
+  .nalu-design-review .workspace-carousel-card,.nalu-design-review .workspace-carousel-dots span { transition:none; }
+}

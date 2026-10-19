@@ -1,0 +1,164 @@
+/* Interior layouts for the local review. The existing controls and data remain
+   the actual workspace implementation; the public/account UI is unaffected. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ws-skills,.ws-settings,.ws-memory) {
+  background:transparent;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ws-skills,.ws-settings,.ws-memory) .ws-page-intro {
+  min-height:105px; padding:8px 0 25px; margin:0; border:0; border-radius:0;
+  background:transparent; overflow:visible;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ws-skills,.ws-settings,.ws-memory) .ws-page-intro::before { display:none; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ws-skills,.ws-settings,.ws-memory) .ws-page-intro>.nalu-avatar { display:none; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ws-skills,.ws-settings,.ws-memory) .ws-intro-copy h1 {
+  color:#fff; font-size:clamp(32px,3.7vw,52px); font-weight:300; line-height:1.08; letter-spacing:-.05em; margin:12px 0;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ws-skills,.ws-settings,.ws-memory) .ws-intro-copy>p { color:rgb(var(--ws-dim)); font-size:13px; max-width:620px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ws-skills,.ws-settings,.ws-memory) .ws-eyebrow { color:#fff; font-size:10px; letter-spacing:.14em; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ws-skills,.ws-settings,.ws-memory) .ws-eyebrow i { background:var(--review-accent-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ws-skills,.ws-settings) .ws-save-status {
+  display:inline-block; color:#fff; border:1px solid #ffffff50; padding:7px 11px; margin-top:14px; font-size:11px; background:rgb(var(--ws-panel)/.3);
+}
+
+/* Skills: each capability has its own working card, with the real switch in a
+   consistent top corner and the complete description visible. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skills>div { padding:12px 0 28px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skills>div>div { max-width:1440px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards {
+  display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:stretch;
+  max-width:1440px; padding:0; gap:16px; counter-reset:capability;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards>li {
+  position:relative; display:grid; grid-template-columns:1fr auto; grid-template-rows:48px 1fr;
+  gap:24px 15px; min-height:211px; padding:25px; border:1px solid #ffffff85;
+  border-radius:7px!important; background:var(--review-paper,rgb(var(--ws-panel)/.96));
+  backdrop-filter:blur(14px); box-shadow:0 9px 30px #151a280c; counter-increment:capability;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards>li::after {
+  content:counter(capability,decimal-leading-zero); position:absolute; right:25px; bottom:22px;
+  font:10px 'Nalu Review Mono',monospace; color:rgb(var(--ws-dim)); opacity:.7;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards>li>div:first-child {
+  grid-column:1; grid-row:1; width:48px; height:48px; border:1px solid rgb(var(--ws-glass)/.12);
+  background:rgb(var(--ws-panel2)); border-radius:8px;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards>li>div:first-child img { width:25px; height:25px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards>li>div:nth-child(2) { grid-column:1/-1; grid-row:2; padding-right:14px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards>li>div:nth-child(2)>div:first-child { font-size:18px; font-weight:500; line-height:1.35; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards .truncate {
+  margin-top:9px; overflow:visible; white-space:normal; text-overflow:clip; font-size:13px;
+  line-height:1.7; color:rgb(var(--ws-dim)); max-width:290px;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards button[role=switch] { grid-column:2; grid-row:1; align-self:center; width:44px; height:24px; min-height:24px; border-radius:20px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards button[role=switch][aria-checked=true] { background:var(--review-accent-ink); border-color:var(--review-accent-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards>li:has([aria-checked=false]) { background:rgb(var(--ws-panel)/.9); }
+
+/* Settings: a category rail and readable preference cards, rather than one
+   continuous list. Hidden groups stay hidden and every control is retained. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-content {
+  display:grid; grid-template-columns:190px minmax(0,1fr); grid-template-rows:auto 1fr;
+  column-gap:24px; row-gap:8px; max-width:1440px; width:100%; padding:12px 0 30px;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-content>.ws-page-intro { grid-column:1/-1; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-content>nav {
+  grid-column:1; grid-row:2; display:flex; flex-direction:column; align-items:stretch; align-self:start;
+  gap:5px; margin:0; padding:8px; border:1px solid #ffffff55; border-radius:6px;
+  background:rgb(var(--ws-panel)/.94); position:sticky; top:0;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-content>nav button {
+  display:flex; align-items:center; width:100%; min-height:49px; padding:12px 14px;
+  text-align:left; white-space:normal; font-size:13px; border:1px solid transparent; border-radius:3px;
+  color:rgb(var(--ws-dim));
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-content>nav button[aria-pressed=true] {
+  background:rgb(var(--ws-panel2)); color:rgb(var(--ws-ink)); border-color:rgb(var(--ws-glass)/.13); font-weight:500;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-content>nav button::after { display:none; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group:not([hidden]) {
+  grid-column:2; grid-row:2; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px;
+  padding:0; margin:0; align-content:start; border:0; background:transparent; border-radius:0;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group>section {
+  display:flex; flex-direction:column; align-self:stretch; min-width:0; padding:23px;
+  border:1px solid #ffffff80; border-radius:7px; background:var(--review-paper,rgb(var(--ws-panel)/.96));
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group>section:has(input[type=tel]),
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group>section:has(input[type=range]) { grid-column:1/-1; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group>section>div:first-child {
+  display:grid; grid-template-columns:20px minmax(0,1fr); align-items:center; gap:5px 10px;
+  padding-bottom:18px; margin-bottom:18px; border-bottom:1px solid rgb(var(--ws-glass)/.14);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group section h2 { font-size:16px; font-weight:500; line-height:1.4; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group>section>div:first-child>span:last-child { grid-column:2; font-size:12px; line-height:1.6; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group>section>div:not(:first-child),
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group>section>button {
+  background:transparent; border:0; border-radius:0; padding:0; backdrop-filter:none;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group :is(.text-xs,.text-\[11px\]) { font-size:12px; line-height:1.7; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group button:not([role=switch]) { min-height:40px; border-radius:4px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group input:not([type=range]) { min-height:44px; font-size:14px; background:rgb(var(--ws-panel)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group>section .grid-cols-3 { gap:9px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group>section .grid-cols-3 button { border:1px solid rgb(var(--ws-glass)/.15); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group>section .bg-gold { background:var(--review-accent-ink); color:rgb(var(--ws-panel)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group>div { grid-column:1/-1; min-width:0; }
+
+/* Memory: the real neural graph gets a large technical work surface. Its
+   existing details become an adjacent inspector, never covering the graph. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory { overflow:hidden; border-radius:0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory>.ws-page-intro { flex-shrink:0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory>.ws-memory-workbench {
+  display:flex; gap:18px; flex:1; min-height:0; min-width:0; margin:0; border:0; border-radius:0; overflow:hidden;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-graph {
+  min-width:0; border:1px solid #ffffff85; border-radius:7px; background-color:var(--review-paper,rgb(var(--ws-panel)/.96));
+  background-image:linear-gradient(rgb(var(--ws-glass)/.035) 1px,transparent 1px),linear-gradient(90deg,rgb(var(--ws-glass)/.035) 1px,transparent 1px);
+  background-size:32px 32px;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-legend {
+  left:18px; right:18px; bottom:16px; display:flex; justify-content:center; gap:10px 20px;
+  padding:13px 16px; border:1px solid rgb(var(--ws-glass)/.12); border-radius:4px;
+  background:rgb(var(--ws-panel)/.96); box-shadow:none; backdrop-filter:blur(12px);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-legend>span { font-size:11px; color:rgb(var(--ws-dim)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-breakdown {
+  position:static; inset:auto; flex:0 0 310px; width:310px; max-width:none; min-height:0;
+  border:1px solid #ffffff85; border-radius:7px; background:var(--review-paper,rgb(var(--ws-panel)/.96));
+  box-shadow:none; backdrop-filter:blur(14px);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-breakdown>div:first-child {
+  padding:20px; border-bottom:1px solid rgb(var(--ws-glass)/.13); align-items:flex-start; gap:12px;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-breakdown>div:first-child>span { margin-top:5px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-breakdown>div:first-child .truncate { font-size:17px; font-weight:500; white-space:normal; line-height:1.4; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-breakdown>div:first-child button { display:grid; place-items:center; flex-shrink:0; width:32px; height:32px; color:rgb(var(--ws-ink)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-breakdown>div:last-child { padding:20px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-breakdown :is(p,.text-\[11px\]) { font-size:12px; line-height:1.75; color:rgb(var(--ws-dim)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-stat { border-radius:4px; padding:12px; background:rgb(var(--ws-panel2)); border:1px solid rgb(var(--ws-glass)/.09); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-stat>span:last-child { font:15px 'Nalu Review Mono',monospace; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-breakdown button:not([aria-label]) { min-height:44px; border-radius:4px; background:var(--review-accent-ink); color:rgb(var(--ws-panel)); }
+
+@media(max-width:1150px) {
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-content { grid-template-columns:165px minmax(0,1fr); column-gap:18px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group:not([hidden]) { grid-template-columns:1fr; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-breakdown { flex-basis:280px; width:280px; }
+}
+@media(max-width:767px) {
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ws-skills,.ws-settings,.ws-memory) .ws-page-intro { min-height:0; padding:6px 2px 20px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ws-skills,.ws-settings,.ws-memory) .ws-intro-copy h1 { font-size:34px; margin:10px 0; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ws-skills,.ws-settings,.ws-memory) .ws-intro-copy>p { font-size:12px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards { grid-template-columns:1fr; gap:12px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards>li { min-height:172px; padding:21px; gap:17px 14px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards>li::after { right:20px; bottom:19px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-skill-cards .truncate { max-width:none; font-size:13px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-content { display:flex; flex-direction:column; gap:0; padding-top:8px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-content>nav { position:static; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); margin-bottom:16px; padding:6px; gap:4px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-content>nav button { min-height:43px; padding:10px; font-size:12px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group:not([hidden]) { gap:13px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group>section { padding:20px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-settings-group input:not([type=range]) { font-size:16px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory>.ws-memory-workbench { flex-direction:column; gap:12px; overflow-y:auto; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-graph { min-height:320px; flex:1 0 320px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-breakdown { width:100%; min-height:240px; max-height:420px; flex:0 0 auto; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-legend { left:10px; right:10px; bottom:10px; padding:10px; gap:8px 12px; }
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-memory-legend>span { font-size:10px; }
+}

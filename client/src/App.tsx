@@ -3,7 +3,7 @@ import LoadingScreen from './components/LoadingScreen'
 import LandingPage from './components/landing/LandingPage'
 import { useAuth } from './components/AuthProvider'
 
-const Workspace = lazy(() => import('./components/workspace/Workspace'))
+const Workspace = lazy(() => import('./components/workspace/design/DesignedWorkspace'))
 
 export default function App() {
   const { user, signOut } = useAuth()

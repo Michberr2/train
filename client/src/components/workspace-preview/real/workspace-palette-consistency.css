@@ -1,0 +1,106 @@
+/* Local design review only. Import after the scenic skins. Original component
+   palettes, generated artifacts, brand swatches, and production stay intact. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace[data-workspace-design-preview] {
+  --ws-accent:185 215 246;
+  --review-accent-ink:#d2e8ff;
+  --review-action-fill:#d2e8ff;
+  --review-action-ink:#233950;
+  --review-notice-ink:#c0e5ff;
+  --review-notice-fill:156 205 241;
+}
+
+/* Gold utility names are legacy API for the real controls. Recolor both their
+   normal and interactive states, including opacity variants. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.text-gold,[class^="text-gold/"],[class*=" text-gold/"]) { color:var(--review-accent-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is([class~="hover:text-gold"],[class~="hover:text-[#e0c489]"]):hover,
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .group:hover [class~="group-hover:text-gold"] { color:#e7ecf2; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is([class^="bg-gold/"],[class*=" bg-gold/"]) { background-color:rgb(var(--ws-accent)/.12); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.border-gold,[class^="border-gold/"],[class*=" border-gold/"]) { border-color:rgb(var(--ws-accent)/.4); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is([class*="hover:border-gold"]):hover { border-color:rgb(var(--ws-accent)/.65); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is([class*="focus:border-gold"]):focus { border-color:var(--review-accent-ink); }
+
+/* Run, Save & close, Create, email actions, connection dialogs and workspace
+   actions use this fixed gold-to-accent gradient rather than a theme token.
+   Remove the background image, not only its background color. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.btn-gold,.bg-gold,[class~="from-[#c9a86a]"]) {
+  background-image:none;
+  background-color:var(--review-action-fill);
+  color:var(--review-action-ink);
+  border-color:rgb(var(--ws-accent)/.7);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(button,a):is(.btn-gold,.bg-gold,[class~="from-[#c9a86a]"],[class~="hover:bg-gold"]):hover:not(:disabled) {
+  background-image:none;
+  background-color:#dce3eb;
+  color:var(--review-action-ink);
+  filter:none;
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(button,a):is(.btn-gold,.bg-gold,[class~="from-[#c9a86a]"]):focus-visible { outline:2px solid #e8eaef; outline-offset:3px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace button:is(.btn-gold,.bg-gold,[class~="from-[#c9a86a]"]):disabled { filter:none; cursor:not-allowed; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(input[type=range],input[type=checkbox],input[type=radio]) { accent-color:var(--review-accent-ink)!important; }
+
+/* Amber also means notes, pending review and validation in the original UI.
+   Keep a distinct sky-blue notice treatment; errors retain their rose/red state. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is([class^="text-amber-"],[class*=" text-amber-"],[class^="text-yellow-"],[class*=" text-yellow-"]) { color:var(--review-notice-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is([class^="bg-amber-"],[class*=" bg-amber-"],[class^="bg-yellow-"],[class*=" bg-yellow-"]) { background-color:rgb(var(--review-notice-fill)/.13); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is([class^="border-amber-"],[class*=" border-amber-"],[class^="border-yellow-"],[class*=" border-yellow-"]) { border-color:rgb(var(--review-notice-fill)/.45); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is([class*="ring-amber-"],[class*="ring-yellow-"]) { --tw-ring-color:rgb(var(--review-notice-fill)/.45); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is([class*="hover:text-amber-"],[class*="hover:text-yellow-"]):hover { color:#e5eef7; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is([class*="hover:bg-amber-"],[class*="hover:bg-yellow-"]):hover:not(:disabled) { background-color:rgb(var(--review-notice-fill)/.23); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is([class*="hover:border-amber-"],[class*="hover:border-yellow-"]):hover { border-color:rgb(var(--review-notice-fill)/.7); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is([class*="focus:border-amber-"],[class*="focus:border-yellow-"]):focus { border-color:var(--review-notice-ink); }
+/* Document notices sit on generated white pages, so retain dark notice text. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace [class~="bg-amber-50"] { --review-notice-ink:#3d546c; background-color:#eaf0f6; border-color:#a3b7cb; }
+/* Selected creation tools are actions, rather than warning messages. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-studio button[class*="bg-amber-"],
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-studio button[class*="bg-amber-"]:hover:not(:disabled) {
+  background-color:rgb(var(--ws-accent)/.16);
+  border-color:rgb(var(--ws-accent)/.5);
+  color:var(--review-accent-ink);
+  --tw-ring-color:rgb(var(--ws-accent)/.4);
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ws-studio button[class*="border-amber-"] {
+  border-color:rgb(var(--ws-accent)/.5);
+  --tw-ring-color:rgb(var(--ws-accent)/.4);
+}
+
+/* Autopilot: retain the actual nodes, ports and SVG hit targets. Inline model
+   colors in the editor/menu are deliberately normalized only in this panel. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node { --node-tint:var(--review-accent-ink)!important; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node-running { border-color:var(--review-accent-ink); box-shadow:0 0 0 3px rgb(var(--ws-accent)/.12); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node-running .ap-node-status { color:var(--review-accent-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node-awaiting { border-color:var(--review-notice-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node-awaiting .ap-node-status { color:var(--review-notice-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node-error { border-color:#e7a5b0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node-error .ap-node-status { color:#efb5bf; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-step-editor>div:first-child[style] { background:rgb(var(--ws-accent)/.08)!important; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-toolbar-menu svg[style] { color:var(--review-accent-ink)!important; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-workspace svg[aria-label="Workflow connections"] :is(path[stroke="#d5ae6f" i],path[stroke="#E4B96F" i]) { stroke:var(--review-accent-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-template-dialog header>div>span { color:var(--review-accent-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ap-template-grid button,.ap-template-dialog footer button) { background:rgb(var(--ws-accent)/.11); border-color:rgb(var(--ws-accent)/.35); color:rgb(var(--ws-ink)); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ap-template-grid button,.ap-template-dialog footer button):hover { background:rgb(var(--ws-accent)/.2); border-color:rgb(var(--ws-accent)/.6); }
+
+/* Chat/model feedback: the original tier badge, checkbox, caret and thinking
+   animation each contain fixed gold independently of the workspace token. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .think-badge[title^="Ultrathink"] { color:#c9d8e8!important; border-color:#b3c5d8!important; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .streaming-caret::after { color:var(--review-accent-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .nalu-think { animation-name:review-think-silver; }
+@keyframes review-think-silver {
+  0%,100% { transform:scale(.92); opacity:.55; filter:drop-shadow(0 0 0 rgb(185 215 246 / 0)); }
+  50% { transform:scale(1.08); opacity:1; filter:drop-shadow(0 0 6px rgb(185 215 246 / .4)); }
+}
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace canvas[aria-label="Catch the howling wolf while Nalu builds"] { filter:grayscale(1); }
+
+/* Map interface only: geographical data colors and user layer legends remain
+   meaningful. Remove gold from its controls, focus treatment and scrollbar. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-workspace { --map-accent:var(--review-accent-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-workspace :is(button,input):focus-visible { outline-color:var(--review-accent-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .is-active .map-layer-check { background:var(--review-action-fill); border-color:var(--review-action-fill); color:var(--review-action-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.map-icon-button:hover,.map-icon-button.is-selected,.map-zoom-hint) { background:rgb(var(--ws-accent)/.12); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-layer-empty button { border-color:rgb(var(--ws-accent)/.4); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-coverage button { background:var(--review-action-fill); color:var(--review-action-ink); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-xscroll { scrollbar-color:rgb(var(--ws-accent)/.6) transparent; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-xscroll::-webkit-scrollbar-thumb { background:rgb(var(--ws-accent)/.55); }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .map-xscroll::-webkit-scrollbar-thumb:hover { background:rgb(var(--ws-accent)/.8); }
+@media(prefers-reduced-motion:reduce) {
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .nalu-think { animation:none; }
+}
