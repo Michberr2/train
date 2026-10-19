@@ -115,7 +115,9 @@ try {
         res.setHeader('Content-Type', 'text/html')
         res.end(await vite.transformIndexHtml('/__flow-compat', '<html><body><div id="root" style="height:100vh"></div><script type="module" src="/@flow-compat-entry"></script></body></html>'))
       }) },
-    }], server: { host: '127.0.0.1', port: 0, strictPort: true, hmr: false } })
+    // Vite resolves port 0 to its default dev port. Allow it to select the next
+    // available port when another workspace is already using that default.
+    }], server: { host: '127.0.0.1', port: 0, strictPort: false, hmr: false } })
   await server.listen()
   origin = `http://127.0.0.1:${server.httpServer.address().port}`
   browser = await chromium.launch()
