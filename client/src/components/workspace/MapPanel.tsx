@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, lazy, Suspense } from 'react'
 import { Search, Loader2, Star, MapPin, ExternalLink, Layers, Sparkles, Trash2, X, Boxes, Eye, EyeOff, Maximize2, Minimize2 } from 'lucide-react'
 import MapLayerControls from './MapLayerControls'
+import { normalizeMapComparison, type MapComparison } from '../../../../shared/mapComparison'
 import { isMapBackground, mapLayerOpacity, mapLayerZoomRange, readMapDisplay } from './mapLayerDisplay'
 
 const MapGlobe3D = lazy(() => import('./MapGlobe3D'))
@@ -637,8 +638,7 @@ export default function MapPanel() {
   const [panelOpen, setPanelOpen] = useState(() => window.innerWidth >= 1240)
   const [compactPanels, setCompactPanels] = useState(false)
   const [answer, setAnswer] = useState('')
-  type Comparison = { title: string; criteria: string[]; places: Array<{ name: string; lat: number; lng: number; scores: Record<string, number>; note?: string }>; winner?: string }
-  const [comparison, setComparison] = useState<Comparison | null>(null)
+  const [comparison, setComparison] = useState<MapComparison | null>(null)
   // Keep the 2D map mounted for its saved layers and camera, but expose only the active renderer.
   const [globe, setGlobe] = useState<{ lat: number; lng: number; zoom: number; cameraRequest?: MapCameraRequest } | null>(null)
   const is3D = globe !== null
@@ -1355,7 +1355,7 @@ export default function MapPanel() {
         const label = s.label
         const pos = at
         ov.addListener('click', (e: { latLng?: GMaps }) => {
-          infoRef.current?.setContent(`<div style="font-family:Inter,sans-serif;max-width:240px;color:#111;font-size:12px;font-weight:600">${mapHtml(label)}</div>`)
+          infoRef.current?.setContent(`<div style="font-family:Inter,sans-serif;max-width:240px;color:#111;font-size:12px"><div style="font-weight:600">${mapHtml(label)}</div><p style="margin:6px 0 0;font-size:11px">${s.type === 'marker' ? 'Approximate AI location. Use a live place result for an exact venue.' : 'Illustrative AI shape. Use official data layers for actual boundaries and routes.'}</p></div>`)
           infoRef.current?.setPosition(e?.latLng || pos)
           infoRef.current?.open(map)
         })
@@ -1468,7 +1468,7 @@ export default function MapPanel() {
       const d = await mapJson(r).catch(() => null) as {
         answer?: string; layers?: string[]; search?: string | null
         shapes?: AIShape[]; center?: { lat: number; lng: number } | null; zoom?: number | null; error?: string
-        comparison?: { title: string; criteria: string[]; places: Array<{ name: string; lat: number; lng: number; scores: Record<string, number>; note?: string }>; winner?: string } | null
+        comparison?: MapComparison | null
       } | null
       searchRequests.current.check(request)
       const gotPlan = d && !d.error && (typeof d.answer === 'string' || Array.isArray(d.shapes) || Array.isArray(d.layers) || typeof d.search === 'string')
@@ -1483,14 +1483,7 @@ export default function MapPanel() {
       d.search = typeof d.search === 'string' ? d.search : null
       d.center = validMapPoint(d.center) ? d.center : null
       d.zoom = typeof d.zoom === 'number' && Number.isFinite(d.zoom) ? Math.min(20, Math.max(2, d.zoom)) : null
-      if (d.comparison) {
-        const comparison = d.comparison
-        if (typeof comparison.title !== 'string' || !Array.isArray(comparison.criteria) || !Array.isArray(comparison.places)) d.comparison = null
-        else {
-          comparison.criteria = comparison.criteria.filter((criterion) => typeof criterion === 'string').slice(0, 12)
-          comparison.places = comparison.places.filter((place) => validMapPoint(place) && typeof place.name === 'string' && place.scores && typeof place.scores === 'object').slice(0, 30).map((place) => ({ ...place, scores: Object.fromEntries(comparison.criteria.map((criterion) => [criterion, typeof place.scores[criterion] === 'number' && Number.isFinite(place.scores[criterion]) ? Math.max(0, Math.min(10, place.scores[criterion])) : 0])) }))
-        }
-      }
+      d.comparison = normalizeMapComparison(d.comparison)
       const hasView = !!d.center
       // enable AI-chosen + keyword layers (without yanking the view when the AI framed it)
       const enabled = [...new Set([...(d.layers || []), ...kwKeys])]
@@ -1597,35 +1590,28 @@ export default function MapPanel() {
                       {comparison.criteria.map((c) => (
                         <th key={c} className="whitespace-nowrap px-1.5 py-1 text-center font-medium capitalize text-dim" title={c}>{c}</th>
                       ))}
-                      <th className="px-1.5 py-1 text-center font-medium text-dim">Total</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {comparison.places
-                      .map((pl) => ({ ...pl, total: comparison.criteria.reduce((t, c) => t + (pl.scores[c] || 0), 0) }))
-                      .sort((a, b) => b.total - a.total)
-                      .map((pl) => {
-                        const isWinner = pl.name === comparison.winner
-                        return (
-                          <tr key={pl.name} className={isWinner ? 'bg-accent/15' : ''}>
-                            <td className={`sticky left-0 z-10 max-w-[9rem] truncate bg-panel2 px-1.5 py-1 font-medium text-ink ${isWinner ? 'border-l-2 border-gold' : ''}`} title={pl.note || pl.name}>
-                              {isWinner ? '★ ' : ''}{pl.name}
-                            </td>
-                            {comparison.criteria.map((c) => {
-                              const v = pl.scores[c] || 0
-                              return (
-                                <td key={c} className="whitespace-nowrap px-1.5 py-1 text-center tabular-nums" style={{ color: v >= 8 ? '#4ade80' : v >= 5 ? undefined : '#f87171' }}>
-                                  {v || '–'}
-                                </td>
-                              )
-                            })}
-                            <td className="whitespace-nowrap px-1.5 py-1 text-center font-semibold tabular-nums text-gold">{pl.total}</td>
-                          </tr>
-                        )
-                      })}
+                    {comparison.places.map((place) => (
+                      <tr key={place.name}>
+                        <td className="sticky left-0 z-10 max-w-[9rem] bg-panel2 px-1.5 py-2 font-medium text-ink" title={place.note || place.name}>{place.name}</td>
+                        {comparison.criteria.map((criterion) => {
+                          const metric = place.metrics[criterion]
+                          return <td key={criterion} className="max-w-[12rem] px-2 py-2 align-top text-left text-ink">
+                            {metric.status === 'sourced' ? <>
+                              <span className="block">{metric.value}</span>
+                              <a href={metric.sourceUrl} target="_blank" rel="noopener noreferrer" title={metric.quote} className="mt-1 inline-block text-[9px] text-gold underline">Source</a>
+                              <span className="block text-[9px] text-dim">{metric.publishedAt ? `Published ${metric.publishedAt.slice(0, 10)}` : 'Publication date unknown'}</span>
+                            </> : <span className="text-dim">Not available</span>}
+                          </td>
+                        })}
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
+              <p className="border-t border-glass/10 px-2.5 py-2 text-[10px] leading-relaxed text-dim">{comparison.methodology}</p>
             </div>
           )}
           {answer && (

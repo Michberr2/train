@@ -62,19 +62,15 @@ export function normalizeChart(chart: unknown): Chart | null {
 
 /** True if a value is a string that's purely a formatted number (no formula). */
 function isNumericString(v: unknown): boolean {
-  return typeof v === 'string' && /^\s*-?[$€£]?\s*[\d,]+(\.\d+)?\s*%?\s*$/.test(v) && /\d/.test(v)
+  return typeof v === 'string' && /^\s*-?[$€£]?\s*(?:\d{1,3}(?:,\d{3})+|(?:0|[1-9]\d*))(?:\.\d+)?\s*%?\s*$/.test(v)
 }
 
-/** Guard EVERY formula so a #DIV/0!, #N/A, #VALUE!, #REF! or #NAME? error can
- *  never surface to the user — wrap it in IFERROR(...,0). 0 is the right neutral
- *  for the numeric models these formulas drive; genuine text/labels aren't
- *  formulas and never reach here. Also strips a stray leading '+' or doubled '='
- *  that models sometimes emit (which Excel would flag as a broken formula). */
+/** Normalize a formula's prefix without inventing an answer. A missing
+ * reference, unsupported calculation or divide-by-zero must remain visible.
+ * IFERROR is retained only when it was explicitly present in the workbook. */
 export function guardFormula(cell: string): string {
-  let inner = cell.trim().replace(/^=+/, '').replace(/^\s*\+/, '').trim()
-  if (!inner) return '0'
-  if (/^IFERROR\s*\(/i.test(inner)) return `=${inner}` // already guarded
-  return `=IFERROR(${inner},0)`
+  const inner = cell.trim().replace(/^=+/, '').replace(/^\s*\+/, '').trim()
+  return `=${inner}`
 }
 
 /**
@@ -84,6 +80,7 @@ export function guardFormula(cell: string): string {
  */
 export function normalizeSheets(sheets: unknown[]): Array<{ name: string; columns: string[]; rows: unknown[][] }> {
   const used = new Set<string>()
+  const renamed = new Map<string, string>()
   const out: Array<{ name: string; columns: string[]; rows: unknown[][] }> = []
   let idx = 0
   for (const raw of sheets) {
@@ -98,9 +95,8 @@ export function normalizeSheets(sheets: unknown[]): Array<{ name: string; column
       .filter((r) => Array.isArray(r))
       .map((r) => {
         const row = (r as unknown[]).map((cell) => {
-          // Formulas: guard against errors (IFERROR); coerce numeric strings to real numbers.
+          // Preserve failed/unresolved formulas so validation can reject them.
           if (typeof cell === 'string' && cell.trim().startsWith('=')) {
-            if (/[{}@]/.test(cell)) return 0 // leftover template token / unresolved @driver → not valid
             return guardFormula(cell)
           }
           if (isNumericString(cell)) {
@@ -115,33 +111,40 @@ export function normalizeSheets(sheets: unknown[]): Array<{ name: string; column
       })
 
     // Sanitize + dedupe the sheet name.
-    let name = String((typeof s.name === 'string' && s.name.trim()) || `Sheet ${idx}`)
-      .replace(/[\\/?*[\]:]/g, ' ')
-      .trim()
+    const originalName = String((typeof s.name === 'string' && s.name.trim()) || `Sheet ${idx}`)
+    let name = originalName
+      .replace(/[\\/?*[\]:\u0000-\u001f]/g, ' ')
+      .trim().replace(/^'+|'+$/g, '').trim()
       .slice(0, 31) || `Sheet ${idx}`
-    if (used.has(name.toLowerCase())) {
+    if (used.has(name.toLowerCase()) || name.toLowerCase() === 'history') {
       const stem = name.slice(0, 27)
       let n = 2
       while (used.has(`${stem} (${n})`.toLowerCase())) n++
       name = `${stem} (${n})`
     }
     used.add(name.toLowerCase())
+    if (!renamed.has(originalName)) renamed.set(originalName, name)
     out.push({ name, columns, rows })
   }
 
   // Quote cross-sheet references to any tab whose name isn't a bare identifier
   // (spaces, &, (), %, …). Excel REQUIRES 'Sheet Name'!A1 for those; models write
   // them UNQUOTED, which breaks the formula in Excel and the preview alike.
-  const special = out.map((s) => s.name).filter((n) => /[^A-Za-z0-9_.]/.test(n)).sort((a, b) => b.length - a.length)
-  if (special.length) {
-    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const quote = (f: string): string => {
-      let r = f
-      for (const nm of special) r = r.replace(new RegExp(`(^|[^'A-Za-z0-9_])(${esc(nm)})!`, 'g'), "$1'$2'!")
-      return r
-    }
-    for (const s of out) for (let i = 0; i < s.rows.length; i++)
-      s.rows[i] = s.rows[i].map((c) => (typeof c === 'string' && c.startsWith('=')) ? quote(c) : c)
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const names = [...renamed.keys()].sort((a, b) => b.length - a.length)
+  const refs = new RegExp(`('(?:[^']|'')*')!|(^|[^'A-Za-z0-9_])(${names.map(esc).join('|')})!`, 'gi')
+  const lookup = new Map([...renamed].map(([old, name]) => [old.toLowerCase(), name]))
+  for (const s of out) for (let i = 0; i < s.rows.length; i++) {
+    s.rows[i] = s.rows[i].map((c) => {
+      if (typeof c !== 'string' || !c.startsWith('=')) return c
+      // Quotes in formula text are literals, not references. The replacement
+      // also maps original names to sanitized/truncated Excel worksheet names.
+      return c.split(/("(?:[^"]|"")*")/g).map((part, index) => index % 2 ? part : part.replace(refs, (match, quoted: string, prefix: string, bare: string) => {
+        const original = quoted ? quoted.slice(1, -1).replace(/''/g, "'") : bare
+        const name = lookup.get(original.toLowerCase())
+        return name ? `${prefix || ''}'${name.replace(/'/g, "''")}'!` : match
+      })).join('')
+    })
   }
   return out
 }

@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 
 const cameraCheck = process.argv.includes('--camera')
 const layerCheck = process.argv.includes('--layers')
+const comparisonCheck = process.argv.includes('--comparisons')
 // The real MapGlobe3D component runs against a controlled SDK in --camera mode.
 // Calls are recorded at the SDK boundary; this fixture never requests tiles.
 const mapLibreFixture = `
@@ -169,6 +170,13 @@ try {
       return
     }
     if (payload.query === 'restaurants') return route.fulfill({ status: 503, json: { error: 'Places temporarily unavailable' } })
+    if (payload.action === 'mapai' && payload.query === 'compare Orlando and Tampa') return route.fulfill({ json: {
+      answer: 'The available rent observation is shown with its source; school evidence is missing.', center: { lat: 28.5, lng: -81.4 }, zoom: 8, search: null,
+      comparison: { title: 'Orlando and Tampa', criteria: ['Median rent', 'Schools'], winner: 'Orlando', places: [
+        { name: 'Orlando', lat: 28.5, lng: -81.4, scores: { Schools: 10 }, metrics: { 'Median rent': { value: '$1,700 per month', sourceUrl: 'https://example.org/survey', quote: 'Orlando median rent was $1,700 per month in September 2026.', status: 'sourced', publishedAt: '2026-10-01' } } },
+        { name: 'Tampa', lat: 27.9, lng: -82.4, scores: { Schools: 9 }, metrics: {} },
+      ] },
+    } })
     if (payload.action === 'mapai') return route.fulfill({ json: { answer: `Answer for ${payload.query}`, center: { lat: 28.5, lng: -81.4 }, zoom: 12, search: payload.query } })
     if (payload.query === 'idless cafes') return route.fulfill({ json: { results: [
       { ...place('Cafe North'), placeId: '', address: '', lat: 28.5, lng: -81.4 },
@@ -179,7 +187,25 @@ try {
   })
   await page.goto('http://127.0.0.1:5183/__map-test')
   await page.getByRole('button', { name: /^Layers/ }).waitFor()
-  if (layerCheck) {
+  if (comparisonCheck) {
+    const input = page.getByRole('textbox', { name: 'Map search', exact: true })
+    await input.fill('compare Orlando and Tampa'); await input.press('Enter')
+    const table = page.locator('.map-comparison')
+    await expect(table.getByText('$1,700 per month', { exact: true })).toBeVisible()
+    await expect(table.getByText('Not available', { exact: true })).toHaveCount(3)
+    await expect(table.getByRole('link', { name: 'Source', exact: true })).toHaveAttribute('href', 'https://example.org/survey')
+    await expect(table.getByText('Published 2026-10-01')).toBeVisible()
+    await expect(table.getByRole('columnheader', { name: 'Total', exact: true })).toHaveCount(0)
+    assert.ok(!(await table.innerText()).includes('★'))
+    await page.screenshot({ path: '/tmp/nalu-map-comparison-desktop.png' })
+    await page.setViewportSize({ width: 390, height: 844 })
+    if (!(await input.isVisible())) await page.getByRole('button', { name: 'Show search panel', exact: true }).click()
+    await expect(table.getByText('$1,700 per month', { exact: true })).toBeVisible()
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'comparison table must scroll inside the map panel without widening the page')
+    await page.screenshot({ path: '/tmp/nalu-map-comparison-mobile.png' })
+    assert.deepEqual(errors, [])
+    console.log('PASS actual MapPanel comparison table: source links/dates, three unavailable values, no invented score/total/winner, desktop and mobile layout, no browser errors')
+  } else if (layerCheck) {
     const viewport = () => page.evaluate(() => { const m = window.__mapTest.maps.at(-1); return { center: m.center, zoom: m.zoom } })
     const startView = await viewport()
     await page.getByRole('button', { name: /^Layers/ }).click()

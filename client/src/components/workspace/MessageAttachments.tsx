@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FileText, Loader2 } from 'lucide-react'
 import { loadChatAttachment } from './chatAttachments'
-import type { Attachment } from './extractText'
+import { attachmentExtractionSummary, type Attachment } from './extractText'
 
 function AttachmentPreview({ attachment }: { attachment: Attachment }) {
   const [source, setSource] = useState(attachment.dataUrl || '')
@@ -22,6 +22,7 @@ function AttachmentPreview({ attachment }: { attachment: Attachment }) {
       : <div className="flex min-h-24 items-center justify-center p-2 text-xs">{error ? <span>{error}{attachment.storage && <button type="button" onClick={() => setAttempt(n => n + 1)} className="ml-1 underline">Retry image</button>}</span> : <Loader2 size={18} className="motion-safe:animate-spin" aria-label="Loading attached image" />}</div>
       : <FileText size={24} className="m-3" />}
     <figcaption className="truncate px-2 py-1.5 text-xs" title={attachment.name}>{attachment.name}</figcaption>
+    {!attachment.isImage && <p className="px-2 pb-2 text-[10px] leading-relaxed text-dim" title={attachment.extraction?.notes.join('\n')}>{attachmentExtractionSummary(attachment)}</p>}
   </figure>
 }
 

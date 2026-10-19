@@ -10,6 +10,7 @@ import { CloudflareFlows, flowArray } from './_cloudflareFlows'
 import { listTeam } from './_team'
 import { validateDispatch } from './_tasks'
 import { shallowJsonMerge } from './_cloudflareJson'
+import { continuationId, deferPipelineTask, PipelineContinuationError } from './_pipelineContinuation'
 const now = "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
 const expiry = "strftime('%Y-%m-%dT%H:%M:%fZ','now','+120 seconds')"
 const fields = 't.id,t.source,t.title,t.detail,t.status,t.progress,t.events,t.meta,t.created_at,t.updated_at'
@@ -33,13 +34,17 @@ export async function handleCloudflareTasks(store: CloudflareStore, owner: strin
     const id = 'remote_' + createHash('sha256').update(`${owner}\0${requestId}`).digest('hex').slice(0,32)
     const repo = pipeline ? '' : body.repo.trim(), prompt = pipeline ? '' : body.prompt.trim(), target = pipeline ? 'cloud' : 'desktop'
     const flowId = pipeline ? body.flowId.trim() : null, mode = pipeline ? body.mode || 'run' : null
-    let title = prompt.slice(0,300)
+    let title = prompt.slice(0,300), resumeStartedAt: number | undefined
     if (pipeline) {
       const flow = flowArray(await new CloudflareFlows(store).read(owner))?.find(item => String(item.id) === flowId)
       if (!flow) return error('pipeline not found',404)
+      if (mode === 'resume') {
+        if (!Number.isFinite(flow.run?.startedAt) || flow.run.startedAt <= 0) return error('pipeline has no saved run to resume',409)
+        resumeStartedAt = flow.run.startedAt
+      }
       title = `${mode === 'resume' ? 'Resume' : 'Run'} ${String(flow.name || 'AutoPilot')}`.slice(0,300)
     }
-    const meta = { kind:'remote',taskType:body.kind,repo,target,...(member ? { memberId:member.id,memberName:member.name,memberVoice:member.voice,extension:member.extension } : {}),...(pipeline ? {flowId,mode} : {}) }
+    const meta = { kind:'remote',taskType:body.kind,repo,target,...(member ? { memberId:member.id,memberName:member.name,memberVoice:member.voice,extension:member.extension } : {}),...(pipeline ? {flowId,mode} : {}),...(resumeStartedAt ? {pipelineContinuation:{flowId,startedAt:resumeStartedAt}} : {}) }
     const saved = await store.batch([
       { sql: `INSERT INTO nalu_tasks(id,user_id,source,title,detail,status,progress,events,meta)
         VALUES(?,?,'mobile',?,'Waiting for a desktop worker','queued',0,json_array(json_object('t',${now},'m','Queued for desktop')),?) ON CONFLICT(id) DO NOTHING`, params:[id,owner,title,JSON.stringify(meta)] },
@@ -77,13 +82,13 @@ export async function handleCloudflareTasks(store: CloudflareStore, owner: strin
     const row=task(saved.results[5].results[0])
     if (!row) {res.status(200).json({ok:true,task:null});return true}
     const {kind,repo,prompt,target,flow_id,mode,lease_token,lease_expires_at,...result}=row
-    res.status(200).json({ok:true,task:{...result,request:{kind,repo,prompt,target,...(kind==='pipeline'?{flowId:flow_id,mode}:{})},leaseToken:lease_token,leaseExpiresAt:lease_expires_at}});return true
+    res.status(200).json({ok:true,task:{...result,request:{kind,repo,prompt,target,...(kind==='pipeline'?{flowId:flow_id,mode,...(continuationId(result.meta)?{startedAt:continuationId(result.meta)}:{})}:{})},leaseToken:lease_token,leaseExpiresAt:lease_expires_at}});return true
   }
   const id=clean(body.id,128), mutation=randomUUID()
   if (!id) return error('id required')
   if (action === 'task-cancel') {
     const saved=await store.batch([
-      {sql:"UPDATE nalu_task_jobs SET status='cancelled',mutation_token=? WHERE user_id=? AND id=? AND status IN ('queued','running')",params:[mutation,owner,id]},
+      {sql:"UPDATE nalu_task_jobs SET status='cancelled',mutation_token=? WHERE user_id=? AND id=? AND status IN ('queued','running','waiting')",params:[mutation,owner,id]},
       {sql:`UPDATE nalu_tasks SET status='cancelled',detail='Cancellation requested',events=json_insert(events,'$[#]',json_object('t',${now},'m','Cancellation requested')),updated_at=${now} WHERE user_id=? AND id=? AND EXISTS(SELECT 1 FROM nalu_task_jobs WHERE id=? AND mutation_token=?) RETURNING *`,params:[owner,id,id,mutation]},
     ])
     const row=task(saved.results[1].results[0]);if(!row)return error('active remote task not found',404)
@@ -91,6 +96,11 @@ export async function handleCloudflareTasks(store: CloudflareStore, owner: strin
   }
   if(!identifier(body.workerId)||typeof body.leaseToken!=='string'||!/^[a-f0-9]{64}$/.test(body.leaseToken))return error('workerId and leaseToken required')
   const status=body.status||'running'
+  if(['queued','waiting'].includes(status)) {
+    try { const task=await deferPipelineTask(store,owner,body);res.status(200).json({ok:true,task,cancelRequested:task.status==='cancelled'}) }
+    catch(cause){if(!(cause instanceof PipelineContinuationError))throw cause;return error(cause.message,409)}
+    return true
+  }
   if(!['running','done','failed','cancelled'].includes(status))return error('invalid task status')
   if(body.progress!=null&&(typeof body.progress!=='number'||!Number.isFinite(body.progress)))return error('progress must be a finite number')
   const progress=body.progress==null?null:Math.max(0,Math.min(1,body.progress)),detail=body.detail==null?null:clean(body.detail,4000),event=body.event==null?null:clean(body.event,500)

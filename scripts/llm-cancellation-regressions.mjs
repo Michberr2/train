@@ -279,6 +279,11 @@ try {
   // no virtual clock or cooperative AbortSignal implementation can mask a hang.
   globalThis.setTimeout = original.setTimeout
   globalThis.clearTimeout = original.clearTimeout
+  for (const finish of ['length', '', 'content_filter', 'tool_calls']) {
+    reset(() => completion('Incomplete helper draft.', finish))
+    await assert.rejects(chatComplete(messages, options(undefined, { requireComplete: true, maxAttempts: 1 })), error => completionFailure(error)?.category === 'incomplete_response')
+    assert.equal(requests.length, 1)
+  }
   controller = new AbortController()
   reset(() => new Promise(() => {}))
   const realStarted = performance.now()

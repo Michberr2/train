@@ -75,6 +75,7 @@ import { cors } from './_cors'
 import { placesSearch } from './_places'
 import { completeMapAi } from './_mapAi'
 import { plainPlacePlan } from './_mapPlan'
+import { normalizeMapComparison, mapComparisonEvidence, type MapEvidence } from '../shared/mapComparison'
 import { identityForRequest, identityBlock } from './_db'
 
 import { search, fetchPage, research } from './_webResearch'
@@ -95,7 +96,7 @@ Respond with ONLY minified JSON (no prose, no code fences):
  "search":"<Google Places text query to pin relevant places, or null>",
  "shapes":[<0-8 shapes YOU draw to illustrate the answer>],
  "center":{"lat":..,"lng":..} or null,"zoom":<int 3-18> or null,
- "comparison":<ONLY for compare/"best places for X" questions, else null>: {"title":"...","criteria":["criterion1","criterion2",...3-6 short criteria],"places":[{"name":"...","lat":..,"lng":..,"scores":{"criterion1":<1-10>,...one score per criterion},"note":"one-line why"}...2-6 places],"winner":"<name of the best overall>"}}
+ "comparison":<ONLY for compare/"best places for X" questions, else null>: {"title":"...","criteria":["criterion1","criterion2"],"places":[{"name":"...","lat":0,"lng":0,"metrics":{"criterion1":{"value":"exact value with units from the evidence, or null","sourceUrl":"exact supporting URL","quote":"verbatim supporting passage"}},"note":"short interpretation, explicitly distinguish facts and preferences"}]}}
 
 Shape formats (category ∈ CATEGORIES, pick the best fit; label = short name shown on click):
  {"type":"polygon","category":"...","label":"...","points":[{"lat":..,"lng":..},...]}   // 5-24 points, outline a district/area/zone
@@ -110,7 +111,8 @@ Rules:
 - "search" only for concrete findable places (businesses, POIs, addresses) — it pins live results; null otherwise.
 - FINDING A PLACE ("where is the best korean food in Orlando", "tire shop near me", "find a coffee shop in Austin"): set "search" to a precise Places query including the named location (e.g. "korean restaurant in Orlando FL", "tire shop") and center/zoom on that location. The live results are fetched AFTER this plan. Keep answer brief and factual about the search; name specific venues or quote their details only when supplied LIVE RESEARCH actually supports them. Do not guess a list from memory.
 - Enable data layers only when they genuinely visualize the topic (flood → flood zones, wildfire → fire layers, ...).
-- COMPARISONS ("compare A vs B", "best places/neighborhoods/cities for X", "where should I ..."): fill "comparison" with real scored criteria the asker cares about (schools, affordability, safety, commute, lifestyle...), score every place on every criterion honestly (differentiate — not all 7s, and TOTALS MUST NOT TIE: real places have real tradeoffs, let the scores show them), add a marker shape per place, pick the winner, and set center/zoom to frame them all. Use the LIVE RESEARCH when provided for current facts (prices, rankings).`
+- COMPARISONS ("compare A vs B", "best places/neighborhoods/cities for X", "where should I ..."): build a comparison table around the user's criteria, with 2–6 places. Each metric is a concrete value extracted from supplied LIVE RESEARCH, its exact sourceUrl, and a verbatim supporting quote containing that value and units. A source URL alone is not evidence. Do not invent 1–10 ratings or convert missing data into zero. If the research does not support a metric, use value:null. Include the observation period in the value when reported. Preserve ties and conflicting evidence. Do not force a winner, fabricate current prices, or sum incomparable criteria. Discuss tradeoffs and conditional recommendations only to the extent the evidence and user's stated priorities support them. Add a marker at each approximate geographic center and frame the view.
+- Drawn shapes are approximate illustrations. Never describe an AI-drawn flood, school, zoning, parcel, crime, or legal boundary as authoritative; use the supplied official data layers or source links for actual boundaries.`
 
 
 
@@ -131,6 +133,7 @@ async function mapAI(body: Record<string, unknown>, req?: { headers: Record<stri
     .join('\n')
   const wantsResearch = /\b(compare|vs\.?|versus|best (place|city|cities|neighborhood|area|town|suburb|state)s?|where (should|to) (i|we|move|live|buy|invest)|top \d+|rank|price|cost|market|current|latest|today|now|202\d|rate|news|crime|school rating)\w*\b/i.test(q)
   const user = `QUESTION: ${q}\n\nCURRENT VIEW: ${lat != null && lng != null ? `lat ${lat.toFixed(4)}, lng ${lng.toFixed(4)}, zoom ${zoom ?? '?'}` : '(unknown)'}\n\nCATEGORIES: ${cats}\n\nDATA LAYERS:\n${catList || '(none)'}`
+  let comparisonEvidence: MapEvidence[] = []
   try {
     const content = await completeMapAi({
       provider: { base: LLM_BASE, key: LLM_KEY, model: LLM_MODEL, label: 'primary' },
@@ -141,7 +144,10 @@ async function mapAI(body: Record<string, unknown>, req?: { headers: Record<stri
         // changes. Late research never delays the existing Places fallback.
         const specialist = /\b(neighborhood|home|house|proper|real ?estate|invest|rent|move|relocat|live|suburb|zip ?code|school district|hoa|apartment|condo|acre|lot|zoning|mortgage)\w*/i.test(q) ? 'realestate' : 'general'
         const rr = await research(q.slice(0, 300), 3, specialist, signal)
-        return rr?.text ? `\n\nLIVE RESEARCH (current facts — use these real names/ratings/prices):\n${rr.text.slice(0, 5000)}` : ''
+        if (signal.aborted || !rr?.text) return ''
+        const supplied = rr.text.slice(0, 5000)
+        comparisonEvidence = mapComparisonEvidence({ ...rr, text: supplied })
+        return `\n\nLIVE RESEARCH (only use values supported by these source passages; a missing value stays unavailable):\n${supplied}`
       } : undefined,
     })
     if (!content) return { error: 'Map AI is temporarily unavailable.' }
@@ -179,30 +185,7 @@ async function mapAI(body: Record<string, unknown>, req?: { headers: Record<stri
       .filter(Boolean)
       .slice(0, 12)
     const validKeys = new Set(catalog.map((l) => l.key))
-    // comparison card (best-places engine)
-    const comp = plan.comparison as Record<string, unknown> | null | undefined
-    let comparison: unknown = null
-    if (comp && typeof comp === 'object' && Array.isArray(comp.places) && Array.isArray(comp.criteria)) {
-      const criteria = (comp.criteria as unknown[]).filter((c): c is string => typeof c === 'string').slice(0, 6)
-      const places = (comp.places as unknown[])
-        .map((pl) => {
-          const o = pl as Record<string, unknown>
-          const pos = ll(o) || ll({ lat: o.lat, lng: o.lng })
-          if (!pos || typeof o.name !== 'string') return null
-          const scoresIn = (o.scores || {}) as Record<string, unknown>
-          const scores: Record<string, number> = {}
-          for (const c of criteria) {
-            const v = num(scoresIn[c])
-            if (v != null) scores[c] = Math.max(1, Math.min(10, Math.round(v)))
-          }
-          return { name: o.name.slice(0, 60), lat: pos.lat, lng: pos.lng, scores, note: typeof o.note === 'string' ? o.note.slice(0, 200) : '' }
-        })
-        .filter(Boolean)
-        .slice(0, 6)
-      if (criteria.length >= 2 && places.length >= 2) {
-        comparison = { title: typeof comp.title === 'string' ? comp.title.slice(0, 120) : 'Comparison', criteria, places, winner: typeof comp.winner === 'string' ? comp.winner.slice(0, 60) : '' }
-      }
-    }
+    const comparison = normalizeMapComparison(plan.comparison, comparisonEvidence)
     return plainPlacePlan(q, {
       comparison,
       answer: typeof plan.answer === 'string' ? plan.answer.slice(0, 2000) : '',

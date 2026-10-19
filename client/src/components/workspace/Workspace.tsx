@@ -10,6 +10,7 @@ import { buildChatMemory } from './crossChatMemory'
 import { mergeChatMessages } from '../../../../shared/chatMessages'
 import { mergeChatTitle } from '../../../../shared/chatTitle'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useComposerVoice } from './useComposerVoice'
 import {
   Plus,
   Search,
@@ -62,7 +63,7 @@ import Markdown from './Markdown'
 import { useTheme } from '../ThemeProvider'
 import MediaLoader, { WolfWord } from './MediaLoader'
 import CardErrorBoundary from './CardErrorBoundary'
-import { extractAttachment, type Attachment } from './extractText'
+import { extractAttachment, attachmentContext, attachmentExtractionSummary, type Attachment } from './extractText'
 import { saveChatAttachment, loadChatAttachment } from './chatAttachments'
 import { openArtifactBlob } from './artifactIsolation'
 import MessageAttachments from './MessageAttachments'
@@ -1148,8 +1149,15 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       setAttachmentError('')
       const previousJob = attachPromiseRef.current
       const work = (async () => {
-        const extracted = await Promise.all(list.map((f) => extractAttachment(f)))
+        await previousJob
+        const extracted: Attachment[] = []
+        for (const file of list) {
+          if (localStorage.getItem('nalu-token') !== sessionToken) return
+          extracted.push(await extractAttachment(file))
+        }
         if (localStorage.getItem('nalu-token') !== sessionToken) return
+        const unread = extracted.filter(a => ['unsupported', 'failed', 'needs-ocr'].includes(a.extraction?.status || ''))
+        if (unread.length) setAttachmentError(unread.map(a => `${a.name}: ${attachmentExtractionSummary(a)}`).join(' · '))
         const next = chatsRef.current.map(c => c.id === id ? { ...c, attachments: [...(c.attachments || []), ...extracted] } : c)
         chatsRef.current = next; setChats(next)
         pendingIdsRef.current = [...pendingIdsRef.current, ...extracted.map(a => a.id)]
@@ -1295,7 +1303,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           // here just name it so text-only paths (doc/sheet) know it exists.
           ctxParts.push(`## Attached image: ${a.name}`)
         } else {
-          ctxParts.push(`## Attached document: ${a.name}\n${a.text}${a.truncated ? '\n…[truncated]' : ''}`)
+          ctxParts.push(attachmentContext(a))
         }
       }
       const ctxBlock = ctxParts.length
@@ -2456,6 +2464,8 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       <div className="ws-home-composer w-full max-w-2xl">
         <Composer
           visible={!reviewLayout || chatContentVisible}
+          contextKey={active?.id || 'new-chat'}
+          accountToken={sessionToken || ''}
           input={input}
           setInput={setInput}
           streaming={streaming}
@@ -2653,7 +2663,9 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         <div className="max-w-3xl mx-auto">
           <BrandBar />
           <Composer
-          visible={!reviewLayout || chatContentVisible}
+            visible={!reviewLayout || chatContentVisible}
+            contextKey={active?.id || 'new-chat'}
+            accountToken={sessionToken || ''}
             input={input}
             setInput={setInput}
             streaming={streaming}
@@ -2990,7 +3002,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
             <div className="ws-feature-shell"><WorkspaceIntro compact label="AutoPilot" title="Leave it with me." description="Plan the steps, connect your tools, and follow your work as it happens."/><AgentsPanel /></div>
           </Suspense>
         )}
-        {view === 'skills' && <SkillsPanel />}
+        {view === 'skills' && <SkillsPanel onDraft={prompt => { setInput(prompt); if (reviewLayout) openSpace('chat'); else setView('chat'); requestAnimationFrame(() => taRef.current?.focus()) }} />}
         {view === 'automations' && <AutomationsPanel />}
         {view === 'settings' && (
           <SettingsPanel displayName={user?.displayName} onLogout={onLogout} />
@@ -3188,7 +3200,7 @@ function ChatDrawer({
               attachments.map((a) => (
                 <div key={a.id} className="flex items-center gap-1 rounded-md px-1 py-1 text-[11px] text-ink hover:bg-glass/5">
                   <FileText size={12} className="shrink-0 text-[#9fd0ff]" />
-                  <span className="truncate flex-1">{a.name}</span>
+                  <span className="min-w-0 flex-1" title={attachmentExtractionSummary(a)}><span className="block truncate">{a.name}</span><span className="block truncate text-[9px] text-dim">{attachmentExtractionSummary(a)}</span></span>
                   <button onClick={() => open(a)} title="Open" className="shrink-0 rounded p-0.5 text-dim hover:bg-glass/10 hover:text-ink">
                     <ExternalLink size={12} />
                   </button>
@@ -3241,6 +3253,8 @@ function ChatDrawer({
 
 function Composer({
   visible,
+  contextKey,
+  accountToken,
   input,
   setInput,
   streaming,
@@ -3257,6 +3271,8 @@ function Composer({
   thinkLevel,
 }: {
   visible: boolean
+  contextKey: string
+  accountToken: string
   input: string
   setInput: (v: string) => void
   streaming: boolean
@@ -3274,111 +3290,18 @@ function Composer({
 }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [showTools, setShowTools] = useState(false)
-  // Voice dictation via the browser Speech API — transcribes into the composer.
-  const [listening, setListening] = useState(false)
-  const [transcribing, setTranscribing] = useState(false)
-  const recRef = useRef<{ stop: () => void } | null>(null)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mediaRef = useRef<{ recorder: any; stream: MediaStream } | null>(null)
-  const voiceLifetime = useRef(new AbortController())
-  // Chat can move between its full workspace and floating window. Release the
-  // old composer's microphone and ignore its late results when that happens.
+  const voice = useComposerVoice({ contextKey, accountToken, getInput: () => taRef.current?.value || input, setInput })
   useEffect(() => {
-    if (!visible) { setListening(false); setTranscribing(false); return }
-    if (voiceLifetime.current.signal.aborted) voiceLifetime.current = new AbortController()
-    const lifetime = voiceLifetime.current
-    return () => {
-      lifetime.abort()
-      const recognition = recRef.current
-      recRef.current = null
-      try { recognition?.stop() } catch { /* already stopped */ }
-      const media = mediaRef.current
-      mediaRef.current = null
-      if (media) {
-        media.recorder.onstop = null
-        media.recorder.ondataavailable = null
-        try { media.recorder.stop() } catch { /* already stopped */ }
-        media.stream.getTracks().forEach(track => { try { track.stop() } catch { /* already stopped */ } })
-      }
-    }
-  }, [visible])
-  // Keep the textarea height in sync when `input` changes programmatically (voice
-  // dictation, or reset after send) — onChange only fires for user typing/paste.
+    if (!visible && voice.phase !== 'idle') voice.cancel()
+  }, [visible, voice.phase, voice.cancel])
+  const listening = voice.phase === 'listening', transcribing = voice.phase === 'transcribing'
+  // Programmatic dictation/reset changes must resize the same editable textarea.
   useEffect(() => {
     const t = taRef.current
     if (!t) return
     t.style.height = 'auto'
     t.style.height = Math.min(t.scrollHeight, 160) + 'px'
   }, [input, taRef])
-  // Voice → text. Prefer the browser's LIVE recognition (Chrome/Edge/Safari — works
-  // instantly, no server needed); if the browser lacks it (e.g. Firefox), fall back
-  // to recording + server Whisper (/api/transcribe, which upgrades to real Whisper
-  // when a GROQ_API_KEY/OpenAI key is set). Tap to start, tap again to stop.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const startSR = (SR: new () => any): boolean => {
-    const lifetime = voiceLifetime.current.signal
-    try {
-      const rec = new SR()
-      rec.lang = 'en-US'; rec.interimResults = true; rec.continuous = false
-      const base = taRef.current?.value || input
-      rec.onresult = (e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => {
-        if (lifetime.aborted) return
-        let txt = ''
-        for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript
-        setInput((base ? base.trimEnd() + ' ' : '') + txt)
-      }
-      rec.onend = () => { if (!lifetime.aborted) setListening(false); if (recRef.current === rec) recRef.current = null }
-      rec.onerror = () => { if (!lifetime.aborted) setListening(false); if (recRef.current === rec) recRef.current = null }
-      recRef.current = rec; setListening(true); rec.start()
-      return true
-    } catch { setListening(false); return false }
-  }
-  const toggleVoice = async () => {
-    const lifetime = voiceLifetime.current.signal
-    if (lifetime.aborted) return
-    if (listening) {
-      try { recRef.current?.stop() } catch { /* noop */ }
-      try { mediaRef.current?.recorder?.stop() } catch { /* noop */ }
-      return
-    }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (SR && startSR(SR)) return
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const MR = (window as any).MediaRecorder
-    if (!MR || !navigator.mediaDevices?.getUserMedia) return
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      if (lifetime.aborted) { stream.getTracks().forEach(track => track.stop()); return }
-      const recorder = new MR(stream)
-      const chunks: Blob[] = []
-      recorder.ondataavailable = (e: { data: Blob }) => { if (e.data && e.data.size) chunks.push(e.data) }
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop())
-        if (lifetime.aborted) return
-        setListening(false)
-        mediaRef.current = null
-        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' })
-        if (blob.size < 800) return // too short to be speech
-        setTranscribing(true)
-        try {
-          const dataUrl: string = await new Promise((res) => { const r = new FileReader(); r.onloadend = () => res(String(r.result)); r.readAsDataURL(blob) })
-          if (lifetime.aborted) return
-          const resp = await fetch('/api/transcribe', { method: 'POST', signal: lifetime, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audio: dataUrl, mime: blob.type }) })
-          const j = await resp.json().catch(() => ({}))
-          if (!lifetime.aborted && j.text) setInput((taRef.current?.value?.trim() || input.trim() ? (taRef.current?.value || input).trimEnd() + ' ' : '') + j.text)
-        } catch { /* transcription failed silently */ } finally { if (!lifetime.aborted) setTranscribing(false) }
-      }
-      mediaRef.current = { recorder, stream }
-      setListening(true)
-      recorder.start()
-    } catch { if (!lifetime.aborted) setListening(false) }
-  }
-  const voiceSupported = typeof window !== 'undefined' && typeof navigator !== 'undefined' && (
-    !!(window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition ||
-    !!(window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition ||
-    (!!navigator.mediaDevices?.getUserMedia && typeof (window as unknown as { MediaRecorder?: unknown }).MediaRecorder !== 'undefined')
-  )
   const [dragOver, setDragOver] = useState(false)
   // Hide the chip when the user ×'d out of it for this exact prompt — editing
   // the text brings it back (the stored dismissal no longer matches).
@@ -3405,6 +3328,7 @@ function Composer({
           <span className="flex items-center gap-2 text-sm font-medium text-gold"><Paperclip size={15} /> Drop files or photos to attach</span>
         </div>
       )}
+      {voice.message && <p role={voice.error ? 'alert' : 'status'} className="mb-2 text-xs leading-relaxed text-ink" aria-live="polite">{voice.message}</p>}
       {/* Live intent — highlights what this prompt will build. */}
       {intent && (
         <div className="mb-2 flex items-center gap-1.5">
@@ -3432,7 +3356,7 @@ function Composer({
               ) : (
                 <FileText size={12} className="shrink-0 text-[#9fd0ff]" />
               )}
-              <span className="truncate">{a.name}</span>
+              <span className="min-w-0" title={attachmentExtractionSummary(a)}><span className="block truncate">{a.name}</span><span className="block truncate text-[9px] text-dim">{attachmentExtractionSummary(a)}</span></span>
               <button onClick={() => onRemoveAttachment(a.id)} className="shrink-0 text-dim hover:text-ink" aria-label="Remove">
                 <X size={11} />
               </button>
@@ -3490,11 +3414,11 @@ function Composer({
       >
         {attaching ? <Loader2 size={15} className="animate-spin" /> : <ImageIcon size={18} strokeWidth={1.75} />}
       </button>
-      {voiceSupported && (
+      {voice.supported && (
         <button
-          onClick={toggleVoice}
-          disabled={transcribing}
-          title={transcribing ? 'Transcribing…' : listening ? 'Recording… tap to transcribe' : 'Dictate with your voice (Whisper)'}
+          onClick={voice.toggle}
+          aria-pressed={listening}
+          title={transcribing ? 'Cancel transcription' : voice.phase === 'requesting' ? 'Cancel microphone request' : listening ? 'Finish voice input' : 'Dictate with your voice'}
           className={`mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg hover:bg-glass/15 disabled:opacity-60 ${listening ? 'text-red-400 animate-pulse' : transcribing ? 'text-gold' : 'text-dim hover:text-ink'}`}
           aria-label="Voice input"
         >
@@ -3521,7 +3445,7 @@ function Composer({
             t.style.height = 'auto'
             t.style.height = Math.min(t.scrollHeight, 160) + 'px'
           }}
-          onKeyDown={onKey}
+          onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && input.trim() && voice.phase !== 'idle') voice.cancel(); onKey(event) }}
           onPaste={(e) => {
             // Paste images / videos / any file straight from the clipboard (e.g. a
             // screenshot, or a copied photo/video) → attach it. Plain text still pastes.
@@ -3558,7 +3482,7 @@ function Composer({
         </button>
       ) : (
         <button
-          onClick={onSend}
+          onClick={() => { if (voice.phase !== 'idle') voice.cancel(); onSend() }}
           disabled={!input.trim()}
           className="w-8 h-8 rounded-full bg-white text-black disabled:bg-glass/15 disabled:text-glass/40 flex items-center justify-center shrink-0 transition-colors"
           aria-label="Send"

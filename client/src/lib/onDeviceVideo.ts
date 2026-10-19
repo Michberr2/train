@@ -18,9 +18,10 @@
 // is real motion synthesis on top of a subject frame: pseudo-depth parallax,
 // cinematic camera paths, atmosphere, and scene-matched stereo audio, encoded to
 // a genuine downloadable clip. On devices that expose WebGPU we additionally
-// diffuse the base frame locally; otherwise the (still free) image path seeds it.
-// The result is an on-device, $0, offline-capable video that matches the ask.
+// diffuse the base frame locally; otherwise the metered server image path seeds it.
+// Rendering runs on-device; server seed generation requires connectivity and image quota.
 
+import { getToken } from './localAuth'
 import { checkVideoAbort, MAX_SAVED_VIDEO_BYTES, videoAborted, videoAttempt } from './videoLifecycle'
 
 export type VideoAspect = '16:9' | '9:16' | '1:1'
@@ -130,8 +131,8 @@ async function loadImage(src: string, signal?: AbortSignal, timeoutMs = 25000): 
 }
 
 // Seed a subject still for text-to-video. WebGPU frame-diffusion is the truly
-// offline route; when it isn't available we fall back to the app's FREE image
-// endpoint (still $0 to the user). Returns a data URL, or null on failure.
+// offline route; when unavailable, explicit video generation can reserve an
+// image from the account's daily allowance. Previews never call this function.
 async function seedFrame(prompt: string, aspect: VideoAspect, signal?: AbortSignal): Promise<{ url: string; seed: OnDeviceVideoResult['seed'] } | null> {
   checkVideoAbort(signal)
   // 1) On-device WebGPU diffusion hook. Kept behind a capability + dynamic import
@@ -143,17 +144,17 @@ async function seedFrame(prompt: string, aspect: VideoAspect, signal?: AbortSign
       if (gpu) return { url: gpu, seed: 'webgpu-diffusion' }
     } catch {
       checkVideoAbort(signal)
-      /* fall through to the free image path */
+      /* fall through to the metered image path */
     }
   }
-  // 2) Free image endpoint (no paid key required server-side; $0 to the user).
+  // 2) Metered server image generation, only within an explicit video request.
   //    Own timeout so a slow image backend can't hang the whole video forever.
   try {
     const { w, h } = dims(aspect)
     return await videoAttempt(async activeSignal => {
     const r = await fetch('/api/image', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
       body: JSON.stringify({ prompt, size: `${w}x${h}` }),
       signal: activeSignal,
     })
@@ -171,7 +172,7 @@ async function seedFrame(prompt: string, aspect: VideoAspect, signal?: AbortSign
 
 // WebGPU frame diffusion is device- and model-dependent; we probe for a runtime
 // the host app may register on `window.naluGpuFrame` (e.g. a WebGPU SD-Turbo
-// worker). Absent that, we return null and let the free image path seed us. This
+// worker). Absent that, we return null and let the server image path seed us. This
 // keeps the promise honest: real on-device diffusion when the device ships it,
 // never a fake claim when it doesn't.
 async function tryWebGpuFrame(prompt: string, aspect: VideoAspect, signal?: AbortSignal): Promise<string | null> {

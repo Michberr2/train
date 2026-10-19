@@ -3,6 +3,7 @@
 // user's flows from the DB, runs the ones that are due, and writes the results
 // back so they're waiting when the user next opens n4lu.com / n4lu.ai.
 import { CloudflareStore } from './_cloudflareStore'
+import { createHash } from 'node:crypto'
 import { CloudflareFlows } from './_cloudflareFlows'
 import { CloudflareTaskLedger } from './_cloudflareTaskLedger'
 import { groundFromPrompt } from './_grounding'
@@ -15,20 +16,28 @@ import { BACKGROUND_OUTPUT_TYPES, graphErrors, needsOpenWorkspace } from '../sha
 import { buildRichOutput, richDeliveryPayload } from './_autopilotRichOutput'
 import { sendPipelineOutput } from './connect'
 import { isScheduleDue } from '../shared/autopilotSchedule'
+import { parseFlowFilter, selectFlowBranch, routerEdgeLabels, routerGraphErrors, parsePlannerAction as parsePlannerActionSrv } from '../shared/autopilotDecisions'
+import { publicFetch } from './_publicFetch'
+import { withCancellationSignal } from './_requestCancellation'
+import { settlePipelineContinuations, pipelineWorkerState, bindPipelineWorker, pipelineTaskCancelled, type PipelineWorker } from './_pipelineContinuation'
+import { withStorageDeadline, checkStorageDeadline } from './_storageDeadline'
+import { hedgeFundOutputContract, guardHedgeFundOutput } from '../shared/hedgeFundRisk'
+import { referenceDocumentContext, type ReferenceDocument } from '../shared/referenceDocument'
 
 type Edge = { from: string; to: string; label?: string }
 type Branch = { label: string; cond?: string }
 type PNode = { webSearch?: boolean; id: string; type?: string; agent?: string; role?: string; prompt?: string; label?: string; lastRunDay?: string; roleTitle?: string; roleNotes?: string
   to?: string; subject?: string; connectionId?: string; webhook?: string; platform?: string; format?: string
   triggerKind?: string; routeBy?: 'ai' | 'condition'; branches?: Branch[]; condMode?: string; cond?: string; method?: string; url?: string; headers?: string; memKey?: string; memOp?: 'set' | 'append' | 'get'
-  splitBy?: 'lines' | 'json' | 'numbered' | 'commas'; maxItems?: number; maxSteps?: number; refDoc?: { name?: string; text?: string } }
+  splitBy?: 'lines' | 'json' | 'numbered' | 'commas'; maxItems?: number; maxSteps?: number; refDoc?: ReferenceDocument }
 type Company = { what?: string; mission?: string; notes?: string }
-type FlowRun = { status: 'running' | 'done' | 'error' | 'stuck' | 'stopped' | 'awaiting'; step?: number; total?: number; startedAt?: number; updatedAt?: number; heartbeat?: number; node?: string; nodeLabel?: string; error?: string; cutEdges?: string[] }
+type WorkCheckpoint = { fingerprint: string; outputs?: Array<string | null>; evidence?: string; scratch?: string[]; step?: number; action?: ReturnType<typeof parsePlannerActionSrv>; final?: string }
+type FlowRun = { status: 'running' | 'done' | 'error' | 'stuck' | 'stopped' | 'awaiting'; step?: number; total?: number; startedAt?: number; updatedAt?: number; heartbeat?: number; node?: string; nodeLabel?: string; error?: string; cutEdges?: string[]; yielded?: boolean; serverManaged?: boolean; remoteTaskId?: string; checkpoints?: Record<string, WorkCheckpoint>; pendingEffect?: { nodeId: string; startedAt: number } }
 type Flow = {
   id: string; name?: string; nodes?: PNode[]; edges?: Edge[]
   schedule?: 'manual' | 'hourly' | 'daily' | 'weekly' | 'continuous' | 'members'
   time?: string; timeZone?: string; enabled?: boolean; lastRun?: number; results?: Record<string, string>; company?: Company; run?: FlowRun
-  refDoc?: { name: string; text: string } // user-attached reference doc for every agent
+  refDoc?: ReferenceDocument // user-attached reference doc for every agent
   memory?: Record<string, string> // 10x: persistent per-flow memory across runs
   approvals?: Record<string, { decision: 'approve' | 'edit' | 'reject'; text?: string; at: number }>
   artifacts?: Record<string, ArtifactMeta>
@@ -39,8 +48,20 @@ type Flow = {
 // tab is never stolen mid-run.
 const ORPHAN_MS = 180_000
 const NODE_TIMEOUT_MS = 90_000
+const RUN_WORK_MS = 210_000 // leave time for durable checkpoints, ledger and lease cleanup
+class FlowDeadline extends Error { constructor() { super('Paused at the time limit; saved work will resume from its checkpoint.') } }
+class FlowStopped extends Error {}
+function flowBudget(deadlineMs: number) {
+  const controller = new AbortController()
+  const remaining = () => deadlineMs - Date.now()
+  const timer = setTimeout(() => controller.abort(new FlowDeadline()), Math.max(0, remaining()))
+  const check = () => { if (controller.signal.aborted || remaining() < 1000) throw new FlowDeadline() }
+  return { signal: controller.signal, remaining, check, close: () => { clearTimeout(timer); controller.abort() } }
+}
+type FlowBudget = ReturnType<typeof flowBudget>
+const workFingerprint = (node: PNode, input: string) => createHash('sha256').update(JSON.stringify({ node, input })).digest('hex')
 function isOrphanedRun(f: Flow, now: number): boolean {
-  return !!f.run && f.run.status === 'running' && !!f.nodes?.length && now - (f.run.heartbeat || 0) > ORPHAN_MS
+  return !!f.run && f.run.status === 'running' && !!f.nodes?.length && (f.run.yielded === true || now - (f.run.heartbeat || 0) > ORPHAN_MS)
 }
 const ROLE_TITLES: Record<string, string> = {
   ceo: 'CEO', coo: 'COO', cfo: 'CFO', cto: 'CTO', cio: 'CIO', cmo: 'CMO', design: 'Head of Design', accountant: 'Accountant', legal: 'Legal Counsel', analyst: 'Analyst', ea: 'Executive Assistant', pm: 'Product Manager', sales: 'Sales Lead', hr: 'Head of People', support: 'Support Lead',
@@ -51,7 +72,7 @@ const ROLE_TITLES: Record<string, string> = {
 
 // Is this flow due to run right now?
 function isDue(f: Flow, now: number): boolean {
-  if (!f.enabled || f.schedule === 'manual' || !f.nodes?.length || f.run?.status === 'awaiting') return false
+  if (!f.enabled || f.schedule === 'manual' || !f.nodes?.length || f.run?.status === 'awaiting' || f.run?.pendingEffect) return false
   return isScheduleDue(f.schedule || 'manual', f.time || '08:00', f.lastRun || 0, new Date(now), f.timeZone || 'UTC')
 }
 
@@ -85,21 +106,12 @@ const plannerPromptSrv = (goal: string, scratch: string[], step: number, max: nu
   `You are an autonomous agent working toward a GOAL. Use tools to gather what you need, then deliver.\nGOAL: ${goal}\n\n` +
   (scratch.length ? `WHAT YOU KNOW SO FAR:\n${scratch.join('\n\n').slice(-8000)}\n\n` : '') +
   `This is step ${step + 1} of at most ${max}. Reply with ONLY minified JSON:\n- {"action":"search","query":"..."}\n- {"action":"fetch","url":"https://..."}\n- {"action":"finish","answer":"<full final deliverable>"}\nFinish as soon as you can do a great job. JSON only.`
-function parsePlannerActionSrv(raw: string): { action: 'search' | 'fetch' | 'finish'; query?: string; url?: string; answer?: string } {
-  const s = raw || '', start = s.indexOf('{'), end = s.lastIndexOf('}')
-  if (start >= 0 && end > start) { try { const j = JSON.parse(s.slice(start, end + 1)) as { action?: string; query?: string; url?: string; answer?: string }; if (j.action === 'search' || j.action === 'fetch' || j.action === 'finish') return j as ReturnType<typeof parsePlannerActionSrv> } catch { /* */ } }
-  const url = s.match(/https?:\/\/[^\s"'<>]+/)?.[0]
-  if (/"action"\s*:\s*"fetch"/.test(s) && url) return { action: 'fetch', url }
-  const q = s.match(/"query"\s*:\s*"([^"]+)"/)?.[1]
-  if (q) return { action: 'search', query: q }
-  return { action: 'finish', answer: s }
-}
 
 type ProgressFn = (step: number, total: number, label: string) => void | Promise<void>
 type ArtifactContext = { client: ArtifactStore; userId: string; runId: string; startedAt: number }
-async function runFlow(f: Flow, onProgress?: ProgressFn, shouldStop?: () => Promise<boolean>, artifacts?: ArtifactContext, previousWork?: Record<string, string>): Promise<{ results: Record<string, string>; status: FlowRun['status']; error?: string; memory?: Record<string, string>; node?: string; nodeLabel?: string; cutEdges: string[] }> {
+async function runFlow(f: Flow, budget: FlowBudget, onProgress?: ProgressFn, shouldStop?: () => Promise<boolean>, artifacts?: ArtifactContext, previousWork?: Record<string, string>): Promise<{ results: Record<string, string>; status: FlowRun['status']; error?: string; memory?: Record<string, string>; node?: string; nodeLabel?: string; cutEdges: string[] }> {
   const nodes = f.nodes || [], edges = f.edges || []
-  const invalid = graphErrors(nodes, edges)
+  const invalid = [...graphErrors(nodes, edges), ...routerGraphErrors(nodes, edges)]
   if (invalid.length) return { results: {}, status: 'error', error: invalid.join(' '), cutEdges: [] }
   const deps = new Map(nodes.map((n) => [n.id, edges.filter((e) => e.to === n.id).map((e) => e.from)]))
   // RESUME: keep every step already finished (e.g. by the tab before it closed).
@@ -127,7 +139,23 @@ async function runFlow(f: Flow, onProgress?: ProgressFn, shouldStop?: () => Prom
   const liveDeps = (id: string) => (deps.get(id) || []).filter((d) => !cutEdges.has(eKey(d, id)))
   const tpl = (s: string, input: string) => (s || '').split('{{input}}').join(input || '').replace(/\{\{\s*memory\.([\w.-]+)\s*\}\}/g, (_m, k: string) => (mem[k] ?? ''))
   const stepTotal = order.length
+  const complete = (messages: Parameters<typeof chatComplete>[0], opts: Parameters<typeof chatComplete>[1] = {}) => {
+    budget.check()
+    const timeoutMs = Math.min(NODE_TIMEOUT_MS / 2, Math.floor(budget.remaining() / 2) - 500)
+    if (timeoutMs < 1000) throw new FlowDeadline()
+    return chatComplete(messages, { ...opts, timeoutMs, maxAttempts: 2, retryPrimary: false, requireComplete: true, signal: budget.signal })
+  }
+  const checkpoint = async (label: string) => {
+    f.memory = { ...mem }
+    if (f.run) f.run.cutEdges = [...cutEdges]
+    await onProgress?.(Object.keys(results).length, stepTotal, label)
+  }
+  if (f.run?.pendingEffect && results[f.run.pendingEffect.nodeId] == null) {
+    return { results, status: 'stuck', memory: mem, cutEdges: [...cutEdges], error: 'The previous HTTP mutation has an unconfirmed outcome. Check the destination before explicitly starting a new run; Resume will not replay it.' }
+  }
+  try {
   for (const nid of order) {
+    budget.check()
     if (await shouldStop?.()) return { results, status: 'stopped', memory: mem, cutEdges: [...cutEdges] }
     const node = nodes.find((n) => n.id === nid)
     if (!node || !node.type || completedAgents.has(nid)) continue
@@ -152,6 +180,8 @@ async function runFlow(f: Flow, onProgress?: ProgressFn, shouldStop?: () => Prom
       }
     }
     if (resuming && results[nid] != null) continue
+    await checkpoint(`Starting ${node.label || node.type}`)
+    budget.check()
     if (!SERVER_RUNS.has(node.type) || needsOpenWorkspace(node)) {
       failed.add(nid); stuck.add(nid)
       firstError ||= `Open Autopilot in Nalu and resume to complete "${node.label || node.type}". This step needs the workspace open.`
@@ -171,6 +201,7 @@ async function runFlow(f: Flow, onProgress?: ProgressFn, shouldStop?: () => Prom
           runId: artifacts.runId, ts: artifacts.startedAt,
         }, async () => {
           const output = await ((PORTABLE_OUTPUT_TYPES as readonly string[]).includes(node.type!) ? buildPortableOutput({ ...node, prompt: brief }, input, f) : buildRichOutput({ ...node, prompt: brief }, input, f))
+          budget.check()
           if (await shouldStop?.()) throw new Error('Run stopped before the output was saved.')
           return output
         })
@@ -179,6 +210,7 @@ async function runFlow(f: Flow, onProgress?: ProgressFn, shouldStop?: () => Prom
         const shouldDeliver = (node.type === 'email' && !!node.to?.trim() && !!node.connectionId) || (node.type === 'social' && !!(node.connectionId || node.webhook?.trim()))
         let delivered = ''
         if (shouldDeliver) {
+          if (budget.remaining() < 30000) throw new FlowDeadline()
           await onProgress?.(Object.keys(results).length, stepTotal, `Saved ${saved.meta.filename}; delivering`)
           if (await shouldStop?.()) return { results, status: 'stopped', memory: mem, cutEdges: [...cutEdges] }
           const delivery = await sendPipelineOutput(artifacts.client, artifacts.userId, `${artifacts.runId}:${nid}`, node, node.type === 'email' ? 'email' : 'post', richDeliveryPayload(node, saved))
@@ -192,6 +224,8 @@ async function runFlow(f: Flow, onProgress?: ProgressFn, shouldStop?: () => Prom
         // Commit the artifact checkpoint before a dependent action can run.
         await onProgress?.(Object.keys(results).length, stepTotal, `Saved ${saved.meta.filename}`)
       } catch (e) {
+        budget.check()
+        if (e instanceof FlowDeadline) throw e
         delete results[nid]
         failed.add(nid)
         firstError ||= `"${node.label || nid}" ${e instanceof Error ? e.message : 'file could not be saved'}`
@@ -212,7 +246,7 @@ async function runFlow(f: Flow, onProgress?: ProgressFn, shouldStop?: () => Prom
         const page = await fetchPage(url)
         if (page.status !== 'read') throw new Error(page.error || 'Page could not be read')
         results[nid] = `PAGE ${page.url} · Accessed ${page.accessedAt} · Published ${page.publishedAt || 'unknown'}\n\n${page.text}`
-      } catch (e) { failed.add(nid); firstError ||= `"${node.label || nid}" ${e instanceof Error ? e.message : 'read failed'}` }
+      } catch (e) { budget.check(); failed.add(nid); firstError ||= `"${node.label || nid}" ${e instanceof Error ? e.message : 'read failed'}` }
       continue
     }
     if (node.type === 'http') {
@@ -223,10 +257,17 @@ async function runFlow(f: Flow, onProgress?: ProgressFn, shouldStop?: () => Prom
         let hdrs: Record<string, string> = {}
         try { if (node.headers) hdrs = JSON.parse(tpl(node.headers, input)) } catch { /* */ }
         const body = method === 'GET' || method === 'HEAD' ? undefined : tpl(node.prompt || '', input) || input
-        const rr = await fetch(url, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...hdrs }, body, signal: AbortSignal.timeout(NODE_TIMEOUT_MS) })
+        const mutation = !['GET', 'HEAD', 'OPTIONS'].includes(method)
+        if (mutation && f.run) {
+          f.run.pendingEffect = { nodeId: nid, startedAt: Date.now() }
+          await checkpoint(`Sending ${node.label || method}; outcome pending`)
+        }
+        budget.check()
+        const rr = await publicFetch(url, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...hdrs }, body, signal: budget.signal, timeoutMs: Math.min(NODE_TIMEOUT_MS, budget.remaining()), redirect: method === 'GET' || method === 'HEAD' ? 'follow' : 'error' })
         if (!rr.ok) throw new Error(`HTTP ${rr.status} ${method} request failed`)
         results[nid] = `${node.type === 'http' ? `HTTP ${rr.status} ${method} ${url}` : `PAGE ${url}`}\n\n${(await rr.text()).slice(0, 12000)}`
-      } catch (e) { failed.add(nid); firstError ||= `"${node.label || nid}" ${e instanceof Error ? e.message : 'request failed'}` }
+        if (mutation && f.run) { delete f.run.pendingEffect; await checkpoint(`Confirmed ${node.label || method}`) }
+      } catch (e) { budget.check(); failed.add(nid); firstError ||= `"${node.label || nid}" ${e instanceof Error ? e.message : 'request failed'}` }
       continue
     }
     if (node.type === 'websearch') {
@@ -235,28 +276,42 @@ async function runFlow(f: Flow, onProgress?: ProgressFn, shouldStop?: () => Prom
         const found = await search(q)
         if (!found.results.length) throw new Error('No usable web results. Resume to retry this research step.')
         results[nid] = found.text
-      } catch (e) { failed.add(nid); firstError ||= `"${node.label || nid}" ${e instanceof Error ? e.message : 'search failed'}` }
+      } catch (e) { budget.check(); failed.add(nid); firstError ||= `"${node.label || nid}" ${e instanceof Error ? e.message : 'search failed'}` }
       continue
     }
     if (node.type === 'router') {
       const brs = node.branches && node.branches.length ? node.branches : [{ label: 'A' }, { label: 'B' }]
-      let taken = brs[0].label
+      let taken: string
       try {
         if ((node.routeBy || 'ai') === 'ai') {
-          const pick = await chatComplete([{ role: 'user', content: `Route the INPUT to EXACTLY ONE label: ${brs.map((b) => b.label).join(' | ')}.${node.prompt ? ` Rule: ${node.prompt}` : ''}\nReply ONLY the label.\n\nINPUT:\n${(input || '(empty)').slice(0, 4000)}` }], { maxTokens: 20, temperature: 0 })
-          const p = pick.trim().toLowerCase(); taken = (brs.find((b) => p.includes(b.label.toLowerCase())) || brs[0]).label
+          const pick = await complete([{ role: 'user', content: `Route the INPUT to EXACTLY ONE label: ${brs.map((b) => b.label).join(' | ')}.${node.prompt ? ` Rule: ${node.prompt}` : ''}\nReply ONLY the label.\n\nINPUT:\n${(input || '(empty)').slice(0, 4000)}` }], { maxTokens: 20, temperature: 0 })
+          taken = selectFlowBranch(pick, brs)
         } else taken = (brs.find((b) => (input || '').toLowerCase().includes((b.cond || '').toLowerCase())) || brs[brs.length - 1]).label
-      } catch { /* keep first */ }
-      edges.filter((e) => e.from === nid).forEach((e, i) => { const lbl = e.label || brs[i]?.label; if (lbl && lbl !== taken) cutEdges.add(eKey(e.from, e.to)) })
+      } catch (error) {
+        budget.check()
+        if (error instanceof FlowDeadline) throw error
+        failed.add(nid)
+        firstError ||= `"${node.label || nid}" ${error instanceof Error ? error.message : 'could not choose a branch'}`
+        continue
+      }
+      const outgoing = edges.filter(edge => edge.from === nid)
+      const labels = routerEdgeLabels(brs, outgoing)
+      outgoing.forEach((edge, index) => { if (labels[index] !== taken) cutEdges.add(eKey(edge.from, edge.to)) })
       results[nid] = input || `routed → ${taken}`; continue
     }
     if (node.type === 'filter') {
-      let pass = true
+      let pass: boolean
       try {
-        if ((node.condMode || 'notempty') === 'ai') { const a = await chatComplete([{ role: 'user', content: `Answer ONLY yes or no. Condition: ${node.cond || node.prompt || 'worth continuing?'}\n\nINPUT:\n${(input || '').slice(0, 4000)}` }], { maxTokens: 5, temperature: 0 }); pass = /\byes\b/i.test(a) }
+        if ((node.condMode || 'notempty') === 'ai') { const a = await complete([{ role: 'user', content: `Answer ONLY yes or no. Condition: ${node.cond || node.prompt || 'worth continuing?'}\n\nINPUT:\n${(input || '').slice(0, 4000)}` }], { maxTokens: 5, temperature: 0 }); pass = parseFlowFilter(a) }
         else if (node.condMode === 'contains') pass = (input || '').toLowerCase().includes((node.cond || '').toLowerCase())
         else pass = (input || '').trim().length > 0
-      } catch { /* pass */ }
+      } catch (error) {
+        budget.check()
+        if (error instanceof FlowDeadline) throw error
+        failed.add(nid)
+        firstError ||= `"${node.label || nid}" ${error instanceof Error ? error.message : 'could not decide whether to continue'}`
+        continue
+      }
       if (!pass) { edges.filter((e) => e.from === nid).forEach((e) => cutEdges.add(eKey(e.from, e.to))); results[nid] = ''; continue }
       results[nid] = input || 'passed'; continue
     }
@@ -275,40 +330,81 @@ async function runFlow(f: Flow, onProgress?: ProgressFn, shouldStop?: () => Prom
       const items = splitItemsSrv(input, node.splitBy).slice(0, Math.max(1, Math.min(node.maxItems || 20, 24)))
       if (!items.length) { results[nid] = '(nothing to map over)'; continue }
       const itemPrompt = (node.prompt || '').trim() || 'Process this item:\n{{item}}'
-      const outs: string[] = []
-      const itemEvidence = node.webSearch === false ? '' : await groundFromPrompt(itemPrompt.replace(/\{\{[^}]+\}\}/g, '').trim())
-      // Batches of 3 keep wall-clock down without hammering the provider.
-      for (let i = 0; i < items.length; i += 3) {
-        const batch = items.slice(i, i + 3)
-        const done = await Promise.all(batch.map(async (it) => {
-          const p = itemEvidence + '\n\n' + itemPrompt.split('{{item}}').join(it).split('{{input}}').join(it)
-          try { return (await chatComplete([{ role: 'user', content: p }], { maxTokens: 1200, timeoutMs: NODE_TIMEOUT_MS, temperature: 0.6 })).trim() }
-          catch (e) { return `(item failed: ${e instanceof Error ? e.message : 'error'})` }
-        }))
-        outs.push(...done)
+      const fingerprint = workFingerprint(node, input)
+      const checkpoints = f.run!.checkpoints ||= {}
+      const saved = checkpoints[nid] ||= { fingerprint, outputs: [] }
+      const outs = saved.outputs ||= []
+      try {
+        if (saved.fingerprint !== fingerprint) throw new Error('This step changed after its checkpoint. Start a new run instead of mixing old and new results.')
+        const itemEvidence = saved.evidence ?? (node.webSearch === false ? '' : await groundFromPrompt(itemPrompt.replace(/\{\{[^}]+\}\}/g, '').trim()))
+        saved.evidence = itemEvidence
+        for (let i = 0; i < items.length; i += 3) {
+          budget.check()
+          if (await shouldStop?.()) return { results, status: 'stopped', memory: mem, cutEdges: [...cutEdges] }
+          const pending = items.slice(i, i + 3).map((item, offset) => ({ item, index: i + offset })).filter(({ index }) => !outs[index])
+          if (!pending.length) continue
+          const done = await Promise.allSettled(pending.map(async ({ item, index }) => {
+            const p = itemEvidence + '\n\n' + itemPrompt.split('{{item}}').join(item).split('{{input}}').join(item)
+            const output = (await complete([{ role: 'user', content: p }], { maxTokens: 1200, temperature: 0.6 })).trim()
+            if (!output) throw new Error(`Item ${index + 1} returned no output.`)
+            outs[index] = output.slice(0, 24000)
+            return output
+          }))
+          await checkpoint(`Saved ${outs.filter(Boolean).length}/${items.length} items for ${node.label || nid}`)
+          budget.check()
+          const failure = done.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+          if (failure) throw failure.reason
+        }
+        results[nid] = outs.map((x, i) => `【Item ${i + 1}】\n${x}`).join('\n\n---\n\n')
+        delete checkpoints[nid]
+      } catch (error) {
+        budget.check()
+        if (error instanceof FlowDeadline) throw error
+        failed.add(nid)
+        firstError ||= `"${node.label || nid}" failed after ${outs.filter(Boolean).length}/${items.length} completed items: ${error instanceof Error ? error.message : 'generation failed'}`
       }
-      results[nid] = outs.map((x, i) => `【Item ${i + 1}】\n${x}`).join('\n\n---\n\n'); continue
+      continue
     }
     if (node.type === 'planner') {
       const goal = tpl(node.prompt || '', input).trim() || input || node.label || 'the goal'
-      const maxSteps = Math.max(1, Math.min(6, node.maxSteps || 4))
-      const scratch: string[] = input ? [`CONTEXT PASSED IN:\n${input.slice(0, 4000)}`] : []
-      let final = ''
-      for (let step = 0; step < maxSteps; step++) {
-        let raw = ''
-        try { raw = await chatComplete([{ role: 'user', content: plannerPromptSrv(goal, scratch, step, maxSteps) }], { maxTokens: 1600, timeoutMs: NODE_TIMEOUT_MS, temperature: 0.4 }) } catch { break }
-        const act = parsePlannerActionSrv(raw)
-        if (act.action === 'search' && act.query) {
-          try {
-            const found = await search(act.query.slice(0, 300))
-            scratch.push(found.text)
-          } catch { scratch.push(`SEARCH "${act.query}" failed.`) }
-        } else if (act.action === 'fetch' && act.url) {
-          try { const page = await fetchPage(act.url); scratch.push(`${page.status === 'read' ? 'READ' : 'UNAVAILABLE'} ${act.url}:\n${page.text.slice(0, 6500)}`) } catch { scratch.push(`FETCH ${act.url} failed.`) }
-        } else { final = act.answer || raw; break }
+      const maxSteps = Math.max(1, Math.min(8, node.maxSteps || 4))
+      const fingerprint = workFingerprint(node, input)
+      const checkpoints = f.run!.checkpoints ||= {}
+      const saved = checkpoints[nid] ||= { fingerprint, step: 0, scratch: input ? [`CONTEXT PASSED IN:\n${input.slice(0, 4000)}`] : [] }
+      const scratch = saved.scratch ||= []
+      try {
+        if (saved.fingerprint !== fingerprint) throw new Error('This step changed after its checkpoint. Start a new run instead of mixing old and new results.')
+        let final = saved.final || ''
+        for (let step = saved.step || 0; step < maxSteps && !final; step++) {
+          budget.check()
+          if (await shouldStop?.()) return { results, status: 'stopped', memory: mem, cutEdges: [...cutEdges] }
+          const act = saved.action || parsePlannerActionSrv(await complete([{ role: 'user', content: plannerPromptSrv(goal, scratch, step, maxSteps) }], { maxTokens: 2400, temperature: 0.4 }))
+          saved.action = act
+          await checkpoint(`Saved planner action ${step + 1} for ${node.label || nid}`)
+          budget.check()
+          if (act.action === 'search') {
+            try {
+              const found = await search(act.query.slice(0, 300))
+              scratch.push(found.text)
+            } catch { budget.check(); scratch.push(`SEARCH "${act.query}" failed. This is not evidence.`) }
+          } else if (act.action === 'fetch') {
+            try { const page = await fetchPage(act.url); scratch.push(`${page.status === 'read' ? 'READ' : 'UNAVAILABLE'} ${page.url}:\n${page.text.slice(0, 6500)}`) } catch { budget.check(); scratch.push(`FETCH ${act.url} failed. This is not evidence.`) }
+          } else { final = act.answer; saved.final = final }
+          saved.step = step + 1
+          delete saved.action
+          await checkpoint(`Saved planner step ${step + 1} for ${node.label || nid}`)
+        }
+        if (!final) final = await complete([{ role: 'user', content: `GOAL: ${goal}\n\nGathered:\n${scratch.join('\n\n').slice(0, 12000)}\n\nWrite the final deliverable. Distinguish source excerpts from pages read. State missing evidence and unresolved work; never invent success. Output only the deliverable.` }], { maxTokens: 4000, temperature: 0.4 })
+        if (!final.trim()) throw new Error('The planner returned no final deliverable.')
+        results[nid] = final.trim().slice(0, 24000)
+        delete checkpoints[nid]
+      } catch (error) {
+        budget.check()
+        if (error instanceof FlowDeadline) throw error
+        failed.add(nid)
+        firstError ||= `"${node.label || nid}" ${error instanceof Error ? error.message : 'planning failed'}`
       }
-      if (!final) { try { final = await chatComplete([{ role: 'user', content: `GOAL: ${goal}\n\nGathered:\n${scratch.join('\n\n').slice(0, 12000)}\n\nWrite the best final deliverable for the goal. Output only the deliverable.` }], { maxTokens: 2000, timeoutMs: NODE_TIMEOUT_MS, temperature: 0.6 }) } catch { final = scratch.join('\n\n') } }
-      results[nid] = (final || '').slice(0, 24000) || '(agent produced no output)'; continue
+      continue
     }
     // Independent specialists can work together. Output joins still wait for
     // every upstream step, and all database checkpoints remain serial.
@@ -319,7 +415,7 @@ async function runFlow(f: Flow, onProgress?: ProgressFn, shouldStop?: () => Prom
     const batch = [node, ...ready.filter(candidate => candidate.id !== nid)].slice(0, 3)
     for (const candidate of batch) completedAgents.add(candidate.id)
     await onProgress?.(Object.keys(results).length, stepTotal, batch.map(n => n.label || n.roleTitle || n.agent || 'step').join(' + '))
-    await Promise.all(batch.map(async node => {
+    const batchResults = await Promise.allSettled(batch.map(async node => {
       const nid = node.id
       const input = liveDeps(nid).map(id => results[id]).filter(Boolean).join('\n\n---\n\n')
       let prompt = tpl((node.prompt || '').trim() || `You are the "${node.label || node.agent || 'agent'}" step in a pipeline. Do your specialty on the input.`, input)
@@ -340,17 +436,24 @@ async function runFlow(f: Flow, onProgress?: ProgressFn, shouldStop?: () => Prom
       if (charter) prompt = `${charter}\n\nYOUR TASK:\n${prompt}`
       // A reference document the user attached to this flow — authoritative context.
       if (f.refDoc?.text?.trim()) {
-        prompt = `REFERENCE DOCUMENT the user attached for this pipeline — "${f.refDoc.name}". Treat it as authoritative context and ground your work in it:\n"""\n${f.refDoc.text.slice(0, 12000)}\n"""\n\n${prompt}`
+        prompt = `${referenceDocumentContext(f.refDoc)}\n\n${prompt}`
       }
-      if (node.refDoc?.text?.trim()) prompt = `REFERENCE FOR THIS STEP — ${node.refDoc.name || 'Attached document'}:\n${node.refDoc.text.slice(0, 12000)}\n\n${prompt}`
+      if (node.refDoc?.text?.trim()) prompt = `${referenceDocumentContext(node.refDoc)}\n\n${prompt}`
+      prompt += '\n\n' + hedgeFundOutputContract(node.role)
       const startedAt = Date.now()
       try {
         const evidence = node.webSearch === false ? '' : await groundFromPrompt((node.prompt || '').replace(/\{\{[^}]+\}\}/g, '').trim())
         if (evidence) prompt = `${evidence}\n\nTASK AND INPUT:\n${prompt}`
-        const out = await chatComplete([{ role: 'user', content: prompt }], { maxTokens: 2200, timeoutMs: NODE_TIMEOUT_MS, temperature: 0.6 })
-        if (out && out.trim()) results[nid] = out.slice(0, 24000)
+        const out = await complete([{ role: 'user', content: prompt }], { maxTokens: 2200, temperature: 0.6 })
+        if (out && out.trim()) {
+          const checked = guardHedgeFundOutput(node.role, out, { policyText: node.refDoc?.text || f.refDoc?.text })
+          if (node.role === 'hf-portfolio' && checked.length > 24000) throw new Error('The checked proposal is too large to store intact. Reduce its scope and retry.')
+          results[nid] = node.role === 'hf-portfolio' ? checked : checked.slice(0, 24000)
+        }
         else { failed.add(nid); firstError ||= `"${node.label || nid}" returned nothing` }
       } catch (e) {
+        budget.check()
+        if (e instanceof FlowDeadline) throw e
         // A step that hangs past the timeout is BROKEN (stuck), not retried forever.
         const elapsed = Date.now() - startedAt
         failed.add(nid)
@@ -358,11 +461,26 @@ async function runFlow(f: Flow, onProgress?: ProgressFn, shouldStop?: () => Prom
         else firstError ||= `"${node.label || nid}" failed: ${e instanceof Error ? e.message : 'error'}`
       }
     }))
+    const rejected = batchResults.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (rejected) throw rejected.reason
+    budget.check()
     await onProgress?.(Object.keys(results).length, stepTotal, `Completed ${batch.map(n => n.label || n.agent || 'step').join(' + ')}`)
   }
   if (await shouldStop?.()) return { results, status: 'stopped', memory: mem, cutEdges: [...cutEdges] }
   const status: FlowRun['status'] = stuck.size ? 'stuck' : failed.size ? 'error' : 'done'
   return { results, status, error: firstError || undefined, memory: mem, cutEdges: [...cutEdges] }
+  } catch (error) {
+    if (error instanceof FlowStopped) return { results, status: 'stopped', memory: mem, cutEdges: [...cutEdges] }
+    // Storage and nested transports may report AbortError rather than our
+    // sentinel. Treat it as a yield only when this computation budget expired.
+    if (!(error instanceof FlowDeadline) && !budget.signal.aborted && budget.remaining() >= 1000) throw error
+    const uncertain = f.run?.pendingEffect
+    const status = uncertain ? 'stuck' : failed.size ? 'error' : 'running'
+    if (f.run) f.run.yielded = status === 'running'
+    return { results, status, memory: mem, cutEdges: [...cutEdges], node: uncertain?.nodeId,
+      nodeLabel: status === 'running' ? 'Paused at a saved checkpoint; waiting to resume' : undefined,
+      error: uncertain ? 'The HTTP mutation has an unconfirmed outcome. Check the destination before explicitly starting a new run; it will not be retried automatically.' : firstError || undefined }
+  }
 }
 
 // ── On-demand single-flow runner (mobile "Run now" / "Continue" / "Stop") ─────
@@ -393,7 +511,7 @@ async function saveFlow(client: MinimalClient, userId: string, flow: Flow, activ
     const idx = latest?.findIndex((item) => String(item.id) === String(flow.id)) ?? -1
     if (!latest || idx < 0) { await client.query('ROLLBACK'); return false }
     const current = latest[idx]
-    if (active && current.run?.startedAt && current.run.startedAt !== flow.run?.startedAt) {
+    if (active ? current.run?.startedAt !== flow.run?.startedAt : current.run?.startedAt !== observedStartedAt) {
       await client.query('ROLLBACK'); return false
     }
     if (active && current.run?.status === 'stopped' && flow.run) flow.run.status = 'stopped'
@@ -436,14 +554,49 @@ async function ledger(
 
 const stepCount = (f: Flow): number => (f.nodes || []).length
 
-type RunSource = { lease?: string; scheduledAt?: number; hook?: { secret: string; payload: string } }
+type RunSource = { lease?: string; scheduledAt?: number; deadlineMs?: number; expectedStartedAt?: number; worker?: PipelineWorker; approval?: { nodeId: string; decision: 'approve' | 'edit' | 'reject'; text?: string }; hook?: { secret: string; payload: string } }
+type RunResponse = { ok: boolean; status?: string; step?: number; total?: number; error?: string; code?: number; startedAt?: number; yielded?: boolean }
 
 /** One server runner per account and flow. A stop bypasses the runner lock so
  * it can interrupt the owner; the owner observes it between nodes. */
 export async function runOneFlow(
   client: MinimalClient, userId: string, flowId: string, mode: 'run' | 'resume' | 'stop', force = false, source: RunSource = {},
-): Promise<{ ok: boolean; status?: string; step?: number; total?: number; error?: string; code?: number }> {
-  if (mode === 'stop') return runOneFlowUnlocked(client, userId, flowId, mode, force)
+): Promise<RunResponse> {
+  const deadlineMs = Math.min(source.deadlineMs ?? Infinity, Date.now() + 240000)
+  return withStorageDeadline(storageDeadlineMs(client, deadlineMs), () => runOwnedFlow(storageClient(client), userId, flowId, mode, force, { ...source, deadlineMs }))
+}
+
+// PostgreSQL can still drain one 20s query after its cutoff. Leave another 10s
+// for connection teardown under the platform's 300s limit. Cloudflare can abort
+// the in-flight operation, so its checkpoint tail can extend to 285s.
+const storageDeadlineMs = (client: MinimalClient, workDeadlineMs: number) => workDeadlineMs + (client instanceof CloudflareStore ? 45000 : 30000)
+
+// PostgreSQL queries already have a 20s driver/server timeout. Do not abandon a
+// running transaction with Promise.race: await its definite outcome, then stop
+// before the next query. This can overrun storage deadline by one query; the
+// route's client.close releases any remaining transaction/advisory ownership.
+function storageClient(client: MinimalClient): MinimalClient {
+  if (client instanceof CloudflareStore) return client
+  return { async query(sql: string, params?: any[]) {
+    // A computation timeout must still roll back its open transaction. Cleanup
+    // can use the remaining storage tail but cannot bypass its overall cutoff.
+    checkStorageDeadline(/^(?:ROLLBACK|SELECT pg_advisory_unlock)/i.test(sql.trim()))
+    return client.query(sql, params)
+  } }
+}
+
+async function runOwnedFlow(
+  client: MinimalClient, userId: string, flowId: string, mode: 'run' | 'resume' | 'stop', force: boolean, source: RunSource,
+): Promise<RunResponse> {
+  if (mode === 'stop') {
+    const result = await runOneFlowUnlocked(client, userId, flowId, mode, force, source)
+    if (result.ok) {
+      const saved = deepParseFlows(await readFlows(client, userId))?.find(flow => String(flow.id) === flowId)
+      if (saved?.run?.status === 'stopped' && saved.run.startedAt) await settlePipelineContinuations(client, userId, flowId, saved.run.startedAt, 'cancelled')
+    }
+    return result
+  }
+  source = { ...source, deadlineMs: Math.min(source.deadlineMs ?? Infinity, Date.now() + RUN_WORK_MS) }
   if (client instanceof CloudflareStore) {
     const flows = new CloudflareFlows(client), lease = await flows.claim(userId, flowId)
     if (!lease) return { ok: false, error: 'a server worker already owns this run', code: 409 }
@@ -460,12 +613,28 @@ export async function runOneFlow(
 /** Run / resume / stop one flow for a user. mode: 'run' (fresh), 'resume', 'stop'. */
 async function runOneFlowUnlocked(
   client: MinimalClient, userId: string, flowId: string, mode: 'run' | 'resume' | 'stop', force = false, source: RunSource = {},
-): Promise<{ ok: boolean; status?: string; step?: number; total?: number; error?: string; code?: number }> {
+): Promise<RunResponse> {
   const flows = deepParseFlows(await readFlows(client, userId))
   if (!flows) return { ok: false, error: 'no pipelines for this account', code: 404 }
   const idx = flows.findIndex((f) => String(f.id) === String(flowId))
   if (idx < 0) return { ok: false, error: 'pipeline not found', code: 404 }
   const f = flows[idx]
+  if (source.worker) {
+    const worker = await pipelineWorkerState(client, userId, flowId, source.worker)
+    if (!worker || mode !== 'stop' && (worker.status !== 'running' || worker.mode !== mode)) return { ok: false, error: 'This worker no longer owns the pipeline task.', code: 409 }
+    if (mode === 'stop') {
+      if (!worker.startedAt || source.expectedStartedAt !== undefined && source.expectedStartedAt !== worker.startedAt) return { ok: false, error: 'This worker has no confirmed run to stop. Its task cancellation will be checked before further work.', code: 409 }
+      source = { ...source, expectedStartedAt: worker.startedAt }
+    }
+  }
+  if (mode !== 'run' && source.expectedStartedAt !== undefined && f.run?.startedAt !== source.expectedStartedAt) return { ok: false, error: 'A newer pipeline run replaced this checkpoint. Refresh before continuing.', code: 409 }
+  if (source.approval) {
+    const review = source.approval
+    if (mode !== 'resume' || source.expectedStartedAt !== f.run?.startedAt || f.run?.status !== 'awaiting' || f.run.node !== review.nodeId ||
+        !f.nodes?.some(node => node.id === review.nodeId && node.type === 'approval') || !['approve', 'edit', 'reject'].includes(review.decision) ||
+        review.decision === 'edit' && (typeof review.text !== 'string' || review.text.length > 24000)) return { ok: false, error: 'This review no longer matches the waiting approval. Refresh before continuing.', code: 409 }
+    f.approvals = { ...f.approvals, [review.nodeId]: { decision: review.decision, ...(review.decision === 'edit' ? { text: review.text } : {}), at: Date.now() } }
+  }
   const observedStartedAt = f.run?.startedAt
   const now = Date.now()
   // Recheck schedule and hook authorization under the same ownership lock used
@@ -481,7 +650,7 @@ async function runOneFlowUnlocked(
   }
 
   // A live browser tab owns the run if its heartbeat is fresh — don't stomp it.
-  const ownedByLiveTab = f.run?.status === 'running' && now - (f.run.heartbeat || 0) < ORPHAN_MS
+  const ownedByLiveTab = f.run?.status === 'running' && !f.run.yielded && now - (f.run.heartbeat || 0) < ORPHAN_MS
   if (mode === 'stop') {
     if (client instanceof CloudflareStore) return new CloudflareFlows(client).stop(userId, flowId, f.run?.startedAt)
     // A worker may finish a checkpoint after our initial read. Stop only the
@@ -517,6 +686,7 @@ async function runOneFlowUnlocked(
     return { ok: true, status: 'stopped' }
   }
   if (ownedByLiveTab && !force) return { ok: false, error: 'a live session already owns this run', code: 409 }
+  if ((source.deadlineMs ?? Infinity) - Date.now() < 1000) return { ok: false, error: 'The scheduler time limit was reached before this run started. Retry to continue.', code: 503 }
 
   const total = stepCount(f)
   // Recurring agents build on their last report, while the new run still has
@@ -530,8 +700,9 @@ async function runOneFlowUnlocked(
     if (trigger) f.results = { [trigger.id]: source.hook.payload.slice(0, 24000) }
   }
   // resume: keep f.results; mark running so runFlow's skip keeps finished steps
-  f.run = { status: 'running', step: mode === 'resume' ? Object.keys(f.results || {}).length : 0, total, startedAt, updatedAt: now, heartbeat: now, cutEdges: f.run?.cutEdges } as FlowRun
+  f.run = { status: 'running', serverManaged: true, remoteTaskId: source.worker?.id || f.run?.remoteTaskId, step: mode === 'resume' ? Object.keys(f.results || {}).length : 0, total, startedAt, updatedAt: now, heartbeat: now, cutEdges: f.run?.cutEdges, checkpoints: f.run?.checkpoints, pendingEffect: f.run?.pendingEffect } as FlowRun
   if (!await saveFlow(client, userId, f, false, source.lease, observedStartedAt)) return { ok: false, error: 'pipeline changed before the run started', code: 409 }
+  const workerBound = !source.worker || await bindPipelineWorker(client, userId, flowId, startedAt, source.worker)
   const lease = source.lease ? { flowId, token: source.lease } : undefined
   const activitySource = source.scheduledAt != null ? 'flywheel' : 'pipeline'
   const startedVia = source.scheduledAt != null ? 'Started scheduled run' : source.hook ? 'Started by webhook' : 'Started from mobile'
@@ -541,59 +712,95 @@ async function runOneFlowUnlocked(
     f.run = { ...f.run, status: 'running', step, total: tot, startedAt, updatedAt: Date.now(), heartbeat: Date.now(), nodeLabel: label } as FlowRun
     await ledger(client, userId, taskId, { detail: `${label} · step ${step}/${tot}`, progress: tot ? step / tot : 0, event: label }, lease)
     await saveResults(client, userId, taskId, f.results || {}, lease)
-    await saveFlow(client, userId, f, true, source.lease)
+    if (!await saveFlow(client, userId, f, true, source.lease)) throw new FlowStopped('The run was stopped or replaced before the next step.')
   }
   const shouldStop = async () => {
+    if (!workerBound) return true
+    if (source.worker && (await pipelineWorkerState(client, userId, flowId, source.worker))?.status !== 'running') return true
+    if (f.run?.remoteTaskId && await pipelineTaskCancelled(client, userId, flowId, f.run.remoteTaskId)) return true
     if (client instanceof CloudflareStore && !await new CloudflareFlows(client).renew(userId, flowId, source.lease!)) return true
     const current = deepParseFlows(await readFlows(client, userId))?.find((flow) => String(flow.id) === String(flowId))
     return !current || current.run?.status === 'stopped' || (!!current.run?.startedAt && current.run.startedAt !== startedAt)
   }
-  const { results, status, error, memory, node, nodeLabel, cutEdges } = await runFlow(f, onProgress, shouldStop, { client, userId, runId: taskId, startedAt }, previousWork)
+  const budget = flowBudget(source.deadlineMs ?? Date.now() + RUN_WORK_MS)
+  let outcome: Awaited<ReturnType<typeof runFlow>>
+  try { outcome = await withCancellationSignal(budget.signal, () => runFlow(f, budget, onProgress, shouldStop, { client, userId, runId: taskId, startedAt }, previousWork)) }
+  finally { budget.close() }
+  const { results, status, error, memory, node, nodeLabel, cutEdges } = outcome
   f.results = results
   await saveResults(client, userId, taskId, results, lease)
   if (memory) f.memory = memory
   f.lastRun = Date.now()
   const completed = (f.nodes || []).filter((node) => results[node.id] != null).length
-  f.run = { status, step: status === 'done' ? total : completed, total, startedAt, updatedAt: Date.now(), heartbeat: Date.now(), error, node, nodeLabel, cutEdges } as FlowRun
+  f.run = { status, serverManaged: true, remoteTaskId: f.run?.remoteTaskId, step: status === 'done' ? total : completed, total, startedAt, updatedAt: Date.now(), heartbeat: Date.now(), error, node, nodeLabel, cutEdges, yielded: status === 'running', checkpoints: f.run?.checkpoints, pendingEffect: f.run?.pendingEffect } as FlowRun
   const day = new Date(now).toDateString()
   f.nodes = (f.nodes || []).map((n) => (n.type === 'agent' && results[n.id] != null ? { ...n, lastRunDay: day } : n))
-  await saveFlow(client, userId, f, true, source.lease)
-  const finalStatus = f.run.status === 'stopped' ? 'cancelled' : status === 'awaiting' ? 'waiting' : error || status === 'error' || status === 'stuck' ? 'failed' : 'done'
-  const detail = finalStatus === 'cancelled' ? 'Stopped' : finalStatus === 'waiting' ? `Waiting for your approval: ${nodeLabel || 'Approval'}` : error ? `Failed: ${String(error).slice(0, 160)}` : `Done · ${total} step${total === 1 ? '' : 's'}`
+  const savedFinal = await saveFlow(client, userId, f, true, source.lease)
+  if (!savedFinal && f.run.status !== 'stopped') return { ok: false, error: 'The saved run was replaced before completion could be confirmed. Refresh its activity before retrying.', code: 409 }
+  const finalStatus = f.run.status === 'stopped' ? 'cancelled' : status === 'running' ? 'queued' : status === 'awaiting' ? 'waiting' : error || status === 'error' || status === 'stuck' ? 'failed' : 'done'
+  const detail = finalStatus === 'cancelled' ? 'Stopped' : finalStatus === 'queued' ? 'Paused at a saved checkpoint; waiting to resume' : finalStatus === 'waiting' ? `Waiting for your approval: ${nodeLabel || 'Approval'}` : error ? `Failed: ${String(error).slice(0, 160)}` : `Done · ${total} step${total === 1 ? '' : 's'}`
   await ledger(client, userId, taskId, { status: finalStatus, progress: finalStatus === 'done' ? 1 : total ? completed / total : 0, detail, event: detail }, lease)
-  return { ok: finalStatus !== 'failed', status: finalStatus === 'cancelled' ? 'stopped' : status === 'awaiting' ? 'awaiting' : finalStatus, step: finalStatus === 'done' ? total : completed, total, ...(finalStatus === 'failed' ? { error: error || 'pipeline failed', code: 500 } : {}) }
+  await settlePipelineContinuations(client, userId, flowId, startedAt, finalStatus)
+  return { ok: finalStatus !== 'failed', status: finalStatus === 'cancelled' ? 'stopped' : status === 'awaiting' ? 'awaiting' : finalStatus === 'queued' ? 'running' : finalStatus, step: finalStatus === 'done' ? total : completed, total, startedAt, ...(finalStatus === 'queued' ? { yielded: true } : {}), ...(finalStatus === 'failed' ? { error: error || 'pipeline failed', code: 500 } : {}) }
 }
 
-export async function runDueCrons(client: MinimalClient): Promise<{ usersChecked: number; flowsRan: number }> {
+export async function runDueCrons(client: MinimalClient, options: { deadlineMs?: number } = {}): Promise<{ usersChecked: number; flowsRan: number; deferred?: boolean }> {
+  const deadlineMs = Math.min(options.deadlineMs ?? Infinity, Date.now() + 240000)
+  return withStorageDeadline(storageDeadlineMs(client, deadlineMs), () => runDueWithinDeadline(storageClient(client), deadlineMs))
+}
+
+async function scanWithinDeadline<T>(deadlineMs: number, task: () => Promise<T>): Promise<T> {
+  const budget = flowBudget(deadlineMs)
+  try { budget.check(); return await withCancellationSignal(budget.signal, task) }
+  finally { budget.close() }
+}
+
+async function runDueWithinDeadline(client: MinimalClient, deadlineMs: number): Promise<{ usersChecked: number; flowsRan: number; deferred?: boolean }> {
   const now = Date.now()
-  const rows = client instanceof CloudflareStore ? await new CloudflareFlows(client).all() : (await client.query("SELECT user_id, value FROM nalu_user_data WHERE key = 'nalu-agent-flows'")).rows
+  if (deadlineMs - Date.now() < 1000) return { usersChecked: 0, flowsRan: 0, deferred: true }
+  const cloudflare = client instanceof CloudflareStore ? new CloudflareFlows(client) : undefined
+  const rows = await scanWithinDeadline(deadlineMs, async () => client instanceof CloudflareStore ? (await client.query("SELECT user_id FROM nalu_user_data WHERE key='nalu-agent-flows'")).results : (await client.query("SELECT user_id, value FROM nalu_user_data WHERE key = 'nalu-agent-flows'")).rows)
   let flowsRan = 0
+  let usersChecked = 0
   for (const row of rows) {
-    for (const f of deepParseFlows(row.value) || []) {
+    if (deadlineMs - Date.now() < 1000) return { usersChecked, flowsRan, deferred: true }
+    const value = cloudflare ? await scanWithinDeadline(deadlineMs, () => cloudflare.read(String(row.user_id))) : row.value
+    usersChecked++
+    for (const f of deepParseFlows(value) || []) {
+      if (deadlineMs - Date.now() < 1000) return { usersChecked, flowsRan, deferred: true }
       if (!isDue(f, now) && !isOrphanedRun(f, now)) continue
-      const result = await runOneFlow(client, String(row.user_id), f.id, 'run', false, { scheduledAt: now })
+      const result = await runOneFlow(client, String(row.user_id), f.id, 'run', false, { scheduledAt: now, deadlineMs })
       if (result.status) flowsRan++
     }
   }
-  return { usersChecked: rows.length, flowsRan }
+  return { usersChecked, flowsRan }
 }
 
 // Inbound hooks share run ownership, durable checkpoints and explicit approvals
 // with scheduled/manual runs. Payloads never bypass downstream approval nodes.
 export async function runFlowByHook(
-  client: MinimalClient, flowId: string, secret: string, payload: string,
+  client: MinimalClient, flowId: string, secret: string, payload: string, options: { deadlineMs?: number } = {},
 ): Promise<{ ok: boolean; status?: number; output?: string; error?: string }> {
-  const rows = client instanceof CloudflareStore ? await new CloudflareFlows(client).all() : (await client.query("SELECT user_id, value FROM nalu_user_data WHERE key = 'nalu-agent-flows'")).rows
+  const deadlineMs = Math.min(options.deadlineMs ?? Infinity, Date.now() + 240000)
+  return withStorageDeadline(storageDeadlineMs(client, deadlineMs), () => runHookWithinDeadline(storageClient(client), flowId, secret, payload, deadlineMs))
+}
+
+async function runHookWithinDeadline(client: MinimalClient, flowId: string, secret: string, payload: string, deadlineMs: number): Promise<{ ok: boolean; status?: number; output?: string; error?: string }> {
+  const cloudflare = client instanceof CloudflareStore ? new CloudflareFlows(client) : undefined
+  const rows = await scanWithinDeadline(deadlineMs, async () => client instanceof CloudflareStore ? (await client.query("SELECT user_id FROM nalu_user_data WHERE key='nalu-agent-flows'")).results : (await client.query("SELECT user_id, value FROM nalu_user_data WHERE key = 'nalu-agent-flows'")).rows)
   for (const row of rows) {
-    const f = deepParseFlows(row.value)?.find((flow) => String(flow.id) === String(flowId))
+    if (deadlineMs - Date.now() < 1000) return { ok: false, status: 503, error: 'The webhook time limit was reached before a run started. No new work was started.' }
+    const value = cloudflare ? await scanWithinDeadline(deadlineMs, () => cloudflare.read(String(row.user_id))) : row.value
+    const f = deepParseFlows(value)?.find((flow) => String(flow.id) === String(flowId))
     if (!f) continue
     const userId = String(row.user_id)
-    const result = await runOneFlow(client, userId, flowId, 'run', false, { hook: { secret, payload } })
+    const result = await runOneFlow(client, userId, flowId, 'run', false, { hook: { secret, payload }, deadlineMs })
     if (!result.ok) return { ok: false, status: result.code || 500, error: result.error || 'Pipeline did not complete.' }
     const saved = deepParseFlows(await readFlows(client, userId))?.find((flow) => String(flow.id) === String(flowId))
     if (!saved) return { ok: false, status: 404, error: 'pipeline not found' }
     if (result.status === 'awaiting') return { ok: true, status: 202, output: `Waiting for your approval: ${saved.run?.nodeLabel || 'Approval'}` }
     if (result.status === 'stopped') return { ok: false, status: 409, error: 'Pipeline was stopped.' }
+    if (result.status === 'running') return { ok: true, status: 202, output: 'Paused at a saved checkpoint. The remaining work is queued to resume.' }
     const outIds = new Set((saved.edges || []).map((edge) => edge.from))
     const results = saved.results || {}
     const leaves = (saved.nodes || []).filter((node) => !outIds.has(node.id)).map((node) => results[node.id]).filter(Boolean)
