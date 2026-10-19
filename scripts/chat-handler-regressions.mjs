@@ -229,7 +229,7 @@ for (const setting of [
   {body:{cli:true,reasoning:'high',maxTokens:12000,think:true,thinkLevel:3},effort:'xhigh',tokens:12000},
   {body:{cli:true,reasoning:'none',maxTokens:512},effort:'none',tokens:512},
   {body:{cli:true,reasoning:'medium',maxTokens:8192},effort:'medium',tokens:8192},
-  {body:{cli:true},effort:'low',tokens:4096},
+  {body:{cli:true},effort:'medium',tokens:4096},
   {body:{reasoning:'high',maxTokens:512},effort:'high',tokens:512},
   {body:{reasoning:'xhigh',maxTokens:8192},effort:'xhigh',tokens:8192},
   {body:{reasoning:'min',maxTokens:512},effort:'minimal',tokens:512},
