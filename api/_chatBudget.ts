@@ -31,7 +31,10 @@ export function budgetChatContext<T extends Message>(messages: T[], options: {
   const capacity = Number.isFinite(configured) ? Math.max(8192, Math.min(1_000_000, configured)) : 64000
   const inputBudget = Math.floor(capacity * 0.9) - options.maxOutputTokens - estimatedTokens(options.tools)
   const tokens = messages.map(estimatedTokens)
-  const lastUser = messages.findLastIndex(message => message.role === 'user')
+  let lastUser = -1
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index].role === 'user') { lastUser = index; break }
+  }
   const retained = messages.map(() => true)
   const originalTokens = tokens.reduce((sum, count) => sum + count + 4, 0)
   let used = originalTokens

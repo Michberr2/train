@@ -20,10 +20,23 @@ export class BrowserTaskStore {
   async get(owner: string, id: string): Promise<BrowserTask | null> {
     if (this.client instanceof CloudflareStore) {
       const result = await this.client.query("SELECT id,title,status,detail,meta FROM nalu_tasks WHERE user_id=?1 AND id=?2 AND source='browser'", [owner, id])
-      const row = result.results[0]
-      return row ? { ...row, meta: JSON.parse(String(row.meta || '{}')) } as BrowserTask : null
+      const row = result.results[0] as Record<string, unknown> | undefined
+      return row ? {
+        id: String(row.id || ''),
+        title: String(row.title || ''),
+        status: String(row.status || ''),
+        detail: String(row.detail || ''),
+        meta: JSON.parse(String(row.meta || '{}')) as Record<string, any>,
+      } : null
     }
-    return (await this.client.query("SELECT id,title,status,detail,meta FROM nalu_tasks WHERE user_id=$1 AND id=$2 AND source='browser'", [owner, id])).rows[0] || null
+    const row = (await this.client.query("SELECT id,title,status,detail,meta FROM nalu_tasks WHERE user_id=$1 AND id=$2 AND source='browser'", [owner, id])).rows[0] as Record<string, unknown> | undefined
+    return row ? {
+      id: String(row.id || ''),
+      title: String(row.title || ''),
+      status: String(row.status || ''),
+      detail: String(row.detail || ''),
+      meta: (typeof row.meta === 'string' ? JSON.parse(row.meta) : row.meta || {}) as Record<string, any>,
+    } : null
   }
   async save(owner: string, task: BrowserTask): Promise<void> {
     if (this.client instanceof CloudflareStore) {

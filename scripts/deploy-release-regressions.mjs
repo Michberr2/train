@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { release, RELEASE_DOMAINS, verifyReleaseAncestry, verifyDeploymentMetadata } from './deploy-release.mjs'
+import { release, RELEASE_DOMAINS, verifyReleaseAncestry, verifyDeploymentMetadata, assertCanonicalWebDesign } from './deploy-release.mjs'
 import { checkPreview } from './preview-release-checks.mjs'
 
 const directory = await mkdtemp(join(tmpdir(), 'nalu-release-regression-'))
@@ -12,6 +13,13 @@ const report = []
 try {
   await mkdir(join(directory, '.vercel'))
   await writeFile(join(directory, '.vercel/project.json'), JSON.stringify({ projectId: 'prj_fixture', orgId: 'team_fixture' }))
+  const appPath = join(directory, 'client/src/App.tsx')
+  const wrapperPath = join(directory, 'client/src/components/workspace/design/DesignedWorkspace.tsx')
+  const appSource = "import LandingPage from './components/landing/LandingPage'\nconst Workspace = lazy(() => import('./components/workspace/design/DesignedWorkspace'))\nexport default function App() { return user ? <Workspace /> : <LandingPage /> }\n"
+  const wrapperSource = "import Workspace from '../Workspace'\nimport WorkspaceDesignSurface from './WorkspaceDesignSurface'\nexport default function DesignedWorkspace(props) { return <WorkspaceDesignSurface><Workspace {...props} designEnabled /></WorkspaceDesignSurface> }\n"
+  await mkdir(join(directory, 'client/src/components/workspace/design'), { recursive: true })
+  await writeFile(appPath, appSource)
+  await writeFile(wrapperPath, wrapperSource)
   function fixture(options = {}) {
     const calls = [], logs = [], aliases = Object.fromEntries(RELEASE_DOMAINS.map(domain => [domain, previousId]))
     let statusCalls = 0, commitCalls = 0
@@ -102,6 +110,26 @@ try {
   assert.ok(success.calls.findIndex(call => call.args[0] === 'merge-base') < success.calls.findIndex(call => call.command === process.execPath), 'live source ancestry is checked before builds and compatibility gates')
   assert.ok(success.calls.findIndex(call => call.args.includes('scripts/flow-cross-client-integration.mjs')) < success.calls.findIndex(call => call.command === 'vercel' && call.args[0] === 'deploy'), 'all compatibility gates run before candidate creation')
   report.push('successful release verifies all four aliases, exact deployment IDs, health and app bytes')
+  await assertCanonicalWebDesign(fileURLToPath(new URL('../', import.meta.url)))
+  report.push('actual compact production wrapper passes structural design checks without an arbitrary file-size threshold')
+  for (const [name, path, content] of [
+    ['missing App', appPath, null],
+    ['empty App', appPath, ''],
+    ['retired App', appPath, 'export default function App() { return <LegacyWorkspace /> }'],
+    ['missing design wrapper', wrapperPath, null],
+    ['empty design wrapper', wrapperPath, ''],
+    ['disabled design', wrapperPath, wrapperSource.replace(' designEnabled ', ' designEnabled={false} ')],
+    ['missing design surface import', wrapperPath, wrapperSource.replace("import WorkspaceDesignSurface from './WorkspaceDesignSurface'", '')],
+  ]) {
+    if (content === null) await rm(path)
+    else await writeFile(path, content)
+    const invalidDesign = fixture()
+    await assert.rejects(release({ cwd: directory, ...invalidDesign, log: () => {}, writeReceipt: false }), /canonical Nalu redesign is missing/)
+    assert.equal(invalidDesign.calls.filter(call => call.command !== 'git').length, 0, name + ': stop before checks, build or deployment tools')
+    await writeFile(appPath, appSource)
+    await writeFile(wrapperPath, wrapperSource)
+    report.push(name + ' is refused before release tooling')
+  }
   const gitMetadata = fixture({ liveSource: null, liveGitSource: 'a'.repeat(40), candidateSource: null, candidateGitSource: commit })
   const gitReceipt = await release({ cwd: directory, ...gitMetadata, log: () => {}, writeReceipt: false })
   assert.equal(gitReceipt.complete, true)

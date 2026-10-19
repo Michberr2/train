@@ -514,7 +514,11 @@ async function handleChat(req: any, res: any, clientAbort: AbortController, dead
   // Tinker's current API supports all six effort presets. Output depth is
   // separate: honor the user's effort instead of silently clamping High.
   const effortLevels = ['none', 'min', 'low', 'medium', 'high', 'xhigh']
-  const requestedEffort = effortLevels.includes(String(reasoning)) ? String(reasoning) : 'low'
+  // Medium is the safe product default: low effort is useful for an explicit
+  // fast mode, but it is too willing to skip arithmetic and edge-case checks
+  // when callers omit the setting (older mobile/CLI clients do). Preserve an
+  // explicit user choice while giving new and legacy clients the stronger path.
+  const requestedEffort = effortLevels.includes(String(reasoning)) ? String(reasoning) : 'medium'
   const rawTier = Number(body.thinkLevel)
   const keywordTier = Math.max(0, Math.min(3, Number.isFinite(rawTier) && rawTier > 0 ? Math.floor(rawTier) : think ? 1 : 0))
   // Keyword modes and the effort setting now share one effective effort. A
@@ -533,7 +537,8 @@ async function handleChat(req: any, res: any, clientAbort: AbortController, dead
   const thinkLevel = Math.max(keywordTier, reasoningTier)
   // Only the deep-think KEYWORDS use the marker/refine path (the slider does not).
   const deepThink = keywordTier > 0
-  const thinkTokens = userMaxTokens || (uiReasoning === 'xhigh' ? 22000 : [8192, 14000, 22000, 32000][thinkLevel])
+  const defaultTokenTier = Math.max(thinkLevel, uiReasoning === 'medium' ? 1 : uiReasoning === 'high' ? 2 : uiReasoning === 'xhigh' ? 3 : 0)
+  const thinkTokens = userMaxTokens || (uiReasoning === 'xhigh' ? 22000 : [8192, 14000, 22000, 32000][defaultTokenTier])
   if (!Array.isArray(messages)) {
     res.status(400).json({ error: 'messages array required' })
     return
@@ -939,7 +944,7 @@ async function handleChat(req: any, res: any, clientAbort: AbortController, dead
           ...(/glm/i.test(provider.model) || /z\.ai/i.test(provider.base) ? { thinking: { type: deepThink || ['medium', 'high', 'xhigh'].includes(uiReasoning) ? 'enabled' : 'disabled' } } : {}),
           // Inkling (base or a trained Inkling LoRA) is a reasoning model: without
           // this it dumps chain-of-thought into content. The user's chosen level
-          // ('none'|'low'|'medium'|'high', default 'low') routes reasoning to the
+          // ('none'|'low'|'medium'|'high', default 'medium') routes reasoning to the
           // separate reasoning_content field and keeps content clean.
           ...(/inkling/i.test(provider.model) ? { reasoning_effort: reasoningEffort } : {}),
           // A prepared research brief does not disable the task's native tools.
