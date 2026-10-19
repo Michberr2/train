@@ -82,7 +82,7 @@
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-work-counts>[data-status=done] dd { color:#466f66; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-task-add { padding:3px 0 3px 5px; border:0; border-radius:6px; color:#315d83; background:transparent; font-size:10px; font-weight:550; cursor:pointer; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-add-task-form { display:flex; flex-direction:column; gap:8px; margin-bottom:12px; padding:11px; border:1px solid #dce5ee; border-radius:13px; background:#fff; }
-.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-add-task-form>input { width:100%; padding:7px 8px; border:1px solid #dce5ee; border-radius:8px; color:#243044; background:#f7f9fc; font-size:12px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-add-task-form>textarea { width:100%; padding:7px 8px; border:1px solid #dce5ee; border-radius:8px; color:#243044; background:#f7f9fc; font-size:12px; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-add-task-form>div { display:flex; align-items:center; gap:6px; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-add-task-form select { flex:1; min-width:0; min-height:29px; padding:3px 5px; border:1px solid #e0e7ef; border-radius:8px; color:#526174; background:#f7f9fc; font-size:11px; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-add-task-form button { display:grid; place-items:center; min-height:29px; padding:4px 9px; border:0; border-radius:8px; color:#315d83; background:#eaf1f8; font-size:11px; cursor:pointer; }
@@ -147,4 +147,44 @@
   .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-composer textarea,.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-field>input,.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-field>textarea { font-size:16px; }
   .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-create { padding:20px 16px; }
   .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-create-heading h2 { font-size:21px; }
+}
+
+/* A collapsed overview leaves the conversation and its scoped board in place. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-project-overview { flex:0 0 auto; min-width:0; margin:0 20px 10px; border:1px solid #dfe7ef; border-radius:10px; color:#526174; background:#f2f6fa; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-project-overview>summary { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; min-height:32px; padding:7px 10px; cursor:pointer; list-style:none; font-size:10px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-project-overview>summary::-webkit-details-marker { display:none; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-project-overview>summary strong { color:#344358; font-size:11px; font-weight:600; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-project-overview>summary::after { content:'+'; margin-left:auto; font-size:14px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-project-overview[open]>summary::after { content:'−'; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-project-overview>nav { display:flex; gap:6px; max-height:140px; padding:0 8px 8px; overflow:auto; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-project-overview>nav>button { flex:0 0 180px; min-width:0; padding:8px 9px; border:1px solid #dce5ee; border-radius:7px; color:#657284; background:#fff; text-align:left; cursor:pointer; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-project-overview>nav>button[aria-current=page] { border-color:#9db7cf; background:#edf4fa; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-project-overview>nav>button strong { display:block; overflow:hidden; color:#344358; font-size:11px; font-weight:550; text-overflow:ellipsis; white-space:nowrap; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-project-overview>nav>button span { display:block; margin-top:3px; font-size:10px; line-height:1.4; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-project-overview :is(summary,button):focus-visible { outline:2px solid #527fa6; outline-offset:2px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-task-controls span.swarm-task-status { display:flex; align-items:center; cursor:default; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-task[data-status=failed] .swarm-task-status { color:#88485b; background:#f6edf0; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-task[data-status=cancelled] .swarm-task-status { color:#647080; background:#edf0f3; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-task-progress { display:flex; align-items:center; gap:7px; margin:7px 0; color:#526174; font-size:10px; font-variant-numeric:tabular-nums; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-task-progress>progress { flex:1; width:0; height:5px; accent-color:#527fa6; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-task-actions>button:disabled,.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-task-owner>select:disabled { opacity:.6; cursor:default; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-task-error { flex-basis:100%; color:#88485b; font-size:10px; line-height:1.4; }
+@media(max-width:767px) {
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-project-overview { margin-inline:15px; }
+}
+
+/* Real replies use the shared safe Markdown renderer within the same chat lane. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-message-markdown { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-message-markdown .markdown-body { min-width:0; max-width:100%; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-message-markdown p { margin:8px 0; white-space:normal; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-message-markdown :is(pre,.katex-display,.markdown-body>div) { max-width:100%; overflow-x:auto; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-message-markdown pre { color:#344358; background:#eaf0f6; border-color:#dce5ee; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-message-markdown pre button { color:#344358; background:#fff; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-message-markdown a { color:#315d83; overflow-wrap:anywhere; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-add-task-form>textarea { min-height:82px; max-height:240px; resize:vertical; line-height:1.5; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-task-length { margin:0; color:#657284; font-size:10px; line-height:1.4; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-task-length[role=alert] { color:#88485b; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-task h4 { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; }
+@media(max-width:767px) {
+  .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-add-task-form>textarea { font-size:16px; }
 }

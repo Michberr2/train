@@ -1,11 +1,12 @@
 import NaluMark from '../../landing/NaluMark'
-import type { ActivityItem } from './workspaceActivityModel'
+import type { ActivityItem } from '../../workspace/design/workspaceActivity'
 
 export type AgentName = 'Nalu' | 'Rocky' | 'Milo'
 
-/** The named dogs identify local samples only. Real work remains attributed to
- * Nalu until its activity source supplies an actual agent identity. */
+/** Real Swarm work supplies its assigned identity. Ordinary chats and CLI work
+ * remain attributed to Nalu; only the isolated fixtures use sample mappings. */
 export function agentForItem(item: ActivityItem): { name: AgentName } {
+  if (item.swarm) return { name: item.swarm.agent }
   if (item.preview) {
     const chatId = item.chatId || item.id.replace(/^sample-work:/, '')
     if (chatId === 'preview-budget') return { name: 'Rocky' }

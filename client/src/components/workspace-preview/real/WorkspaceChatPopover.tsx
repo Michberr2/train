@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import NaluMark from '../../landing/NaluMark'
 import WorkspaceSwarm from './WorkspaceSwarm'
-import type { SwarmController } from './useSwarmPreview'
+import { isSwarmRoom, type SwarmController, type SwarmThread, type SwarmRoomReference } from '../../workspace/design/swarmTypes'
 import { AgentHead } from './WorkspaceAgentIdentity'
-import type { SwarmThread } from './swarmPreviewModel'
 import './workspace-chat-popover.css'
 
 export type WorkspaceChatPopoverProps = {
   swarm?: SwarmController
+  swarmNavigationRequest?: SwarmRoomReference & { key: number }
   persistenceKey?: string
   fullPageAnchor?: HTMLElement | null
   fullPageVisible?: boolean
@@ -42,7 +42,7 @@ function QuickTab({ label, active, onOpen, onHide, children }: { label: string; 
 }
 
 /** Window presentation: callers supply the real chat renderer and optional Swarm controller. */
-export default function WorkspaceChatPopover({ swarm, persistenceKey = HIDDEN_TABS_KEY, fullPageAnchor, fullPageVisible = false, onChatVisibilityChange, open, onOpen, onClose, onNewChat, title, history, chatTools, chatItems, activeChatId, onSelectChat, children }: WorkspaceChatPopoverProps) {
+export default function WorkspaceChatPopover({ swarm, swarmNavigationRequest, persistenceKey = HIDDEN_TABS_KEY, fullPageAnchor, fullPageVisible = false, onChatVisibilityChange, open, onOpen, onClose, onNewChat, title, history, chatTools, chatItems, activeChatId, onSelectChat, children }: WorkspaceChatPopoverProps) {
   const launcher = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const expand = useRef<HTMLButtonElement>(null)
@@ -112,6 +112,14 @@ export default function WorkspaceChatPopover({ swarm, persistenceKey = HIDDEN_TA
       else panel.current?.focus({ preventScroll: true })
     })
   }
+
+  const consumedSwarmNavigation = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    const target = swarmNavigationRequest
+    if (!open || !swarm || !target || consumedSwarmNavigation.current === target.key || !isSwarmRoom(swarm.state, target.projectId, target.thread)) return
+    consumedSwarmNavigation.current = target.key
+    showSwarm(target.projectId, target.thread)
+  }, [open, swarmNavigationRequest, swarm?.state])
 
   useLayoutEffect(() => {
     if (open || fullPageVisible) setHasShownChat(true)

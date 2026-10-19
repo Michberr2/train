@@ -1,4 +1,5 @@
 // Shared read-only activity adapters. They never change chats or execute work.
+import type { SwarmAgentId, SwarmRoomReference } from './swarmTypes'
 export interface ActivityMessage {
   id?: string
   role: 'user' | 'assistant'
@@ -18,10 +19,12 @@ export interface ActivityChat {
   messages: ActivityMessage[]
   attachments?: unknown[]
 }
-export type ActivityStatus = 'queued' | 'running' | 'waiting' | 'done' | 'saved' | 'failed' | 'cancelled'
+export type ActivityStatus = 'queued' | 'running' | 'waiting' | 'done' | 'saved' | 'failed' | 'cancelled' | 'paused'
 export interface ActivityItem {
   id: string
   chatId?: string
+  /** Explicit Swarm navigation, never represented as an ordinary chat ID. */
+  swarm?: SwarmRoomReference & { agent: SwarmAgentId; projectTitle: string; taskId?: string }
   status: ActivityStatus
   title: string
   detail: string
@@ -100,7 +103,7 @@ export function mergeWorkspaceActivity(chats: ActivityChat[], activeChatIds: rea
   const validSamples = samples.filter(item => item.chatId && actualChatIds.has(item.chatId) && !realIds.has(item.chatId))
   const represented = new Set([...realIds, ...validSamples.flatMap(item => item.chatId ? [item.chatId] : [])])
   const saved = local.filter(item => item.status === 'saved' && !represented.has(item.chatId!))
-  const priority: Record<ActivityStatus, number> = { waiting: 0, failed: 1, running: 2, queued: 3, done: 4, cancelled: 5, saved: 6 }
+  const priority: Record<ActivityStatus, number> = { waiting: 0, failed: 1, running: 2, queued: 3, paused: 4, done: 5, cancelled: 6, saved: 7 }
   const seen = new Set<string>()
   return [...activeLocal, ...validRemote, ...validSamples, ...saved].filter(item => { if (seen.has(item.id)) return false; seen.add(item.id); return true }).sort((a, b) => priority[a.status] - priority[b.status] || b.updatedAt - a.updatedAt)
 }
