@@ -5,6 +5,9 @@
   --workspace-frame-bottom:140px;
   --workspace-frame-header:112px;
   --workspace-preview-banner:0px;
+  --workspace-frame-row-gap:16px;
+  --workspace-panel-padding:clamp(12px,1.3vw,18px);
+  --workspace-panel-height:calc(100dvh - var(--workspace-preview-banner) - var(--workspace-frame-header) - var(--workspace-frame-bottom) - var(--workspace-frame-row-gap) - var(--workspace-panel-padding) - var(--workspace-panel-padding) - 2px);
 }
 .nalu-design-review.workspace-design-surface[data-workspace-preview] { --workspace-preview-banner:24px; }
 .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-design-preview] {
@@ -27,13 +30,16 @@
   min-width:0;
   min-height:0;
   margin:0;
+  padding:var(--workspace-panel-padding);
 }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-view=chat]>.ws-main { padding:10px 14px 0; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-view=map]>.ws-main { padding:7px; }
 .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat])>.ws-main { grid-column:1/-1; }
 @media(max-width:950px) {
   .nalu-design-review.workspace-design-surface[data-workspace-design] { --workspace-frame-side:50px; --workspace-frame-bottom:124px; --workspace-frame-header:140px; }
 }
 @media(max-width:767px) {
-  .nalu-design-review.workspace-design-surface[data-workspace-design] { --workspace-frame-side:20px; --workspace-frame-bottom:112px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] { --workspace-frame-side:20px; --workspace-frame-bottom:112px; --workspace-frame-row-gap:10px; --workspace-panel-padding:12px; }
   .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-design-preview] { grid-template-columns:minmax(0,1fr); gap:10px 14px; }
   .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-view=chat] { grid-template-rows:var(--workspace-frame-header) 110px minmax(0,1fr); }
   .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace>.ws-main { grid-column:1; }

@@ -19,14 +19,14 @@ export default function PluginsPanel() {
     finally { if (loadVersion.current === version) setLoading(false) }
   }, [])
   useEffect(() => { void load(); return () => { loadVersion.current++ } }, [load])
-  return <div className="flex min-h-0 flex-1 flex-col font-sans text-ink">
-    <header className="flex flex-wrap items-center gap-3 px-6 py-4">
+  return <div className="ws-plugins flex min-h-0 flex-1 flex-col font-sans text-ink">
+    <header className="ws-plugins-header flex flex-wrap items-center gap-3 px-6 py-4">
       <div className="min-w-0 flex-1"><h1 className="text-base font-medium">Connections & Chrome</h1><p className="mt-1 text-sm text-dim">Connect an account through verified setup, or add Nalu to Chrome.</p></div>
       {!loading && !error && <span className="text-xs text-dim">{connections.length} saved {connections.length === 1 ? 'account' : 'accounts'}</span>}
       <button aria-label="Refresh connection status" disabled={loading} onClick={() => void load()} className="rounded-xl p-2 hover:bg-glass/10 disabled:opacity-50"><RefreshCw size={17} /></button>
     </header>
-    <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5">
-      <section aria-label="Nalu for Chrome" className="mb-5 rounded-2xl border border-accent/30 bg-accent/[0.08] p-5">
+    <div className="ws-plugins-content min-h-0 flex-1 overflow-y-auto px-6 pb-5">
+      <section aria-label="Nalu for Chrome" className="ws-plugins-chrome mb-5 rounded-2xl border border-accent/30 bg-accent/[0.08] p-5">
         <h2 className="text-[15px] font-medium">Nalu for Chrome</h2>
         <p className="mt-1 text-sm text-dim">Work with the page you are viewing. Nalu can read pages, click, type and navigate, with review before consequential actions. Scheduled runs stop when review is needed.</p>
         <ol className="mt-3 list-inside list-decimal space-y-1 text-sm text-dim">
@@ -40,7 +40,7 @@ export default function PluginsPanel() {
       </section>
       {loading && <p role="status" className="mb-4 text-sm text-dim">Loading your saved connections…</p>}
       {error && <p role="alert" className="mb-4 rounded-xl border border-red-400/30 p-3 text-sm">{error}</p>}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="ws-plugins-grid grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {CONNECT_APPS.map(app => {
           const accounts = connections.filter(c => c.app === app.app)
           const connected = accounts.filter(c => c.status === 'connected').length

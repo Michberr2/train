@@ -1,0 +1,181 @@
+/* Fit the real utility panels to their blue working surface. Keep the existing
+   colors, type weight and actions; compact spacing instead of scaling the UI.
+   Long collections retain one scrolling body, never clipped content. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-skills,.ws-settings,.ws-plugins,.ws-projects) {
+  min-width:0;
+  min-height:0;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-skills,.ws-settings) .ws-page-intro {
+  min-height:0; padding:0 0 14px; margin:0;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-skills,.ws-settings) .ws-page-intro .ws-intro-copy>.ws-eyebrow {
+  font-size:clamp(24px,2.6vw,32px); line-height:1.08; margin:0 0 7px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-skills,.ws-settings) .ws-page-intro .ws-intro-copy h1 {
+  font-size:clamp(15px,1.5vw,17px); line-height:1.4; margin:0 0 4px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings .ws-save-status {
+  margin-top:8px; padding:5px 9px;
+}
+
+/* Skills use actual action buttons, not the earlier switch-card arrangement.
+   Auto-fit measures the available panel width instead of the whole window. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-skills>nav {
+  flex-wrap:wrap; padding:0 0 12px; gap:8px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-skills>nav button { min-height:40px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-skills>div { padding:0 0 8px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-skill-cards {
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:12px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-skill-cards>li {
+  grid-template-columns:36px minmax(0,1fr); grid-template-rows:auto auto;
+  min-height:0; padding:15px; gap:10px 12px; align-content:start;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-skill-cards>li>div:first-child {
+  grid-column:1; grid-row:1; width:36px; height:36px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-skill-cards>li>div:nth-child(2) {
+  grid-column:2; grid-row:1; padding:0; overflow-wrap:anywhere;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-skill-cards>li>button {
+  grid-column:2; grid-row:2; justify-self:start; min-height:36px; max-width:100%;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-skill-cards>li::after { right:15px; bottom:15px; }
+
+/* Settings keep their one existing scroll owner. The category rail and cards
+   no longer spend most of a laptop-height panel on introductory whitespace. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-content {
+  grid-template-columns:155px minmax(0,1fr); gap:12px 16px; padding:0 0 8px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-content>nav { padding:6px; gap:3px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-content>nav button {
+  min-height:40px; padding:9px 10px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-group:not([hidden]) {
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr)); gap:12px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-group>section { padding:16px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-group>section>div:first-child {
+  padding-bottom:11px; margin-bottom:11px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-group>section .grid-cols-3 {
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,70px),1fr)); gap:6px;
+}
+/* Support Nalu has a title/action header, unlike the icon/title/description
+   header used by preference sections. Keep that real markup in its flex row. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-group>section[aria-labelledby="support-nalu-heading"]>div:first-child {
+  display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-group input:is([type=checkbox],[type=radio]) { min-height:0; }
+
+/* Headers stay in place while projects and connections each scroll once.
+   Their empty state adapts to available height without a mandatory 240px box. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-projects-header,.ws-plugins-header) {
+  padding:10px 12px; gap:12px; flex-shrink:0;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-projects-content,.ws-plugins-content) {
+  padding:12px; overscroll-behavior:contain;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-projects-grid,.ws-plugins-grid) {
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:12px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-projects-empty {
+  height:auto; min-height:min(180px,calc(var(--workspace-panel-height,600px) * .55)); padding:20px 12px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-plugins-chrome { padding:15px; margin-bottom:12px; }
+
+/* Wide Memory keeps the library and inspector independently usable. Its graph
+   yields height to saved work and details as the blue panel becomes shorter. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-heading {
+  flex-direction:row; flex-wrap:wrap; align-items:center; padding:0 0 14px; gap:12px 20px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-heading h1 {
+  font-size:clamp(25px,2.5vw,34px); margin:7px 0; line-height:1.15;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-summary {
+  display:flex; width:auto; flex-wrap:wrap; gap:12px 18px; padding:0;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-summary button {
+  flex-direction:row; align-items:baseline; min-height:32px; gap:7px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-summary strong { font-size:20px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-layout {
+  grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); gap:14px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-library-tools { padding:12px 12px 0; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-search { min-height:40px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-search input { height:38px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-filters { flex-wrap:wrap; gap:4px 14px; margin-top:8px; overflow:visible; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-filters button { min-height:36px; padding-bottom:5px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-list-heading { padding:5px 12px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-item { min-height:62px; padding:10px 9px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-item-copy { gap:4px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-library-footer { padding:9px 12px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-inspector { gap:12px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-network>header { padding:12px 12px 0; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-canvas {
+  height:clamp(120px,calc(var(--workspace-panel-height,600px) * .28),200px);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-details { padding:14px 12px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-details>header { padding-bottom:10px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-facts { gap:0 12px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-facts>div { padding:7px 0; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-related { padding-top:10px; }
+
+/* Map's fixed header previously consumed almost all of a short search panel.
+   Compact its spacing, retaining input/button targets and the real map canvas. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-workspace { min-height:0; min-width:0; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-search-header { padding:14px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-search-heading { gap:9px; margin-bottom:8px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-search-intro { margin-bottom:9px; line-height:1.5; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-place-categories { margin-top:9px; gap:5px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-search-results { min-height:0; padding:10px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-search-empty { min-height:0; padding:14px 5px; }
+
+/* Only trim Autopilot's surrounding chrome: node dimensions stay unchanged so
+   the live canvas positions, connection paths and drag targets still agree. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-toolbar { padding:14px; gap:8px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-flowbar { min-height:56px; padding:8px 12px; gap:8px; }
+@media(min-width:1051px) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-title { margin-bottom:12px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-title span { margin-bottom:7px; }
+}
+
+@media(max-width:1100px) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-content {
+    display:flex; flex-direction:column; gap:12px;
+  }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-content>nav {
+    position:static; display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,120px),1fr)); margin:0; width:100%;
+  }
+}
+
+@media(max-width:950px), (max-height:620px) {
+  /* A stacked Memory view uses the page scroll only. Removing the forced
+     440px library and its nested scrollbar keeps all saved items reachable. */
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-memory.memory-review { overflow-y:auto; padding-bottom:4px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-layout { display:flex; flex-direction:column; flex:none; gap:14px; overflow:visible; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-library { height:auto; min-height:0; max-height:none; flex-shrink:0; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-list { flex:none; overflow:visible; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-inspector { overflow:visible; padding-right:0; }
+}
+
+@media(max-height:740px) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-skills,.ws-settings) .ws-page-intro { padding-bottom:10px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-heading { padding-bottom:10px; gap:8px 16px; }
+  /* On short windows the entire search inspector scrolls once, so its input,
+     filters and results remain reachable even if the fixed header cannot fit. */
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-workspace:not([data-map-expanded=true]) .map-search-panel { overflow-y:auto; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-workspace:not([data-map-expanded=true]) .map-search-results { flex:none; overflow:visible; }
+}
+
+@media(max-width:600px) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-projects-header,.ws-plugins-header) { flex-wrap:wrap; padding:8px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-projects-content,.ws-plugins-content) { padding:8px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-group>section { padding:13px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-skill-cards>li { padding:12px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); width:100%; gap:4px 12px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-summary span { font-size:10px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-search input { font-size:16px; }
+}

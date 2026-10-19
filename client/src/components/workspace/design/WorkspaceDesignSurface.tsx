@@ -11,6 +11,9 @@ import '../../workspace-preview/real/workspace-memory-refined.css'
 import '../../workspace-preview/real/workspace-palette-consistency.css'
 import '../../workspace-preview/real/workspace-desktop-shell.css'
 import './workspace-design-surface.css'
+import './workspace-panel-fit.css'
+import './workspace-activity-fit.css'
+import './workspace-chat-fit.css'
 
 /** Shared visual surface only. Authentication, storage and network access stay
  * with the caller; importing this component never initializes sample data. */

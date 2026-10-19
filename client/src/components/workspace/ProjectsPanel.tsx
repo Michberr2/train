@@ -90,8 +90,8 @@ export default function ProjectsPanel() {
   }
 
   return (
-    <div className="flex flex-1 min-h-0 flex-col bg-glass/[0.09] backdrop-blur-2xl font-sans text-ink">
-      <header className="flex items-start justify-between gap-4 border-b border-glass/[0.18] px-6 py-5">
+    <div className="ws-projects flex flex-1 min-h-0 flex-col bg-glass/[0.09] backdrop-blur-2xl font-sans text-ink">
+      <header className="ws-projects-header flex items-start justify-between gap-4 border-b border-glass/[0.18] px-6 py-5">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-glass/[0.11] backdrop-blur-2xl">
             <FolderGit2 className="h-5 w-5 text-ink" />
@@ -115,7 +115,7 @@ export default function ProjectsPanel() {
         )}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+      <div className="ws-projects-content min-h-0 flex-1 overflow-y-auto px-6 py-5">
         {showForm && (
           <div className="mb-5 rounded-xl border border-glass/[0.18] bg-glass/[0.11] backdrop-blur-2xl p-4">
             <div className="mb-3 flex items-center justify-between">
@@ -175,7 +175,7 @@ export default function ProjectsPanel() {
         )}
 
         {projects.length === 0 ? (
-          <div className="flex h-full min-h-[240px] flex-col items-center justify-center rounded-xl border border-dashed border-glass/[0.18] text-center">
+          <div className="ws-projects-empty flex h-full min-h-[240px] flex-col items-center justify-center rounded-xl border border-dashed border-glass/[0.18] text-center">
             <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-glass/[0.11] backdrop-blur-2xl">
               <FolderGit2 className="h-6 w-6 text-dim" />
             </div>
@@ -195,7 +195,7 @@ export default function ProjectsPanel() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="ws-projects-grid grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {projects.map((project) => (
               <div
                 key={project.id}

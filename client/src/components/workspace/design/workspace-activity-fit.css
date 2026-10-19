@@ -1,0 +1,131 @@
+/* Keep activity in the approved desktop frame. Each Memory tab has one
+   scrolling body; switching tabs must not introduce a 600px outer page. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-live-hub {
+  overflow:hidden; padding:0; min-height:0;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-header {
+  flex-shrink:0; align-items:center; gap:16px; padding:0 0 12px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-header h1 {
+  font-size:clamp(26px,2.6vw,34px); margin-bottom:7px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-header p { line-height:1.5; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-header>button { gap:16px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-tabs { min-height:36px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-tabs>button { padding-bottom:9px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-live {
+  flex:1; min-height:0; overflow:auto; padding:8px 2px 4px; overscroll-behavior:contain;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-saved-context {
+  display:flex; flex:1; flex-direction:column; min-height:0; height:auto; padding-top:12px; overflow:hidden;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-saved-context>.ws-memory {
+  flex:1; min-height:0; height:100%;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-filters { padding:0 0 10px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-section-heading { margin-bottom:10px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] :is(.live-hub-work-grid,.live-hub-saved-grid) {
+  grid-template-columns:repeat(auto-fill,minmax(min(100%,255px),1fr)); gap:12px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-card-heading { padding:11px 12px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-thumbnail {
+  height:clamp(96px,calc(var(--workspace-panel-height,600px) * .22),140px); margin:0 12px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-card-copy { min-height:0; padding:12px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-card-copy h3 { margin-bottom:6px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-card-copy>p { min-height:0; line-height:1.55; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-update { padding-top:8px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-card-actions { padding:0 12px 10px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-activity summary { min-height:36px; padding:0 12px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-saved-work { margin-top:18px; padding-top:14px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-saved-card>.live-hub-thumbnail { margin:0; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-saved-card>div:last-child { padding:11px 12px 8px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-empty { padding:20px; }
+
+/* Only the window furniture changes. Real saved artifacts and their source
+   remain untouched, and expanded details use the existing outer scroller. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-agent-screens {
+  inset:calc(var(--workspace-frame-header) + var(--workspace-frame-row-gap)) var(--workspace-frame-side) var(--workspace-frame-bottom);
+  padding:18px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .agent-screens-scroll { flex:1; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .agent-screen-grid {
+  grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr)); gap:14px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .agent-window-preview {
+  height:clamp(110px,calc(var(--workspace-panel-height,600px) * .32),210px);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .agent-screen-focus { gap:14px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .agent-screen-focus-artifact {
+  height:clamp(140px,calc(var(--workspace-panel-height,600px) - 160px),500px);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .agent-screen-other-workers>div { max-height:none; overflow:visible; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .agent-screens-empty { min-height:0; padding:22px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .agent-screen-pages { margin-top:12px; }
+
+/* Autopilot's node geometry and pan/zoom calculations are deliberately left
+   alone. Its empty state yields to the stage instead of clipping its actions. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-view=agents] .ws-feature-shell>.ws-page-intro {
+  min-height:0; margin:0 0 12px; padding:0; gap:12px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-view=agents] .ws-page-intro .ws-intro-copy h1 {
+  font-size:clamp(15px,1.5vw,17px); line-height:1.4; margin:0 0 4px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-view=agents] .ws-page-intro .ws-intro-copy>.ws-eyebrow {
+  font-size:clamp(24px,2.6vw,32px); line-height:1.08; margin:0 0 7px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-view=agents] .ws-page-intro>.nalu-avatar { width:64px!important; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ap-main,.ap-stage) { min-height:0; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-empty {
+  inset:0; width:auto; max-width:none; transform:none; padding:16px;
+  overflow:auto; gap:10px; justify-content:safe center;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-empty>* { flex-shrink:0; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-empty p { max-width:390px; }
+
+/* A short laptop window has room for a horizontal action row, but not a tall
+   command rail. Keep menus floating into the stage rather than clipping them
+   inside a newly scrolling toolbar. */
+@media(min-width:1051px) and (max-height:850px) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-main { padding-left:0; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-toolbar {
+    position:relative; inset:auto; width:auto; flex-direction:row; flex-wrap:wrap; align-items:center;
+    flex-shrink:0; padding:10px 12px; gap:8px; border-right:0;
+  }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-title { flex:1 1 180px; margin:0; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-title span { margin-bottom:4px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-title input { padding:0; font-size:20px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-toolbar>div.relative { width:auto; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ap-toolbar>button,.ap-toolbar>div>button) {
+    width:auto; min-height:40px;
+  }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-toolbar>button:last-of-type { margin:0; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-workspace .ap-toolbar .ap-toolbar-menu {
+    inset:calc(100% + 8px) 10px auto auto; width:min(330px,calc(100% - 20px));
+    max-height:max(100px,calc(var(--workspace-panel-height,600px) - 150px));
+  }
+}
+
+/* At short heights, the entire Autopilot surface scrolls once if its controls
+   need more room. The canvas retains a usable viewport; its coordinate system
+   and intentional pan/zoom scroller are unchanged. */
+@media(max-height:850px) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-view=agents] .ws-feature-shell {
+    overflow:auto; overscroll-behavior:contain;
+  }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-workspace {
+    flex:1 0 auto; overflow:visible;
+  }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-main { overflow:visible; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-main>:not(.ap-stage) { flex-shrink:0; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-stage { flex:1 0 180px; min-height:180px; }
+}
+
+@media(max-width:720px) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-header { align-items:flex-start; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-filters { flex-wrap:wrap; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .live-hub-filters>button { flex:1 1 42%; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-agent-screens { padding:12px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .agent-screen-focus { grid-template-columns:minmax(0,1fr); }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .agent-screen-focus-artifact { height:clamp(140px,32dvh,260px); }
+}

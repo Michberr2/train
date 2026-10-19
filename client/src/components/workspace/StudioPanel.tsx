@@ -255,7 +255,7 @@ export default function StudioPanel({
                 {onStop && <button onClick={onStop} className="ws-idea-pill">Stop generation</button>}
               </div>
             ) : hasFeedback ? feedback : inlineCard ? (
-              <div className="ws-studio-result p-4">{inlineCard}</div>
+              <div className="ws-studio-result p-4" data-studio-result-kind={inline?.kind}>{inlineCard}</div>
             ) : inline?.html ? (
               inline.kind === 'motion' ? <MotionPreview html={inline.html} motion={inline.motion} /> : <iframe title={inline.title} srcDoc={inline.html} sandbox="allow-scripts allow-forms allow-popups allow-modals" className="ws-studio-frame w-full border-0 bg-white" />
             ) : inline ? (
