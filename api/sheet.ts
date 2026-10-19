@@ -8,7 +8,7 @@ import { groundFromPrompt } from './_grounding'
 import { chatCompleteContinued, primaryProvider, fallbackProvider, emergencyProvider } from './_llm'
 import { identityForRequest, identityBlock } from './_db'
 import { normalizeSheets } from './_validate'
-import { buildEvaluator, type EvalSheet } from '../client/src/components/workspace/formulaEval'
+import { buildEvaluator, type EvalSheet } from './_formulaEval'
 import { reserveStudioQuota, studioLimitMessage } from './_limits'
 import { pickDesign, designPayload } from './_design'
 

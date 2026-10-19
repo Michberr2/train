@@ -1,6 +1,9 @@
 // Nalu specialist FLEET — the routed registry of hyper-specialized experts.
 // Shared by the chat handler and the offline routing-eval harness.
-export { VISION_CAPABLE } from './_modelCapabilities.ts'
+// Kept here for compatibility with callers that import the specialist
+// registry directly. The capability implementation is also exported from
+// _modelCapabilities for handlers that need model-specific checks.
+export const VISION_CAPABLE = true
 //
 // EVERY specialist is its own proprietary NALU MODEL — a small model fine-tuned in
 // Tinker (from an open-source base) and owned by Nalu, trained SEPARATELY per domain
