@@ -76,6 +76,7 @@ export default function DesignCard({ html, kind = 'webpage', motion, truncated, 
             : `This ${kind} was cut off mid-generation. Finish its existing content and interactivity, preserving the artifact type, design, and everything already complete. Output the complete HTML artifact.`,
           kind,
           prevHtml: html,
+          ...(kind === 'webpage' && quality?.behaviorContract ? { prevWebsiteContract: quality.behaviorContract } : {}),
           ...(repair ? { previewIssues } : {}),
         }),
       })

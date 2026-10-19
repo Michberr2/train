@@ -69,13 +69,13 @@ import { extractAttachment, attachmentContext, attachmentExtractionSummary, type
 import { saveChatAttachment, loadChatAttachment } from './chatAttachments'
 import { openArtifactBlob } from './artifactIsolation'
 import MessageAttachments from './MessageAttachments'
-import { designReferenceBrief, designReferenceInstructions, designHtmlForEdit, prepareDesignResponse } from './designReferences'
+import { designReferenceBrief, designReferenceInstructions, designHtmlForEdit, prepareDesignResponse, updateDesignMessage } from './designReferences'
 import type { SheetDoc } from './SheetCard'
 import { normalizeDoc } from './docModel'
 import type { DocDoc, DocBlock } from './DocCard'
 import type { Deck } from './SlidesCard'
 import { cleanDeck, cleanSheet } from './textClean'
-import type { DesignArtifact, DesignKind } from './types'
+import type { DesignArtifact, DesignKind, WebsiteQuality } from './types'
 import { getBrand, ensureDefaultBrand, setBrand, deriveBrand } from './brandKit'
 import BrandBar from './BrandBar'
 // Heavy (three.js / pptxgenjs / docx / xlsx / fabric) — load only when a card is
@@ -1957,14 +1957,10 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       // canvas (Figma-like) / palette / brand / blueprint / poster / webpage.
       // Follow-up website tweaks REVISE the existing page (prevHtml) instead of
       // regenerating from scratch, so users can converge on a design.
-      const lastWebHtml = (() => {
-        const msgs = ctxChat?.messages || []
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          const d = msgs[i]?.design as { kind?: string; html?: string } | undefined
-          if (d?.html && (d.kind === 'webpage' || d.kind === 'board')) return d.html
-        }
-        return ''
-      })()
+      // Keep the source and its checks together, bounded to the selected Studio
+      // creation. A later board or website must not replace an older edit target.
+      const lastWebArtifact = lastArts.designs.webpage as { html?: string; quality?: WebsiteQuality } | undefined
+      const lastWebHtml = lastWebArtifact?.html || ''
       const DESIGN_KINDS = ['website', 'logo', 'palette', 'brand', 'blueprint', 'poster', 'canvas', 'shopping', 'motion', 'game', 'board', 'carousel']
       let studioKind: DesignKind | null = !plain && DESIGN_KINDS.includes(forcedKind)
         ? (forcedKind === 'website' ? 'webpage' : forcedKind as DesignKind) : null
@@ -2012,14 +2008,15 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
                   ? `\n\nPREVIOUS ${editTarget.kind.toUpperCase()} JSON (revise THIS — keep everything not mentioned in the request identical; output the full updated JSON):\n${JSON.stringify(prevArt).slice(0, 9000)}`
                   : ''),
               kind: studioKind,
+              ...(studioKind === 'webpage' ? { websiteChangeRequest: buildPreamble + content } : {}),
               ...(studioKind === 'logo' ? { logoBrief: { request: resuming?.prompt || content, answers: logoAnswers } } : {}),
               ...(studioKind === 'logo' && refAnalysis.trim() ? { logoReference: refAnalysis.trim() } : {}),
               ...(studioKind === 'logo' && prevArt && editTarget?.kind === 'logo' ? { prevLogo: Object.fromEntries(Object.entries(prevArt).filter(([key]) => !['imgCache', 'options', 'mark', 'lockup'].includes(key))) } : {}),
               brand: getBrand() || undefined,
               ...(prevArt && 'html' in prevArt && (prevArt as { html?: string }).html
-                ? { prevHtml: designHtmlForEdit((prevArt as { html: string }).html, imageAtts) }
+                ? { prevHtml: designHtmlForEdit((prevArt as { html: string }).html, imageAtts), prevWebsiteContract: (prevArt as { quality?: WebsiteQuality }).quality?.behaviorContract }
                 : isWebEdit
-                  ? { prevHtml: lastWebHtml }
+                  ? { prevHtml: lastWebHtml, prevWebsiteContract: lastWebArtifact?.quality?.behaviorContract }
                   : {}),
               ...(prevArt && editTarget?.kind === 'blueprint' ? { prevBlueprint: JSON.stringify(prevArt).slice(0, 60000) } : {}),
           }
@@ -2621,7 +2618,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
                               setChats((cs) =>
                                 cs.map((c) =>
                                   c.id === activeId
-                                    ? { ...c, messages: c.messages.map((mm, k) => (k === i ? { ...mm, design: art } : mm)) }
+                                    ? { ...c, messages: c.messages.map((mm, k) => ((m.id ? mm.id === m.id : k === i) ? updateDesignMessage(mm, art, Date.now(), m.design) : mm)) }
                                     : c,
                                 ),
                               )
@@ -2960,7 +2957,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
                           setChats((cs) =>
                             cs.map((ch) =>
                               ch.id === c.chatId
-                                ? { ...ch, messages: ch.messages.map((mm, k) => (k === c.mi ? { ...mm, design: art } : mm)) }
+                                ? { ...ch, messages: ch.messages.map((mm, k) => ((m.id ? mm.id === m.id : k === c.mi) ? updateDesignMessage(mm, art, Date.now(), m.design) : mm)) }
                                 : ch,
                             ),
                           )

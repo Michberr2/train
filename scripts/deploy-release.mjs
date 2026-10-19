@@ -5,6 +5,8 @@ import { resolve } from 'node:path'
 import { homedir } from 'node:os'
 import assert from 'node:assert/strict'
 import { checkPreview } from './preview-release-checks.mjs'
+import { OFFLINE_RELEASE_CHECKS } from './offline-release-checks.mjs'
+import { browserTestPolicy, parseReleaseArguments, selectReleaseChecks } from './lib/release-check-mode.mjs'
 
 export const RELEASE_DOMAINS = ['n4lu.ai', 'www.n4lu.ai', 'n4lu.com', 'www.n4lu.com']
 const root = fileURLToPath(new URL('../', import.meta.url))
@@ -89,10 +91,12 @@ export function verifyReleaseAncestry({ currentSource, candidateSource, domain, 
   }
 }
 
-/** Injected runner/fetch are only used by deterministic local regressions. No
- * environment switch can bypass source, test, preview or domain checks. */
-export async function release({ cwd = root, target, publish, run = runProcess, fetchImpl = globalThis.fetch, readToken = cliToken, log = console.log, writeReceipt = true } = {}) {
+/** Injected runner/fetch are only used by deterministic local regressions. The
+ * explicit recorded browser waiver changes no source/build/HTTP/domain gate. */
+export async function release({ cwd = root, target, publish, browserTestSkipReason, run = runProcess, fetchImpl = globalThis.fetch, readToken = cliToken, log = console.log, writeReceipt = true } = {}) {
   assert.ok(!(target && publish), 'Choose publication or rollback, not both')
+  const browserPolicy = browserTestPolicy(browserTestSkipReason)
+  const browserChecks = selectReleaseChecks([...OFFLINE_RELEASE_CHECKS, 'flow-cross-client-integration.mjs'], browserTestSkipReason)
   const operation = publish ? 'publish' : target ? 'rollback' : 'deploy'
   const call = (command, args) => run(command, args, cwd)
   assert.equal(call('git', ['status', '--porcelain']).trim(), '', 'Release from a clean, reviewed checkout. Commit only the intended source first.')
@@ -130,10 +134,12 @@ export async function release({ cwd = root, target, publish, run = runProcess, f
     previous[domain] = current.id
   }
   log('Checking source, offline regressions, build and sibling compatibility…')
-  call(process.execPath, ['scripts/offline-release-checks.mjs'])
+  if (browserPolicy.mode === 'no-browser') log(`Browser tests NOT RUN by explicit request: ${browserPolicy.reason}`)
+  call(process.execPath, ['scripts/offline-release-checks.mjs', ...(browserPolicy.mode === 'no-browser' ? ['--no-browser', browserPolicy.reason] : [])])
   call(process.execPath, ['scripts/check-nalu-sync.mjs'])
   call(process.execPath, ['--experimental-strip-types', 'scripts/native-chat-contract-regressions.mjs'])
-  call(process.execPath, ['scripts/flow-cross-client-integration.mjs'])
+  if (browserPolicy.mode === 'full') call(process.execPath, ['scripts/flow-cross-client-integration.mjs'])
+  else log(`NOT RUN browser check flow-cross-client-integration.mjs: ${browserPolicy.reason}`)
   assert.equal(call('git', ['status', '--porcelain']).trim(), '', 'Checks changed tracked or untracked source; inspect it before release')
   assert.equal(call('git', ['rev-parse', 'HEAD']).trim(), commit, 'Source commit changed while checks ran')
   if (!deploymentUrl) {
@@ -149,7 +155,8 @@ export async function release({ cwd = root, target, publish, run = runProcess, f
   assert.equal(call('git', ['rev-parse', 'HEAD']).trim(), commit, 'Source commit changed while the candidate was built')
   log(`Verifying candidate ${deployment.id}…`)
   const candidate = await checkPreview(deploymentUrl, { fetchImpl })
-  const receipt = { at: new Date().toISOString(), operation, sourceCommit: deployment.sourceCommit, releaseCheckoutCommit: commit, projectId: project.projectId, deploymentId: deployment.id, deploymentUrl, previous, candidate, domains: [], complete: false }
+  const browserTests = browserPolicy.mode === 'full' ? { status: 'passed', skippedChecks: [] } : { status: 'not-run', reason: browserPolicy.reason, skippedChecks: browserChecks.skipped }
+  const receipt = { at: new Date().toISOString(), operation, sourceCommit: deployment.sourceCommit, releaseCheckoutCommit: commit, projectId: project.projectId, deploymentId: deployment.id, deploymentUrl, previous, candidate, browserTests, domains: [], complete: false }
   const persist = async () => {
     if (!writeReceipt) return
     await mkdir(resolve(cwd, '.vercel'), { recursive: true })
@@ -174,6 +181,7 @@ export async function release({ cwd = root, target, publish, run = runProcess, f
     receipt.complete = true
     await persist()
     log(`Live and verified: ${RELEASE_DOMAINS.map(domain => 'https://' + domain).join(' ')} (${deployment.id})`)
+    if (browserPolicy.mode === 'no-browser') log(`HTTP health, release identity and domains verified; browser tests were NOT RUN: ${browserPolicy.reason}`)
     return receipt
   } catch (error) {
     receipt.error = error instanceof Error ? error.message : String(error)
@@ -184,8 +192,6 @@ export async function release({ cwd = root, target, publish, run = runProcess, f
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const args = process.argv.slice(2)
-    if (args.length && !(args.length === 2 && ['--rollback', '--publish'].includes(args[0]))) throw new Error('Usage: ./deploy.sh [--publish https://verified-candidate.vercel.app | --rollback https://previous-deployment.vercel.app]')
-    await release({ target: args[0] === '--rollback' ? args[1] : undefined, publish: args[0] === '--publish' ? args[1] : undefined })
+    await release(parseReleaseArguments(process.argv.slice(2)))
   } catch (error) { console.error(error instanceof Error ? error.message : error); process.exitCode = 1 }
 }

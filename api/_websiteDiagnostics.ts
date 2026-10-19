@@ -1,6 +1,6 @@
 const stages = new Set(['plan', 'plan-runtime', 'edit', 'build', 'continue', 'review', 'script-repair', 'repair'])
 const categories = new Set(['timeout', 'rate_limit', 'quota', 'input_limit', 'provider_http', 'empty_response', 'unavailable'])
-const results = new Set(['valid', 'invalid-json', 'invalid-design', 'invalid-journeys', 'provider-error'])
+const results = new Set(['valid', 'invalid-json', 'invalid-design', 'invalid-journeys', 'invalid-requirements', 'provider-error'])
 const providers = new Set(['primary', 'fallback', 'emergency', 'other'])
 const finishes = new Set(['stop', 'length', 'other'])
 

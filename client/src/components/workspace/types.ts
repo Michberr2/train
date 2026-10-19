@@ -2,13 +2,14 @@
 // the kind→card router, and the cards all agree on the shape /api/design returns.
 import type { CanvasArtifact } from './CanvasCard'
 import type { PaletteArt, BrandArt, BlueprintArt, LogoArt, ShoppingArt } from './StudioCards'
+import type { WebsiteBehaviorContract } from '../../../../shared/websiteBehavior'
 
 export type DesignKind = 'webpage' | 'poster' | 'canvas' | 'palette' | 'brand' | 'blueprint' | 'logo' | 'shopping' | 'motion' | 'game' | 'board' | 'carousel'
 
 // webpage + poster + motion + game + board are self-contained-HTML artifacts
 // (DesignCard). motion is a looping animated "HyperFrame"; game is a playable
 // PlayCanvas game; board is a photo-breakdown executive presentation board.
-export type WebsiteQuality = { runtime?: {
+export type WebsiteQuality = { behaviorContract?: WebsiteBehaviorContract; runtime?: {
   status: 'passed' | 'partial' | 'failed' | 'unavailable'
   widths: number[]
   checks: { name: string; width: number; passed: boolean; detail?: string }[]

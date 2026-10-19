@@ -97,6 +97,7 @@ try {
   const success = fixture()
   const receipt = await release({ cwd: directory, ...success, log: line => success.logs.push(line) })
   assert.equal(receipt.complete, true)
+  assert.deepEqual(receipt.browserTests, { status: 'passed', skippedChecks: [] }, 'the default release retains all browser gates')
   assert.equal(receipt.domains.length, 4)
   assert.deepEqual(Object.values(success.aliases), Array(4).fill(deploymentId))
   assert.equal(JSON.parse(await readFile(join(directory, '.vercel/last-release.json'), 'utf8')).complete, true)
@@ -110,6 +111,30 @@ try {
   assert.ok(success.calls.findIndex(call => call.args[0] === 'merge-base') < success.calls.findIndex(call => call.command === process.execPath), 'live source ancestry is checked before builds and compatibility gates')
   assert.ok(success.calls.findIndex(call => call.args.includes('scripts/flow-cross-client-integration.mjs')) < success.calls.findIndex(call => call.command === 'vercel' && call.args[0] === 'deploy'), 'all compatibility gates run before candidate creation')
   report.push('successful release verifies all four aliases, exact deployment IDs, health and app bytes')
+  const waiverReason = 'User explicitly requested release testing without browsers.'
+  const waived = fixture()
+  const waivedReceipt = await release({ cwd: directory, ...waived, browserTestSkipReason: waiverReason, log: line => waived.logs.push(line) })
+  assert.equal(waivedReceipt.complete, true)
+  assert.equal(waivedReceipt.domains.length, 4)
+  assert.equal(waivedReceipt.browserTests.status, 'not-run')
+  assert.equal(waivedReceipt.browserTests.reason, waiverReason)
+  assert.ok(waivedReceipt.browserTests.skippedChecks.some(command => command[0] === 'flow-cross-client-integration.mjs'))
+  assert.ok(waivedReceipt.browserTests.skippedChecks.some(command => command[0] === 'attachment-extraction-regressions.mjs'))
+  assert.equal(waivedReceipt.browserTests.skippedChecks.filter(command => command[0] === 'map-browser-verify.mjs').length, 4)
+  assert.deepEqual(waived.calls.filter(call => call.command === process.execPath).map(call => call.args), [
+    ['scripts/offline-release-checks.mjs', '--no-browser', waiverReason],
+    ['scripts/check-nalu-sync.mjs'],
+    ['--experimental-strip-types', 'scripts/native-chat-contract-regressions.mjs'],
+  ], 'only actual browser gates are omitted; offline/build, sibling and native contract checks still run')
+  assert.deepEqual(JSON.parse(await readFile(join(directory, '.vercel/last-release.json'), 'utf8')).browserTests, waivedReceipt.browserTests)
+  assert.match(waived.logs.at(-1), /browser tests were NOT RUN/)
+  report.push('explicit browser waiver records the reason and every omitted command while still verifying build/source/health/identity/all domains')
+  for (const browserTestSkipReason of ['', '   ', null, false, 4, {}, 'x'.repeat(501), 'line\nline']) {
+    const invalidWaiver = fixture()
+    await assert.rejects(release({ cwd: directory, ...invalidWaiver, browserTestSkipReason, writeReceipt: false }), /recorded reason/)
+    assert.equal(invalidWaiver.calls.length, 0, 'invalid waiver is rejected before source or deployment commands')
+  }
+  report.push('missing, blank, malformed and excessive waiver reasons fail before any release command')
   await assertCanonicalWebDesign(fileURLToPath(new URL('../', import.meta.url)))
   report.push('actual compact production wrapper passes structural design checks without an arbitrary file-size threshold')
   for (const [name, path, content] of [
@@ -176,16 +201,20 @@ try {
     ['concurrent publication before alias assignment', { concurrentAlias: 'n4lu.ai' }, /changed to another release/, false],
     ['concurrent publication before final verification', { finalAliasRace: 'n4lu.ai' }, /changed before release verification completed/, true],
   ]
-  for (const [name, options, message, mayAssign] of failures) {
+  for (const browserTestSkipReason of [undefined, waiverReason]) for (const [name, options, message, mayAssign] of failures) {
+    // The only waived failure is the browser-only integration itself; every
+    // source, ancestry, build, metadata, HTTP, concurrency and alias guard is
+    // exercised unchanged in both modes.
+    if (browserTestSkipReason && options.flowFailure) continue
     const test = fixture(options)
-    await assert.rejects(release({ cwd: directory, ...test, log: line => test.logs.push(line) }), message)
+    await assert.rejects(release({ cwd: directory, ...test, browserTestSkipReason, log: line => test.logs.push(line) }), message)
     assert.ok(!test.logs.some(line => line.startsWith('Live and verified:')), name + ': never print false success')
     if (!mayAssign) assert.equal(test.calls.filter(call => call.command === 'vercel' && call.args[0] === 'alias').length, 0, name + ': no domains changed before validation')
     if (options.flowFailure) assert.equal(test.calls.filter(call => call.command === 'vercel' && ['deploy', 'alias'].includes(call.args[0])).length, 0, 'failed flow integration stops before deployment mutations')
     if (Object.hasOwn(options, 'liveSource') || options.missingHistory || options.divergentHistory) {
       assert.equal(test.calls.filter(call => call.command === process.execPath || call.command === 'vercel' && ['deploy', 'alias'].includes(call.args[0])).length, 0, name + ': refusal precedes build, tests and deployment mutations')
     }
-    report.push(name + ' fails without reporting live')
+    report.push(name + ' fails without reporting live' + (browserTestSkipReason ? ' with browser waiver' : ''))
   }
   const rollbackSource = 'b'.repeat(40)
   const rollback = fixture({ candidateSource: rollbackSource })

@@ -22,7 +22,7 @@ try {
     build.onResolve({filter:/^\.\/_publicFetch$/},()=>({path:'public-transport',namespace:'public-fixture'}))
     build.onLoad({filter:/.*/,namespace:'public-fixture'},()=>({contents:`export {publicHttpUrl,PublicUrlError} from ${JSON.stringify(join(process.cwd(),'api/_publicFetch.ts'))};export const publicFetch=(...args)=>globalThis.fetch(...args);`,loader:'js',resolveDir:process.cwd()}))
     build.onResolve({ filter: /^\.\/(?:_db|_limits|_websiteRuntime)$/ }, args => ({ path: args.path, namespace: 'fixture' }))
-    build.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({ contents: path === './_db' ? 'export const identityForRequest=async()=>null;export const identityBlock=()=>"";' : path === './_limits' ? 'export const reserveStudioQuota=async()=>{globalThis.cancelFixture.reservations++;return {ok:true,release:async()=>{if(globalThis.cancelFixture.cleanupWaits[0].resolved)throw new Error("cleanup lifetime ended before refund");await Promise.resolve();globalThis.cancelFixture.releases++}}};export const studioLimitMessage=()=>"limited";' : 'export const WEBSITE_RUNTIME_TEST_SCHEMA="";export const parseRuntimeTests=value=>Array.isArray(value)?value:[];export const inspectRuntimeTests=value=>({tests:parseRuntimeTests(value),issues:[]});export const reviewWebsiteRuntime=async()=>({status:globalThis.cancelFixture.runtimeUnavailable?"unavailable":"passed",widths:[1440,390],checks:[],issues:[],limitations:[]});' }))
+    build.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({ contents: path === './_db' ? 'export const identityForRequest=async()=>null;export const identityBlock=()=>"";' : path === './_limits' ? 'export const reserveStudioQuota=async()=>{globalThis.cancelFixture.reservations++;return {ok:true,release:async()=>{if(globalThis.cancelFixture.cleanupWaits[0].resolved)throw new Error("cleanup lifetime ended before refund");await Promise.resolve();globalThis.cancelFixture.releases++}}};export const studioLimitMessage=()=>"limited";' : 'export const WEBSITE_RUNTIME_JOURNEY_SCHEMA="";export const WEBSITE_RUNTIME_TEST_SCHEMA="";export const parseRuntimeTests=value=>Array.isArray(value)?value:[];export const inspectRuntimeTests=value=>({tests:parseRuntimeTests(value),issues:[]});export const reviewWebsiteRuntime=async()=>({status:globalThis.cancelFixture.runtimeUnavailable?"unavailable":"passed",widths:[1440,390],checks:[],issues:[],limitations:[]});' }))
   } }] })
   const modulePath = join(directory, 'cancellation.mjs')
   await writeFile(modulePath, bundle.outputFiles[0].text)
@@ -58,7 +58,7 @@ try {
         })
       }
       if (mode === 'normal-request-close' && stage === 'plan') req.emit('close')
-      if (stage === 'plan') return response(plan)
+      if (stage === 'plan') return response(JSON.stringify({ ...JSON.parse(plan), requirements: [{ id: 'count', quote: body.prompt, goal: { kind: 'result', type: 'text', target: { selector: '#count' } }, refs: [{ test: 0, assertion: 0 }] }] }))
       if (mode === 'fallback' && stage === 'build') return new Response('Upstream unavailable', { status: 503 })
       if (mode === 'continuation' && stage === 'build') return response(html.replace('</script></body></html>', ''))
       return response(html)

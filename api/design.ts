@@ -17,6 +17,8 @@ import { chatComplete, primaryProvider, fallbackProvider } from './_llm'
 import { research } from './web'
 import { groundResearch } from './_grounding'
 import { generateWebsite, WEBSITE_SYSTEM, WebsiteRuntimeUnavailableError } from './_websiteGeneration'
+import { parseWebsiteBehaviorContract } from './_websiteBehavior'
+import type { WebsiteBehaviorContract } from '../shared/websiteBehavior'
 import { cancellationSignal, throwIfCancelled, waitWithCancellation, withRequestCancellation } from './_requestCancellation'
 import { identityForRequest, identityBlock } from './_db'
 import { logWebsiteDiagnostic } from './_websiteDiagnostics'
@@ -1860,6 +1862,14 @@ async function handleDesign(req: any, res: any) {
     return
   }
   const kind = normalizeKind(body.kind)
+  let websiteChangeRequest: string | undefined
+  if (kind === 'webpage' && body.websiteChangeRequest !== undefined) {
+    if (typeof body.websiteChangeRequest !== 'string' || !body.websiteChangeRequest.trim() || body.websiteChangeRequest.length > 60000) {
+      send(400, { error: 'A website change request must be nonempty text within 60000 characters.' })
+      return
+    }
+    websiteChangeRequest = body.websiteChangeRequest.trim()
+  }
   const logoBrief = kind === 'logo' ? logoRequestText(body, prompt) : ''
   const prevLogo = kind === 'logo' && body.prevLogo && typeof body.prevLogo === 'object' && !Array.isArray(body.prevLogo) ? body.prevLogo as Record<string, unknown> : null
   const logoReference = kind === 'logo' && typeof body.logoReference === 'string' ? body.logoReference.trim().slice(0, 12000) : ''
@@ -1871,6 +1881,16 @@ async function handleDesign(req: any, res: any) {
     HTML_KINDS.has(kind) && typeof body.prevHtml === 'string' && body.prevHtml.trim()
       ? kind === 'webpage' ? body.prevHtml : body.prevHtml.slice(0, 180000)
       : ''
+  let previousContract: WebsiteBehaviorContract | undefined
+  if (kind === 'webpage' && body.prevWebsiteContract !== undefined) {
+    try {
+      if (!prevHtml) throw new Error('Saved website checks require the existing page.')
+      previousContract = parseWebsiteBehaviorContract(body.prevWebsiteContract)
+    } catch {
+      send(400, { error: 'The saved website behavior checks are invalid. Your existing design is preserved.' })
+      return
+    }
+  }
   const motion = kind === 'motion' ? motionSpec(prompt, prevHtml) : null
   const motionAssets = motion && !prevHtml ? motionAssetRoute(prompt, body.brand) : undefined
   if (motionAssets?.error) { send(422, { error: motionAssets.error }); return }
@@ -1939,13 +1959,13 @@ async function handleDesign(req: any, res: any) {
     }
     if (kind === 'webpage') {
       const repairIssues = Array.isArray(body.previewIssues) ? body.previewIssues.filter((issue): issue is string => typeof issue === 'string').slice(0, 6) : undefined
-      const result = await generateWebsite({ model: prevHtml ? WEBSITE_EDIT_MODEL : WEBSITE_MODEL, plannerModel: WEBSITE_PLANNER_MODEL, fallbackModel: prevHtml ? LLM_MODEL : WEBSITE_FALLBACK_MODEL, user, prompt, previous: prevHtml, repairIssues, deadlineMs: requestStarted + 275000, signal, onDiagnostic: logWebsiteDiagnostic })
+      const result = await generateWebsite({ model: prevHtml ? WEBSITE_EDIT_MODEL : WEBSITE_MODEL, plannerModel: WEBSITE_PLANNER_MODEL, fallbackModel: prevHtml ? LLM_MODEL : WEBSITE_FALLBACK_MODEL, user, prompt, changeRequest: websiteChangeRequest, previous: prevHtml, previousContract, repairIssues, deadlineMs: requestStarted + 275000, signal, onDiagnostic: logWebsiteDiagnostic })
       if (!result) {
         send(502, { error: 'The website did not pass its build checks. Please retry; your existing design is preserved.' })
         return
       }
       succeeded = true
-      send(200, { html: result.html, name: 'Nalu Design', sources: evidence?.sources || [], researchStatus: evidence?.status, checkedAt: evidence?.checkedAt, quality: { ...result.review, repaired: result.repaired } })
+      send(200, { html: result.html, name: 'Nalu Design', sources: evidence?.sources || [], researchStatus: evidence?.status, checkedAt: evidence?.checkedAt, quality: { ...result.review, repaired: result.repaired, ...(result.behaviorContract ? { behaviorContract: result.behaviorContract } : {}) } })
       return
     }
     if (HTML_KINDS.has(kind)) {
