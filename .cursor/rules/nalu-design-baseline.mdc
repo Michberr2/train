@@ -1,0 +1,12 @@
+---
+description: Always preserve the approved Nalu redesign in changes and production releases
+alwaysApply: true
+---
+
+# Nalu design baseline
+
+Follow the "Approved Nalu design — always preserve" section of the repository's AGENTS.md for every change and release.
+The approved web design is the baseline for all future work, including AI/backend-only work.
+Start from the combined release history, preserve functional live workspace behavior, and use the checked deployment workflow.
+Never reintroduce an older UI, preview-only functionality, the production preview banner, or the removed blue scene overlay.
+Coordinate a single production publisher and verify the actual public domains after publication.
