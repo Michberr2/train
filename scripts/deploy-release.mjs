@@ -8,6 +8,16 @@ import { checkPreview } from './preview-release-checks.mjs'
 
 export const RELEASE_DOMAINS = ['n4lu.ai', 'www.n4lu.ai', 'n4lu.com', 'www.n4lu.com']
 const root = fileURLToPath(new URL('../', import.meta.url))
+async function assertCanonicalWebDesign(cwd) {
+  // The redesigned landing/workspace is now the product baseline. Keep this
+  // guard in the release path so a clean checkout cannot silently publish the
+  // retired slide-based frontend again.
+  const app = await readFile(resolve(cwd, 'client/src/App.tsx'), 'utf8').catch(() => '')
+  const workspace = await readFile(resolve(cwd, 'client/src/components/workspace/design/DesignedWorkspace.tsx'), 'utf8').catch(() => '')
+  if (app && workspace && (!/LandingPage/.test(app) || !/DesignedWorkspace/.test(app) || workspace.length < 500)) {
+    throw new Error('Release blocked: canonical Nalu redesign is missing from the web frontend.')
+  }
+}
 function runProcess(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, encoding: 'utf8', timeout: 25 * 60 * 1000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, NO_COLOR: '1', VERCEL_TELEMETRY_DISABLED: '1' } })
   if (result.error || result.status !== 0) throw new Error(`${command} ${args.slice(0, 3).join(' ')} failed: ${result.error?.message || result.stderr?.trim() || `exit ${result.status}`}`)
@@ -53,6 +63,7 @@ export async function release({ cwd = root, target, publish, run = runProcess, f
   const operation = publish ? 'publish' : target ? 'rollback' : 'deploy'
   const call = (command, args) => run(command, args, cwd)
   assert.equal(call('git', ['status', '--porcelain']).trim(), '', 'Release from a clean, reviewed checkout. Commit only the intended source first.')
+  await assertCanonicalWebDesign(cwd)
   const commit = call('git', ['rev-parse', 'HEAD']).trim()
   assert.match(commit, /^[a-f0-9]{40}$/i, 'A committed source revision is required')
   const project = JSON.parse(await readFile(resolve(cwd, '.vercel/project.json'), 'utf8'))
