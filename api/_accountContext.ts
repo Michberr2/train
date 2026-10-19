@@ -73,8 +73,10 @@ export function buildAccountContext(user: {id: string; displayName: string}, dat
   const chosen: Source[]=[]
   // Retain the latest conversation for continuity, then fill by relevance.
   const recent=sources.filter(s=>s.kind==='saved conversation').sort((a,b)=>b.at-a.at)[0]
-  const continuity = /\b(last time|previous (?:chat|conversation)|recent(?:ly)?|what (?:did|have) we|where (?:were|did) we)\b/i.test(messages.filter(m=>m.role==='user').map(m=>String(m.content)).slice(-1)[0] || '')
-  if(recent && continuity)chosen.push(recent)
+  const latestQuestion = messages.filter(m=>m.role==='user').map(m=>String(m.content)).slice(-1)[0] || ''
+  const continuity = /\b(last time|previous (?:chat|conversation)|recent(?:ly)?|what (?:did|have) we|where (?:were|did) we)\b/i.test(latestQuestion)
+  const metadataQuery = /\b(?:when|date|created|updated|timestamp|history)\b/i.test(latestQuestion) && /\b(?:conversation|chat|record|message|note)\b/i.test(latestQuestion)
+  if(recent && (continuity || metadataQuery))chosen.push(recent)
   for(const {s,score} of ranked){if(chosen.length>=8)break;if(!chosen.includes(s)&&(score>0 || continuity && chosen.length<3))chosen.push(s)}
   const profile=profileText(data['nalu-ai-profile'])
   const records=chosen.map(s=>({source:s.kind,id:s.id,title:s.title,created:s.created?new Date(s.created).toISOString():null,updated:s.updated?new Date(s.updated).toISOString():null,excerpt:contextExcerpt(s.text,query,Math.max(700,Math.floor(8500/Math.max(1,chosen.length))))}))
