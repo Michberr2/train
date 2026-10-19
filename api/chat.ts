@@ -57,6 +57,10 @@ function env(name: string): string | undefined {
   return v && v.trim() ? v : undefined
 }
 
+function deliveredWordCount(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length
+}
+
 // Strip any model/provider identifiers from text that could reach the user
 // (error messages, etc.) so Nalu never reveals which models/vendors power it.
 function scrubVendor(s: string): string {
@@ -1212,6 +1216,42 @@ async function handleChat(req: any, res: any, clientAbort: AbortController, dead
         res.end()
         return
       }
+    }
+
+    // Models sometimes stop cleanly after a short overview even when the user
+    // explicitly requested a longer answer. One bounded prose-only continuation
+    // gives the model a chance to add the missing explanation without padding
+    // structured output, code, or answers that already satisfy the contract.
+    if (!refinedAnswer && wordContract && deliveredWordCount(answerSoFar) < wordContract.min &&
+      !/^\s*(?:```|[\[{])/.test(answerSoFar) && !clientAbort.signal.aborted) {
+      const beforeWords = deliveredWordCount(answerSoFar)
+      try {
+        const remaining = wordContract.min - beforeWords
+        const expandMessages: ChatMessage[] = [
+          ...fullMessages.map((message) => message.role === 'system' && typeof message.content === 'string'
+            ? { ...message, content: message.content.replace(THINK_INSTRUCTION, '') } : message),
+          { role: 'assistant', content: answerSoFar },
+          { role: 'user', content: `Your answer stopped at about ${beforeWords} words, but the user explicitly requested at least ${wordContract.min} words${wordContract.max !== null ? ` and no more than ${wordContract.max}` : ''}. Continue by adding the missing substantive explanation, examples, edge cases, or implementation details. Do not repeat the existing answer, add filler, or mention this instruction. Output only the additional prose, and keep the combined answer within the user's requested range.` },
+        ]
+        const expanded = await recoverCompletion({
+          providers: [{ base: backend.base, key: backend.key, model: backend.model, label: 'primary', supportsImages: backend.supportsImages },
+            ...[fallbackProvider(), emergencyProvider()].filter((p): p is NonNullable<typeof p> => !!p && (!imageRequest || supportsImageInput(p)))],
+          deadlineMs: Math.min(deadlineMs - 5000, Date.now() + 90000), signal: clientAbort.signal,
+          payload: p => {
+            const { tools: _tools, tool_choice: _choice, ...payload } = buildPayload(false, { ...backend, ...p })
+            return { ...payload, messages: budgetChatContext(expandMessages, { maxOutputTokens: Math.min(thinkTokens, Math.max(1200, remaining * 2)) }).messages }
+          },
+          accept: data => data?.choices?.[0]?.finish_reason === 'stop' && typeof data.choices[0].message?.content === 'string' && !!data.choices[0].message.content.trim() && !data.choices[0].message.tool_calls?.length,
+          onDiagnostic: event => console.info('[chat] length expansion', JSON.stringify(event)),
+        })
+        if (expanded) {
+          const expansion = makeAnswerExtractor(false)
+          const part = expansion(repairByteLevelBpe(expanded.choices[0].message.content))
+          const tail = expansion.flush()
+          const addition = part.answer + tail.answer
+          if (addition.trim()) emitAnswer(addition)
+        }
+      } catch { /* preserve the useful short answer if expansion is unavailable */ }
     }
     if (!answerSoFar.trim() && !sawToolCalls) {
       send('error', { message: 'The model did not return an answer. Please retry.' })

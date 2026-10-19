@@ -88,6 +88,15 @@ r = await run('literal JSON contract survives all defaults', [streamed(event({ c
 assert.equal(r.text, '{"label":"01:35","value":8.25,"missing":null}')
 assert.match(r.requests[0].messages[0].content, /requested keys and types/)
 assert.doesNotMatch(r.requests[0].messages[0].content, /EXPLICIT ANSWER LENGTH:/)
+r = await run('short explicit prose receives one bounded length expansion', [
+  streamed(event({ content: 'Short opening.' }, 'stop')),
+  complete(' Added implementation detail and a concrete example.')
+], { messages: [{ role: 'user', content: 'Write at least 640 words about a fictional library.' }] })
+assert.equal(r.error, undefined)
+assert.match(r.text, /Short opening\. Added implementation detail/)
+assert.equal(r.requests.length, 2)
+assert.match(r.requests[1].messages.at(-1).content, /stopped at about 2 words/)
+assert.match(r.requests[1].messages.at(-1).content, /at least 640 words/)
 r = await run('latest user correction replaces old length hint', [streamed(event({ content: '{"ok":true}' }, 'stop'))], {
   messages: [{ role: 'user', content: 'Write a 500-word explanation.' }, { role: 'assistant', content: 'Earlier answer.' }, { role: 'user', content: 'Actually return only JSON with ok set to true.' }],
 })
