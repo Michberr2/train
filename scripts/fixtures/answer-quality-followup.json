@@ -1,0 +1,109 @@
+{
+  "version": "2026-10-18-v2-followup",
+  "purpose": "After general prompt changes: two retained regression prompts plus two fresh prompts frozen before outputs. Original v1 outcomes remain unchanged. Not a domain-certification or global model-ranking battery.",
+  "wordCountRule": "Split final displayed answer on whitespace; count all tokens including headings, table cells and code. Report this mechanical count separately from substantive blinded review.",
+  "cases": [
+    {
+      "id": "long-answer-worker",
+      "category": "depth",
+      "maxTokens": 14000,
+      "prompt": "Write a practical design for a fictional reliable background-job service for a small engineering team. Give a thorough answer of 900 to 1200 words. Explain acceptance and durable storage, atomic claiming and leases, retries and backoff, idempotency and side effects, cancellation, crash recovery, user-visible status, observability, and a phased rollout with tests. Include a concrete race involving two workers and show the database operation or invariant that prevents duplicate ownership. Explain why a lease cannot itself guarantee exactly-once payment execution. Include tradeoffs, failure examples, and an end-to-end example. No current vendors/prices or web research are needed. Do not substitute a short overview.",
+      "rubric": {
+        "words": [
+          900,
+          1200
+        ],
+        "critical": [
+          "Atomic claim, row lock within transaction, or compare-and-swap with ownership/fencing; an unprotected read-then-write claim is insufficient",
+          "Lease expiry does not prove an old worker stopped; side-effect idempotency or reconciliation required",
+          "Explicit cancellation and ambiguous external execution handling"
+        ],
+        "required": [
+          "Acceptance persisted before success",
+          "Bounded retries/backoff",
+          "Crash recovery",
+          "User statuses distinguish unfinished, failed and complete",
+          "Observability with metrics",
+          "Staged rollout and executable test scenarios",
+          "Concrete end-to-end example",
+          "Tradeoffs explained"
+        ]
+      }
+    },
+    {
+      "id": "long-answer-grounded",
+      "category": "depth",
+      "maxTokens": 14000,
+      "prompt": "Write a thorough 700-to-1000-word decision memo using ONLY this fictional pilot evidence. Four teams tested a tool for two weeks. Team A: 12 people, median task time 24min before and 18min after, 2 output errors out of 40 tasks. Team B: 8 people, 30min before and 27min after, 1 error out of 30 tasks. Team C: 10 people, 20min before and 22min after, 4 errors out of 25 tasks. Team D supplied no timing or error data. Tasks were not randomized, before/after task mix may differ, no per-task timings or control group exist, and nobody measured cost, satisfaction, or production reliability. Explain whether to expand the pilot, include calculations, tradeoffs, important unknowns, and a concrete follow-up experiment with success/failure criteria. Separate observed findings from assumptions. Include a small accurate table. Do not invent costs, confidence intervals, team D outcomes, citations, or causal proof. A conditional recommendation is fine, but explain it fully.",
+      "rubric": {
+        "words": [
+          700,
+          1000
+        ],
+        "critical": [
+          "Median task time changes A down25%,B down10%,C up10%; do not describe these as throughput increases or average medians as pooled task mean",
+          "Observed errors7/95 (about7.37%) and missing D explicitly, not 7/total including invented D",
+          "No causal claim or invented confidence interval/cost/satisfaction"
+        ],
+        "required": [
+          "Accurate small table",
+          "Concrete experimental assignment/comparison plan",
+          "Quality and speed success/failure criteria",
+          "Missing-team and task-mix limitations",
+          "Conditional rollout decision with tradeoffs",
+          "Enough explanation to act"
+        ]
+      }
+    },
+    {
+      "id": "fresh-local-notes",
+      "category": "depth",
+      "maxTokens": 14000,
+      "prompt": "Write a practical 800-to-1100-word engineering proposal for a fictional notes app that works offline on a phone and laptop. A user can edit the same note on both while disconnected. Explain local saving, synchronization, detecting concurrent edits, preserving both versions when automatic merging is unsafe, deletion and undo, retries, sign-out/account switching, visible save/error status, and tests. Include one concrete timeline where both devices edit the same note and a later retry arrives out of order. Give a minimal server data model and explain exactly which atomic condition prevents a stale upload from overwriting a newer note. Be clear about what is saved only locally versus confirmed by the server. Recommend a staged implementation suitable for a small team. No current vendor facts or web research are needed. The whole displayed answer, including headings and code, should fit the requested range.",
+      "rubric": {
+        "words": [
+          800,
+          1100
+        ],
+        "critical": [
+          "A compare-and-swap or transactional revision check prevents stale overwrite; no unconditional last writer wins with lost edits",
+          "Concurrent branches preserved or conflict explicitly resolved; idempotency lookup before/alongside revision CAS returns the committed result after lost ACK instead of duplicate or false conflict",
+          "Account switching cannot upload one account notes into another; pending work is bound to identity"
+        ],
+        "required": [
+          "Local durable save and server acknowledgement distinguished in UI",
+          "Offline retry ordering and idempotency explained",
+          "Deletion uses a versioned tombstone or equivalent; explicit undo may create a new revision, but stale offline writes cannot silently resurrect deleted data",
+          "Concrete two-device conflict timeline with exact outcomes",
+          "Failure and recovery tests including network/permission/storage failure",
+          "Small-team staged rollout and tradeoffs"
+        ]
+      }
+    },
+    {
+      "id": "fresh-pilot-report",
+      "category": "depth",
+      "maxTokens": 14000,
+      "prompt": "Write a 750-to-1000-word decision memo using ONLY this fictional customer-support pilot evidence. Baseline week: 60 simple tickets averaged 10 minutes each and 20 complex tickets averaged 30 minutes each; 4 of the 80 tickets were reopened. Tool-assisted week: 20 simple tickets averaged 8 minutes each and 60 complex tickets averaged 27 minutes each; 8 of the 80 tickets were reopened. These are arithmetic means, not medians. Agents were not randomly assigned; no per-ticket raw data, wages, customer satisfaction, or maintenance-cost data exist. Calculate each weeks overall mean, each ticket-type time change, and reopening rate. Explain why the pooled timing comparison can look worse while both task types get faster, and why this still does not prove a causal benefit. Recommend whether and how to continue the pilot, with a concrete fair follow-up experiment and speed/quality stopping criteria. Include one accurate table and clearly distinguish observed figures from proposed criteria. Do not invent confidence intervals, p-values, ROI, causes of reopens, or source citations. The entire displayed answer should fit the requested range.",
+      "rubric": {
+        "words": [
+          750,
+          1000
+        ],
+        "critical": [
+          "Overall means15 and22.25minutes; simple10to8 down20%,complex30to27 down10%; reopens5% and10%",
+          "Explains changed ticket mix rather than claiming tool slowed both types or averaging group means without weights",
+          "No causal proof or invented confidence interval,p-value,ROI,wages,satisfaction,or reopen causes"
+        ],
+        "required": [
+          "Accurate table of observed values",
+          "Concrete randomized or blocked comparison by ticket type and agent with consistent measurement",
+          "Separate proposed speed and quality thresholds clearly labeled",
+          "Conditional rollout decision with tradeoffs; reopening change also may be case-mix confounded and is not causal quality harm",
+          "Missing evidence and collection plan, including consistent reopening observation window",
+          "Useful explanation that meets requested depth without padding"
+        ]
+      }
+    }
+  ]
+}

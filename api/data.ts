@@ -182,6 +182,7 @@ async function writeGuarded(
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default async function handler(req: any, res: any) {
+  const schedulerDeadlineMs = Date.now() + 240000
   if (process.env.NALU_STORAGE_BACKEND === 'cloudflare') return cloudflareData(req, res)
   // Public GET — serve a shared website by id, no auth (a clickable share link).
   if (req.method === 'GET') {
@@ -230,7 +231,7 @@ export default async function handler(req: any, res: any) {
       // POST ?action=cron and run EVERY user's due pipelines (unauth cross-user
       // write + token burn).
       if (!secret || reqAny.headers['authorization'] !== `Bearer ${secret}`) return res.status(401).json({ error: 'unauthorized' })
-      const r = await runDueCrons(client)
+      const r = await runDueCrons(client, { deadlineMs: schedulerDeadlineMs })
       return res.status(200).json({ ok: true, ...r, at: new Date().toISOString() })
     }
 
@@ -239,7 +240,7 @@ export default async function handler(req: any, res: any) {
 
     if(action==='notes-transcribe') {
       const quota=await reserveDailyQuota(req,'notes-audio',{anonPerDay:0,userPerDay:1200})
-      if(!quota.ok)return res.status(429).json({error:'Daily transcription limit reached. Your audio stays on this phone and will retry tomorrow.'})
+      if(!quota.ok)return res.status(quota.status || 429).json({error:quota.reason === 'unavailable' ? 'Transcription is temporarily unavailable. Your saved audio can be retried.' : 'Daily transcription limit reached. Your audio stays on this phone and will retry tomorrow.'})
     }
     if (await handleNotebook(client,userId,body,res)) return
 
@@ -254,7 +255,7 @@ export default async function handler(req: any, res: any) {
     if (action === 'notes-analyze') {
       if (typeof body.transcript !== 'string' || !body.transcript.trim() || body.transcript.length > 8000) return res.status(400).json({ error: 'Transcript must contain 1–8000 characters.' })
       const quota = await reserveDailyQuota(req, 'notes', { anonPerDay: 0, userPerDay: 200 })
-      if (!quota.ok) return res.status(429).json({ error: 'Daily notes limit reached. Your transcript is saved; try again tomorrow.' })
+      if (!quota.ok) return res.status(quota.status || 429).json({ error: quota.reason === 'unavailable' ? 'Notes generation is temporarily unavailable. Your transcript is saved.' : 'Daily notes limit reached. Your transcript is saved; try again tomorrow.' })
       try { return res.status(200).json(await extractNotes(body.transcript)) }
       catch { await quota.release(); return res.status(502).json({ error: 'Could not extract action items. Your transcript is saved; try again.' }) }
     }
@@ -392,7 +393,8 @@ export default async function handler(req: any, res: any) {
       const flowId = String(body.flowId || '')
       const mode = (['run', 'resume', 'stop'].includes(String(body.mode)) ? String(body.mode) : 'run') as 'run' | 'resume' | 'stop'
       if (!flowId) return res.status(400).json({ error: 'flowId required' })
-      const out = await runOneFlow(client, userId, flowId, mode, !!body.force)
+      if (body.expectedStartedAt != null && (!Number.isFinite(body.expectedStartedAt) || body.expectedStartedAt <= 0)) return res.status(400).json({ error: 'expectedStartedAt must identify a saved run.' })
+      const out = await runOneFlow(client, userId, flowId, mode, !!body.force, { expectedStartedAt: body.expectedStartedAt, approval: body.approval, worker: body.pipelineWorker, deadlineMs: schedulerDeadlineMs })
       return res.status(out.code || (out.ok ? 200 : 400)).json(out)
     }
 

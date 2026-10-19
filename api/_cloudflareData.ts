@@ -19,6 +19,7 @@ import { deriveChatActivity, deriveFlowActivity, decorateTaskMedia } from './dat
 /** The same account data endpoints use explicit D1 revisions and transactions.
  * No request in this backend falls through to the old PostgreSQL database. */
 export async function cloudflareData(req: any, res: any): Promise<void> {
+  const schedulerDeadlineMs = Date.now() + 240000
   const store = new CloudflareStore(), documents = new CloudflareDataStore(store), ledger = new CloudflareTaskLedger(store)
   try {
     if (req.method === 'GET') {
@@ -33,19 +34,19 @@ export async function cloudflareData(req: any, res: any): Promise<void> {
     const isCron = action === 'cron' || req.query?.action === 'cron' || String(req.url || '').includes('action=cron')
     if (isCron) {
       if (!process.env.CRON_SECRET || req.headers?.authorization !== `Bearer ${process.env.CRON_SECRET}`) { res.status(401).json({ error: 'unauthorized' }); return }
-      res.status(200).json({ ok: true, ...await runDueCrons(store), at: new Date().toISOString() }); return
+      res.status(200).json({ ok: true, ...await runDueCrons(store, { deadlineMs: schedulerDeadlineMs }), at: new Date().toISOString() }); return
     }
     const owner = await connectionBackend().userId(readToken(req))
     if (!owner) { res.status(401).json({ error: 'not authenticated' }); return }
     if(action==='notes-transcribe') {
       const quota=await reserveDailyQuota(req,'notes-audio',{anonPerDay:0,userPerDay:1200})
-      if(!quota.ok){res.status(429).json({error:'Daily transcription limit reached. Your audio stays on this phone and will retry tomorrow.'});return}
+      if(!quota.ok){res.status(quota.status || 429).json({error:quota.reason === 'unavailable' ? 'Transcription is temporarily unavailable. Your saved audio can be retried.' : 'Daily transcription limit reached. Your audio stays on this phone and will retry tomorrow.'});return}
     }
     if(await handleNotebook(store,owner,body,res))return
     if(action==='notes-analyze') {
       if(typeof body.transcript!=='string'||!body.transcript.trim()||body.transcript.length>8000){res.status(400).json({error:'Transcript must contain 1–8000 characters.'});return}
       const quota=await reserveDailyQuota(req,'notes',{anonPerDay:0,userPerDay:200})
-      if(!quota.ok){res.status(429).json({error:'Daily notes limit reached. Your transcript is saved; try again tomorrow.'});return}
+      if(!quota.ok){res.status(quota.status || 429).json({error:quota.reason === 'unavailable' ? 'Notes generation is temporarily unavailable. Your transcript is saved.' : 'Daily notes limit reached. Your transcript is saved; try again tomorrow.'});return}
       try{res.status(200).json(await extractNotes(body.transcript))}catch{await quota.release();res.status(502).json({error:'Could not extract action items. Your transcript is saved; try again.'})}
       return
     }
@@ -54,7 +55,8 @@ export async function cloudflareData(req: any, res: any): Promise<void> {
     if (action === 'flow-run') {
       const flowId = String(body.flowId || ''), mode = (['run','resume','stop'].includes(body.mode) ? body.mode : 'run') as 'run'|'resume'|'stop'
       if (!flowId) { res.status(400).json({ error: 'flowId required' }); return }
-      const out = await runOneFlow(store,owner,flowId,mode,!!body.force)
+      if(body.expectedStartedAt!=null&&(!Number.isFinite(body.expectedStartedAt)||body.expectedStartedAt<=0)){res.status(400).json({error:'expectedStartedAt must identify a saved run.'});return}
+      const out = await runOneFlow(store,owner,flowId,mode,!!body.force,{expectedStartedAt:body.expectedStartedAt,approval:body.approval,worker:body.pipelineWorker,deadlineMs:schedulerDeadlineMs})
       res.status(out.code || (out.ok ? 200 : 400)).json(out); return
     }
     if (action === 'load') { await storedJson(res.status(200), { data: await documents.load(owner) }); return }

@@ -16,6 +16,7 @@
 // Vercel route (keeps us under the Hobby 12-function cap).
 
 import { cancellationSignal } from './_requestCancellation'
+import { configuredImageSupport } from './_modelCapabilities'
 
 function env(name: string): string | undefined {
   const v = process.env[name]
@@ -96,6 +97,7 @@ export interface Provider {
   key: string
   model: string
   label: string
+  supportsImages?: boolean
 }
 
 const TINKER_BASE = 'https://tinker.thinkingmachines.dev/services/tinker-prod/oai/api/v1'
@@ -116,6 +118,7 @@ export function primaryProvider(model?: string): Provider | null {
     key,
     model: model || DEFAULT_MODEL,
     label: 'primary',
+    supportsImages: configuredImageSupport(env('NALU_DEFAULT_SUPPORTS_IMAGES')),
   }
 }
 
@@ -130,6 +133,7 @@ export function fallbackProvider(): Provider | null {
     // primary's Tinker-only Inkling), so the failover actually serves on HF.
     model: env('NALU_FALLBACK_MODEL') || 'deepseek-ai/DeepSeek-V3.1',
     label: 'fallback',
+    supportsImages: configuredImageSupport(env('NALU_FALLBACK_SUPPORTS_IMAGES')),
   }
 }
 
@@ -146,6 +150,7 @@ export function emergencyProvider(): Provider | null {
     key: key.trim(),
     model: env('NALU_EMERGENCY_MODEL') || 'gemini-2.5-flash',
     label: 'emergency',
+    supportsImages: configuredImageSupport(env('NALU_EMERGENCY_SUPPORTS_IMAGES')),
   }
 }
 
@@ -169,11 +174,12 @@ export interface CompleteOpts {
   model?: string // primary model override (per endpoint)
   retryPrimary?: boolean // give the primary one retry before failing over
   maxAttempts?: number // optional total attempt cap for latency-sensitive callers
+  requireComplete?: boolean // reject truncated/unconfirmed helper output
   providers?: Provider[] // explicit chain (otherwise built from env)
   json?: boolean // ask the provider for native JSON output (response_format)
   frequencyPenalty?: number
   presencePenalty?: number
-  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' // Inkling: override the 'low' default (e.g. 'none' for tiny classify calls)
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
 }
 
 export interface CompleteResult {
@@ -181,7 +187,7 @@ export interface CompleteResult {
   finishReason: string // 'stop' | 'length' | '' — lets callers detect truncation
 }
 
-export type CompletionFailure = { category: 'timeout' | 'rate_limit' | 'quota' | 'input_limit' | 'provider_http' | 'empty_response' | 'unavailable'; status?: number; finishReason?: 'length' | 'stop' | 'other' }
+export type CompletionFailure = { category: 'timeout' | 'rate_limit' | 'quota' | 'input_limit' | 'provider_http' | 'empty_response' | 'incomplete_response' | 'unavailable'; status?: number; finishReason?: 'length' | 'stop' | 'other' }
 export function completionFailure(error: unknown): CompletionFailure | undefined {
   return error instanceof Error ? (error as Error & { completionFailure?: CompletionFailure }).completionFailure : undefined
 }
@@ -319,7 +325,7 @@ async function callOne(p: Provider, messages: Msg[], opts: CompleteOpts, timeout
         ...(!isGemini && opts.presencePenalty != null ? { presence_penalty: opts.presencePenalty } : {}),
         // flash / reasoning models burn the budget on internal thinking and leak
         // it into content unless told to keep reasoning light
-        ...(isGemini || isInkling ? { reasoning_effort: opts.reasoningEffort || 'low' } : {}),
+        ...(isGemini || isInkling ? { reasoning_effort: isGemini ? opts.reasoningEffort === 'xhigh' ? 'high' : opts.reasoningEffort === 'none' || opts.reasoningEffort === 'minimal' ? 'low' : opts.reasoningEffort || 'low' : opts.reasoningEffort || 'low' } : {}),
         ...(opts.json ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: ac.signal,
@@ -418,6 +424,7 @@ export async function chatCompleteEx(messages: Msg[], opts: CompleteOpts = {}): 
         attempts++
         const result = await callOne(p, messages, opts, timeoutMs, curMax)
         throwIfCancelled(opts.signal)
+        if (opts.requireComplete && result.finishReason !== 'stop') throw Object.assign(new Error('The provider returned an incomplete response.'), { completionFailure: { category: 'incomplete_response', finishReason: result.finishReason === 'length' ? 'length' : 'other' } as CompletionFailure })
         return result
       } catch (e) {
         throwIfCancelled(opts.signal)

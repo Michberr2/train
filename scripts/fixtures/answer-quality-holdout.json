@@ -1,0 +1,249 @@
+{
+  "version": "2026-10-18-v1",
+  "purpose": "Frozen synthetic task-completion and requested-depth holdout. Never use for training. Deterministic cases assess their exact tasks, not domain expertise. Prose requires separate blinded review.",
+  "cases": [
+    {
+      "id": "budget-correction",
+      "category": "constraints",
+      "prompt": "A fictional project has a total budget of 18400. Labor costs 7200, materials cost 6850, and the contingency reserve is 12% of the total budget. The earlier material quote of 6400 is obsolete. Return only JSON with reserve, committed (labor plus materials), and availableAfterReserve. All values numeric.",
+      "expected": {
+        "reserve": 2208,
+        "committed": 14050,
+        "availableAfterReserve": 2142
+      }
+    },
+    {
+      "id": "weighted-not-average",
+      "category": "calculation",
+      "prompt": "A class has 18 learners scoring a mean of 72 and another group of 12 learners scoring a mean of 87. Return only JSON with learners and combinedMean, numeric. Weight by group size.",
+      "expected": {
+        "learners": 30,
+        "combinedMean": 78
+      }
+    },
+    {
+      "id": "missing-denominator",
+      "category": "evidence",
+      "prompt": "Fictional survey: 80 invitations, 50 responses, 35 satisfied, 10 dissatisfied, 5 skipped satisfaction. Exclude skipped satisfaction from the satisfaction denominator. Round percentages to two decimal places. Return only JSON with responseRatePercent, satisfactionRatePercent, nonresponseCount, satisfactionUnknownCount (among respondents only). Do not infer how nonrespondents feel.",
+      "expected": {
+        "responseRatePercent": 62.5,
+        "satisfactionRatePercent": 77.78,
+        "nonresponseCount": 30,
+        "satisfactionUnknownCount": 5
+      }
+    },
+    {
+      "id": "notes-no-invented-owner",
+      "category": "source-fidelity",
+      "prompt": "Extract commitments from this fictional meeting transcript only: [01:10] Ada: I will send the revised floor plan by Friday. [02:20] Ben: Someone should check the loading dock, but we have not assigned that. [03:00] Ada: The cost estimate is still unconfirmed. [04:10] Cy: I will call the supplier tomorrow. Return only JSON with actions: an array in transcript order, each containing owner, task, due, source. Use these exact task strings: send revised floor plan; check loading dock; call supplier. Include the unassigned action with owner:null and due:null. source is the time string. Do not convert relative deadlines to dates.",
+      "expected": {
+        "actions": [
+          {
+            "owner": "Ada",
+            "task": "send revised floor plan",
+            "due": "Friday",
+            "source": "01:10"
+          },
+          {
+            "owner": null,
+            "task": "check loading dock",
+            "due": null,
+            "source": "02:20"
+          },
+          {
+            "owner": "Cy",
+            "task": "call supplier",
+            "due": "tomorrow",
+            "source": "04:10"
+          }
+        ]
+      }
+    },
+    {
+      "id": "superseded-source",
+      "category": "source-fidelity",
+      "prompt": "Fictional product evidence: source A dated 2026-01-10 says export limit 100 rows and background sync supported. Source B dated 2026-04-22 explicitly replaces A: export limit 250 rows; background sync removed. Source C dated 2026-05-01 tests only PDF export and reports failure. Return only JSON with exportRowLimit, backgroundSync, pdfExport, and auditLogging. exportRowLimit is numeric. backgroundSync and pdfExport are booleans for the verified feature/test outcome; auditLogging is null if unknown. Never infer untested audit logging.",
+      "expected": {
+        "exportRowLimit": 250,
+        "backgroundSync": false,
+        "pdfExport": false,
+        "auditLogging": null
+      }
+    },
+    {
+      "id": "approval-logic",
+      "category": "logic",
+      "prompt": "A fictional action may run if and only if approval is true AND (cost is at most 500 OR financeApproval is true). Evaluate in order: A approval=true,cost=501,financeApproval=false; B approval=false,cost=10,financeApproval=true; C approval=true,cost=500,financeApproval=false; D approval=true,cost=900,financeApproval=true. Return only JSON with allowedIds: an array of allowed letters in original order.",
+      "expected": {
+        "allowedIds": [
+          "C",
+          "D"
+        ]
+      }
+    },
+    {
+      "id": "dependency-cycle",
+      "category": "logic",
+      "prompt": "A task depends on the task named after it: A depends on B, B on C, C on A, D on B. None is complete. Return only JSON with canStart:an array, cycleNodes:an alphabetically sorted array, and blockedNonCycleNodes:an alphabetically sorted array. A task can start only after all dependencies complete.",
+      "expected": {
+        "canStart": [],
+        "cycleNodes": [
+          "A",
+          "B",
+          "C"
+        ],
+        "blockedNonCycleNodes": [
+          "D"
+        ]
+      }
+    },
+    {
+      "id": "stock-event-log",
+      "category": "state",
+      "prompt": "Start stock=10. Apply these unique events in order, ignoring repeat IDs: e1 receive3; e2 reserve4; e1 receive3; e3 release2. Reservation moves available to reserved; release reverses it. Start reserved=0. Return only JSON with available,reserved,totalPhysicalStock. A reservation is not a shipment.",
+      "expected": {
+        "available": 11,
+        "reserved": 2,
+        "totalPhysicalStock": 13
+      }
+    },
+    {
+      "id": "time-elapsed",
+      "category": "calculation",
+      "prompt": "A run starts at 2026-10-18T23:40:00Z and ends at 2026-10-19T01:15:00Z. During it, two disjoint pauses last 12 and 8 minutes. Return only JSON with elapsedMinutes, pausedMinutes, activeMinutes. Numeric values only.",
+      "expected": {
+        "elapsedMinutes": 95,
+        "pausedMinutes": 20,
+        "activeMinutes": 75
+      }
+    },
+    {
+      "id": "observational-evidence",
+      "category": "evidence",
+      "prompt": "In a fictional observational study, people chose whether to take a course. The course group averaged 85 on a later test and the non-course group averaged 75. Prior ability was not measured; assignment was not random. Return only JSON with observedDifference, causalEffectEstablished, randomAssignment, priorAbilityControlled. First is numeric, others boolean. Do not convert association into causation.",
+      "expected": {
+        "observedDifference": 10,
+        "causalEffectEstablished": false,
+        "randomAssignment": false,
+        "priorAbilityControlled": false
+      }
+    },
+    {
+      "id": "synthetic-policy",
+      "category": "source-fidelity",
+      "prompt": "Use only this invented policy: loss caused by rain is covered if and only if the roof was inspected within the preceding 30 days. Flood loss is excluded regardless of inspection. Decide A rain,inspection10days; B rain,inspection31days; C flood,inspection2days; D rain,inspectionunknown. Return only JSON with A,B,C,D using covered,excluded,unknown. This is a fictional logic task, not insurance advice.",
+      "expected": {
+        "A": "covered",
+        "B": "excluded",
+        "C": "excluded",
+        "D": "unknown"
+      }
+    },
+    {
+      "id": "dimension-units",
+      "category": "calculation",
+      "prompt": "A fictional rectangular room is 4.8m by 3.5m. One rectangular alcove measuring 120cm by 80cm is additional floor area. Flooring comes in packs covering 2.2 square meters. Add 10% waste to total area and round UP to whole packs. Return only JSON with areaSquareMeters, withWasteSquareMeters, packs. Round areas to three decimal places if needed.",
+      "expected": {
+        "areaSquareMeters": 17.76,
+        "withWasteSquareMeters": 19.536,
+        "packs": 9
+      }
+    },
+    {
+      "id": "capacity-ceiling",
+      "category": "calculation",
+      "prompt": "A van can carry at most 24 crates per trip and at most 900kg. All 68 crates weigh 45kg each. Splitting a crate is forbidden. Return only JSON with maxCratesPerTrip, minimumTrips, and unusedCrateSlotsByWeight: remaining weight-limited crate slots over all those trips. Numeric values.",
+      "expected": {
+        "maxCratesPerTrip": 20,
+        "minimumTrips": 4,
+        "unusedCrateSlotsByWeight": 12
+      }
+    },
+    {
+      "id": "corrected-memory",
+      "category": "memory",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Remember this fictional brief for our conversation: project Lumen, owner Nadia, budget 9000, launch Tuesday, no email may be sent."
+        },
+        {
+          "role": "assistant",
+          "content": "I will use those details."
+        },
+        {
+          "role": "user",
+          "content": "Correction: owner is Ravi and launch is Thursday. All other constraints are unchanged."
+        },
+        {
+          "role": "assistant",
+          "content": "Owner Ravi and Thursday launch."
+        },
+        {
+          "role": "user",
+          "content": "Return only JSON with project,owner,budget,launch,emailAllowed using the latest brief. emailAllowed is boolean."
+        }
+      ],
+      "expected": {
+        "project": "Lumen",
+        "owner": "Ravi",
+        "budget": 9000,
+        "launch": "Thursday",
+        "emailAllowed": false
+      }
+    },
+    {
+      "id": "long-answer-worker",
+      "category": "depth",
+      "maxTokens": 14000,
+      "prompt": "Write a practical design for a fictional reliable background-job service for a small engineering team. Give a thorough answer of 900 to 1200 words. Explain acceptance and durable storage, atomic claiming and leases, retries and backoff, idempotency and side effects, cancellation, crash recovery, user-visible status, observability, and a phased rollout with tests. Include a concrete race involving two workers and show the database operation or invariant that prevents duplicate ownership. Explain why a lease cannot itself guarantee exactly-once payment execution. Include tradeoffs, failure examples, and an end-to-end example. No current vendors/prices or web research are needed. Do not substitute a short overview.",
+      "rubric": {
+        "words": [
+          900,
+          1200
+        ],
+        "critical": [
+          "Atomic claim, row lock within transaction, or compare-and-swap with ownership/fencing; an unprotected read-then-write claim is insufficient",
+          "Lease expiry does not prove an old worker stopped; side-effect idempotency or reconciliation required",
+          "Explicit cancellation and ambiguous external execution handling"
+        ],
+        "required": [
+          "Acceptance persisted before success",
+          "Bounded retries/backoff",
+          "Crash recovery",
+          "User statuses distinguish unfinished, failed and complete",
+          "Observability with metrics",
+          "Staged rollout and executable test scenarios",
+          "Concrete end-to-end example",
+          "Tradeoffs explained"
+        ]
+      }
+    },
+    {
+      "id": "long-answer-grounded",
+      "category": "depth",
+      "maxTokens": 14000,
+      "prompt": "Write a thorough 700-to-1000-word decision memo using ONLY this fictional pilot evidence. Four teams tested a tool for two weeks. Team A: 12 people, median task time 24min before and 18min after, 2 output errors out of 40 tasks. Team B: 8 people, 30min before and 27min after, 1 error out of 30 tasks. Team C: 10 people, 20min before and 22min after, 4 errors out of 25 tasks. Team D supplied no timing or error data. Tasks were not randomized, before/after task mix may differ, no per-task timings or control group exist, and nobody measured cost, satisfaction, or production reliability. Explain whether to expand the pilot, include calculations, tradeoffs, important unknowns, and a concrete follow-up experiment with success/failure criteria. Separate observed findings from assumptions. Include a small accurate table. Do not invent costs, confidence intervals, team D outcomes, citations, or causal proof. A conditional recommendation is fine, but explain it fully.",
+      "rubric": {
+        "words": [
+          700,
+          1000
+        ],
+        "critical": [
+          "Median task time changes A down25%,B down10%,C up10%; do not describe these as throughput increases or average medians as pooled task mean",
+          "Observed errors7/95 (about7.37%) and missing D explicitly, not 7/total including invented D",
+          "No causal claim or invented confidence interval/cost/satisfaction"
+        ],
+        "required": [
+          "Accurate small table",
+          "Concrete experimental assignment/comparison plan",
+          "Quality and speed success/failure criteria",
+          "Missing-team and task-mix limitations",
+          "Conditional rollout decision with tradeoffs",
+          "Enough explanation to act"
+        ]
+      }
+    }
+  ],
+  "wordCountRule": "Split final displayed answer on whitespace; count all tokens including headings, table cells and code. Report this mechanical count separately from substantive blinded review."
+}

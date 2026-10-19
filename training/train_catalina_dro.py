@@ -1,55 +1,30 @@
 #!/usr/bin/env python3
-"""
-train_catalina_dro.py
-================================================================================
-DRO (Distributionally Robust Optimization) RL fine-tuning for "Nalu Catalina"
-on the Thinking Machines **Tinker** platform, tuned for peak efficiency.
+"""Experimental completion-masked DRO training on independently reviewed tasks.
 
-WHY DRO FOR CATALINA
---------------------
-DRO is a general off-policy / offline RL method. Instead of PPO's hard ratio
-clip or DPO's pairwise preferences, it constrains the policy update with a smooth
-quadratic trust-region penalty:
+The loss uses the quadratic DRO objective with group-relative advantages.
+The supported custom-loss API slices out prompt positions before BOTH terms,
+so prompt tokens receive no gradient. References come from the sampler and
+must match every completion token; no synthetic zero padding is permitted.
 
-    L_DRO(theta) = E_{x~q}[ logp_theta(x) * A(x)
-                            - 0.5 * beta * ( log( p_theta(x) / q(x) ) )^2 ]
+Training and held-out evaluation require separate, reviewed JSON task files.
+The built-in grader compares complete JSON answers with explicit ground truth;
+it does not reward style, length, source words, or invented browsing. Results
+only establish accuracy on those tasks, not general intelligence or expertise.
 
-Canonical implementation (Tinker computes this server-side as loss_fn="dro"):
-
-    quadratic_term = (target_logprobs - sampling_logprobs) ** 2
-    dro_objective  = target_logprobs * advantages - 0.5 * beta * quadratic_term
-    loss           = -dro_objective.sum()
-
-The penalty is anchored to the *stored* sampling logprobs q(x), so a batch of
-rollouts stays valid even after the policy moves. That makes DRO genuinely
-off-policy: we can take SEVERAL optimizer steps on the same rollouts
-(INNER_STEPS) before sampling again. On a 397B-A17B MoE, sampling dominates
-cost, so reusing rollouts is the single biggest efficiency win. DRO degrades
-gracefully as the policy drifts (larger drift just costs more), where PPO-clip
-gives zero gradient outside its window and gets brittle off-policy.
-
-Per-datum inputs the DRO loss reads:
-    target_tokens : int[N]   - the next token to score
-    logprobs      : float[N] - q(x), the SAMPLING logprobs (frozen / off-policy)
-    advantages    : float[N] - A(x), group-relative
-
-Run:  python training/train_catalina_dro.py
-Env:  TINKER_API_KEY  (falls back to TML_API_KEY / GLM_API_KEY - a `tml-` key)
-
-SDK NOTE: targets the public Tinker SDK surface (tinker.ServiceClient,
-create_lora_training_client, forward_backward_async(loss_fn="dro",
-loss_fn_config={"beta": ...}), optim_step_async, sample_async, save_state_async).
-A few method names that vary across SDK versions are isolated in thin wrappers
-(_resolve, refresh_sampling_client, _make_datum, optim_step) and flagged
-"# ASSUMPTION:" with defensive fallbacks, so a version mismatch fails loudly
-instead of silently. Pin your `tinker` version and adjust those wrappers only.
-================================================================================
+Official contracts verified October 2026:
+https://tinker-docs.thinkingmachines.ai/tinker/losses/dro/
+https://tinker-docs.thinkingmachines.ai/tinker/losses/custom/
+The custom loss adds a forward pass relative to built-in DRO. Pin and qualify
+SDK/model versions before any paid run. No model is automatically deployed.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import hashlib
+import inspect
+import math
 import os
 import statistics
 import time
@@ -59,7 +34,8 @@ from typing import Any, Sequence
 
 import numpy as np
 
-import tinker  # pip install tinker
+import tinker  # pip install tinker torch
+import torch
 
 
 # ==============================================================================
@@ -110,6 +86,8 @@ class Config:
     out_dir: Path = field(default_factory=lambda: Path(
         os.environ.get("CATALINA_OUT_DIR", "training/checkpoints")))
 
+    max_generated_tokens: int = int(os.environ.get("CATALINA_MAX_GENERATED_TOKENS", "1000000"))
+
     adv_eps: float = 1e-6  # floor on group std to avoid div-by-zero
 
 
@@ -136,67 +114,63 @@ def make_service_client() -> "tinker.ServiceClient":
 # ==============================================================================
 # DATASET - replace load_prompts() with your real data
 # ==============================================================================
-DEFAULT_PROMPTS: list[str] = [
-    "What's the latest on JWST's deepest-field results? Cite sources.",
-    "Compare two ways to rate-limit a serverless API and recommend one.",
-    "Plan a 3-step research workflow to fact-check a viral statistic.",
-    "Step by step, why is a quadratic trust region more stable than PPO clipping?",
-    "Summarize current FEMA flood-zone caveats for coastal property buyers. Cite.",
-    "Given conflicting web sources on a drug interaction, how do you reconcile them?",
-]
+def load_tasks(path: str, split: str) -> list[dict]:
+    if not path:
+        raise ValueError(f"CATALINA_{'PROMPTS' if split == 'train' else 'EVAL'}_FILE is required; no proxy-reward defaults")
+    tasks = []
+    for i, line in enumerate(Path(path).read_text().splitlines(), 1):
+        if not line.strip():
+            continue
+        task = json.loads(line)
+        if (not isinstance(task, dict) or not task.get("id") or not isinstance(task.get("prompt"), str)
+            or not task["prompt"].strip() or task.get("split") != split or task.get("grader") != "json-exact"
+            or "expected" not in task or not task.get("provenance", {}).get("source")
+            or not task.get("provenance", {}).get("reviewedBy")):
+            raise ValueError(f"Invalid independently reviewed {split} task at row {i}")
+        tasks.append(task)
+    if not tasks:
+        raise ValueError(f"Empty {split} task set")
+    return tasks
 
 
-def load_prompts() -> list[str]:
-    path = os.environ.get("CATALINA_PROMPTS_FILE")
-    if path and Path(path).exists():
-        out = []
-        for ln in Path(path).read_text().splitlines():
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                out.append(json.loads(ln)["prompt"])  # JSONL {"prompt": ...}
-            except Exception:
-                out.append(ln)                          # or plain .txt
-        return out
-    return DEFAULT_PROMPTS
+def task_fingerprint(task):
+    return " ".join(task["prompt"].casefold().split())
 
 
-# ==============================================================================
-# REWARD - shaped for a web-using, deep-thinking assistant.
-# Replace with real graders / tool-checkable signals; this is a cheap proxy.
-# GRPO subtracts the group mean, so RELATIVE ranking within a prompt matters
-# more than absolute scale. Keep each component bounded so none dominates.
-# ==============================================================================
-def reward_fn(prompt: str, completion_text: str) -> float:
+def validate_disjoint_tasks(train, evaluation):
+    prompts, ids = set(), set()
+    for task in train + evaluation:
+        prompt = task_fingerprint(task)
+        if prompt in prompts or task["id"] in ids:
+            raise ValueError("Repeated task ID or prompt in train/evaluation sets")
+        prompts.add(prompt)
+        ids.add(task["id"])
+
+
+def reward_fn(task: dict, completion_text: str) -> float:
+    """Ground-truth correctness only: prose scaffolding/URLs/length earn nothing.
+
+    The reviewed prompt must specify the JSON answer contract. This restricted
+    grader supports deterministic tasks, not unverified medical/web claims.
+    """
     text = completion_text.strip()
-    if not text:
-        return -1.0
-    low = text.lower()
-    score = 0.0
-    # (1) deep-think: rewards explicit reasoning scaffolding
-    if any(k in low for k in ("step 1", "first,", "because", "therefore", "let's")):
-        score += 0.25
-    # (2) web grounding: rewards citing sources / URLs
-    if "http" in low or "source" in low or "according to" in low:
-        score += 0.35
-    # (3) length sweet-spot: discourage empty and runaway answers
-    n = len(text.split())
-    if 40 <= n <= 600:
-        score += 0.2
-    elif n > 900:
-        score -= 0.3
-    # (4) on-task lexical anchor to the prompt
-    pw = {w for w in low.split() if len(w) > 4}
-    if pw:
-        anchor = {w for w in prompt.lower().split() if len(w) > 4}
-        if anchor:
-            score += 0.2 * min(len(pw & anchor) / len(anchor), 1.0)
-    # (5) penalize degenerate repetition
-    toks = low.split()
-    if toks and len(set(toks)) / len(toks) < 0.4:
-        score -= 0.5
-    return float(score)
+    if text.startswith("```json\n") and text.endswith("\n```"):
+        text = text[8:-4]
+    try:
+        value = json.loads(text, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite JSON")))
+    except (ValueError, TypeError):
+        return 0.0
+    def equal(actual, expected):
+        if isinstance(expected, bool) or expected is None or isinstance(expected, str):
+            return type(actual) is type(expected) and actual == expected
+        if isinstance(expected, (int, float)):
+            return type(actual) in (int, float) and math.isfinite(actual) and math.isclose(actual, expected, rel_tol=0, abs_tol=1e-9)
+        if isinstance(expected, list):
+            return isinstance(actual, list) and len(actual) == len(expected) and all(equal(a, b) for a, b in zip(actual, expected))
+        if isinstance(expected, dict):
+            return isinstance(actual, dict) and actual.keys() == expected.keys() and all(equal(actual[k], v) for k, v in expected.items())
+        return False
+    return float(equal(value, task["expected"]))
 
 
 # ==============================================================================
@@ -225,54 +199,56 @@ def _tensor(values: Sequence[float], dtype: str) -> Any:
     return arr
 
 
+@dataclass
+class MaskedRollout:
+    datum: Any
+    completion_start: int
+    reference_logprobs: list[float]
+    advantage: float
+
+
 def _make_datum(prompt_tokens: list[int], completion_tokens: list[int],
-                completion_logprobs: list[float], advantage: float) -> Any:
-    """One Tinker Datum for the DRO loss.
-
-    Next-token framing: model input is the full sequence minus its last token;
-    targets are the sequence shifted left by one. Only completion positions
-    carry a nonzero advantage + the stored sampling logprob; prompt positions
-    are masked to 0 so we only push tokens the policy actually generated.
-    """
+                completion_logprobs: list[float], advantage: float) -> MaskedRollout:
+    if not prompt_tokens or not completion_tokens:
+        raise ValueError("DRO requires nonempty prompt and completion token sequences")
+    if len(completion_logprobs) != len(completion_tokens):
+        raise ValueError("Sampling logprobs must align exactly with completion tokens")
+    if not math.isfinite(advantage) or any(not isinstance(lp, (int, float)) or not math.isfinite(lp) or lp > 0 for lp in completion_logprobs):
+        raise ValueError("DRO requires finite advantages and real nonpositive sampling logprobs")
     full = prompt_tokens + completion_tokens
-    model_input_tokens = full[:-1]   # x_0 .. x_{T-1}
-    target_tokens = full[1:]         # x_1 .. x_T
-    T = len(target_tokens)
-    n_prompt = len(prompt_tokens)
-
-    advantages = np.zeros(T, dtype=np.float32)
-    samp_logprobs = np.zeros(T, dtype=np.float32)
-    # completion_logprobs[i] is the logprob of completion_tokens[i], which lands
-    # at target index (n_prompt - 1 + i) in the shifted frame.
-    for i, lp in enumerate(completion_logprobs):
-        idx = n_prompt - 1 + i
-        if 0 <= idx < T:
-            advantages[idx] = advantage
-            samp_logprobs[idx] = lp
-
     types = getattr(tinker, "types", tinker)
-    # ASSUMPTION: ModelInput.from_ints(tokens=...) and Datum(model_input=,
-    # loss_fn_inputs=) constructors.
-    model_input = types.ModelInput.from_ints(tokens=model_input_tokens)
-    return types.Datum(
-        model_input=model_input,
-        loss_fn_inputs={
-            "target_tokens": _tensor(target_tokens, "int"),
-            "logprobs": _tensor(samp_logprobs, "float"),
-            "advantages": _tensor(advantages, "float"),
-        },
-    )
+    datum = types.Datum(model_input=types.ModelInput.from_ints(tokens=full[:-1]),
+                        loss_fn_inputs={"target_tokens": _tensor(full[1:], "int")})
+    return MaskedRollout(datum, len(prompt_tokens) - 1, list(completion_logprobs), advantage)
 
 
-async def _resolve(maybe_future):
-    """Resolve a Tinker future whether it exposes result_async() or is awaitable."""
-    if hasattr(maybe_future, "result_async"):
-        return await maybe_future.result_async()
-    if asyncio.iscoroutine(maybe_future):
-        return await maybe_future
-    if hasattr(maybe_future, "result"):
-        return maybe_future.result()
-    return maybe_future
+def masked_dro_loss(rollouts, logprobs, beta):
+    if len(rollouts) != len(logprobs) or not rollouts or not math.isfinite(beta) or beta < 0:
+        raise ValueError("Invalid DRO batch or beta")
+    losses = []
+    for rollout, target in zip(rollouts, logprobs):
+        # Slicing removes prompt tokens from BOTH the advantage and penalty.
+        # Zero advantages alone do not mask the quadratic DRO regularizer.
+        completion = target[rollout.completion_start:]
+        if completion.ndim != 1 or len(completion) != len(rollout.reference_logprobs):
+            raise ValueError("Model logprob output does not match sampled completion")
+        reference = torch.as_tensor(rollout.reference_logprobs, dtype=target.dtype, device=target.device)
+        losses.append(-(completion * rollout.advantage - 0.5 * beta * (completion - reference).square()).sum())
+    loss = torch.stack(losses).sum()
+    return loss, {"loss:sum": float(loss.detach()), "completion_tokens": sum(len(r.reference_logprobs) for r in rollouts)}
+
+
+async def _resolve(value):
+    # SDK async methods can return an APIFuture; resolve both levels.
+    while True:
+        if hasattr(value, "result_async"):
+            value = await value.result_async()
+        elif inspect.isawaitable(value):
+            value = await value
+        elif hasattr(value, "result"):
+            value = value.result()
+        else:
+            return value
 
 
 # ==============================================================================
@@ -284,12 +260,10 @@ async def refresh_sampling_client(training_client, service_client, name: str):
     ASSUMPTION: save_weights_and_get_sampling_client(name=...) is the helper.
     Fallback: save_weights_for_sampler_async -> create_sampling_client.
     """
-    if hasattr(training_client, "save_weights_and_get_sampling_client"):
-        return await _resolve(
-            training_client.save_weights_and_get_sampling_client(name=name))
+    if hasattr(training_client, "save_weights_and_get_sampling_client_async"):
+        return await _resolve(training_client.save_weights_and_get_sampling_client_async(name=name))
     saved = await _resolve(training_client.save_weights_for_sampler_async(name=name))
-    path = getattr(saved, "path", saved)
-    return service_client.create_sampling_client(model_path=path)
+    return await _resolve(service_client.create_sampling_client_async(model_path=saved.path))
 
 
 async def sample_group(sampling_client, prompt_tokens: list[int], cfg: Config):
@@ -306,9 +280,11 @@ async def sample_group(sampling_client, prompt_tokens: list[int], cfg: Config):
     for seq in res.sequences:
         toks = list(seq.tokens)
         lps = list(getattr(seq, "logprobs", []) or [])
-        if len(lps) < len(toks):
-            lps = lps + [0.0] * (len(toks) - len(lps))
-        out.append((toks, lps[:len(toks)]))
+        if not toks or len(lps) != len(toks) or any(not isinstance(lp, (int, float)) or not math.isfinite(lp) or lp > 0 for lp in lps):
+            raise ValueError("Sampler omitted or misaligned its token logprobs")
+        out.append((toks, lps))
+    if len(out) != cfg.group_size:
+        raise ValueError("Sampler returned an incomplete rollout group")
     return out
 
 
@@ -316,24 +292,24 @@ async def sample_group(sampling_client, prompt_tokens: list[int], cfg: Config):
 # TRAINING STEP
 # ==============================================================================
 async def forward_backward(training_client, data: list[Any], cfg: Config):
-    return await _resolve(training_client.forward_backward_async(
-        data=data, loss_fn="dro", loss_fn_config={"beta": cfg.beta}))
+    # Built-in DRO has no documented per-token mask input. The supported custom
+    # loss API computes exact autograd gradients of the completion-only loss.
+    # https://tinker-docs.thinkingmachines.ai/tinker/losses/custom/
+    return await _resolve(training_client.forward_backward_custom_async(
+        data=[r.datum for r in data],
+        loss_fn=lambda _data, logprobs: masked_dro_loss(data, logprobs, cfg.beta)))
 
 
 async def optim_step(training_client, cfg: Config):
     types = getattr(tinker, "types", tinker)
-    try:
-        adam = types.AdamParams(learning_rate=cfg.lr, max_grad_norm=cfg.max_grad_norm)
-    except TypeError:
-        adam = types.AdamParams(learning_rate=cfg.lr)
+    adam = types.AdamParams(learning_rate=cfg.lr, max_grad_norm=cfg.max_grad_norm)
     return await _resolve(training_client.optim_step_async(adam))
 
 
 # ==============================================================================
 # TOKENIZER / EVAL / CHECKPOINT
 # ==============================================================================
-SYSTEM = ("You are Nalu Catalina. Think step by step, use the web when useful, "
-          "and ground claims in sources.")
+SYSTEM = "You are Nalu Catalina. Solve the task accurately and follow its requested JSON output contract. Do not invent tool use or evidence."
 
 
 def encode_prompt(tokenizer, prompt: str) -> list[int]:
@@ -348,16 +324,16 @@ def encode_prompt(tokenizer, prompt: str) -> list[int]:
     return tokenizer.encode(prompt)
 
 
-async def evaluate(sampling_client, tokenizer, prompts: list[str], cfg: Config) -> float:
+async def evaluate(sampling_client, tokenizer, tasks: list[dict], cfg: Config) -> float:
     types = getattr(tinker, "types", tinker)
     rewards = []
-    for p in prompts:
-        ptoks = encode_prompt(tokenizer, p)
+    for task in tasks:
+        ptoks = encode_prompt(tokenizer, task["prompt"])
         sp = types.SamplingParams(max_tokens=cfg.max_tokens, temperature=0.2, top_p=0.95)
         res = await _resolve(sampling_client.sample_async(
             prompt=types.ModelInput.from_ints(tokens=ptoks),
             sampling_params=sp, num_samples=1))
-        rewards.append(reward_fn(p, tokenizer.decode(list(res.sequences[0].tokens))))
+        rewards.append(reward_fn(task, tokenizer.decode(list(res.sequences[0].tokens))))
     return statistics.fmean(rewards) if rewards else 0.0
 
 
@@ -396,11 +372,32 @@ async def main():
     print(f"[catalina-dro] base={cfg.base_model} rank={cfg.lora_rank} beta={cfg.beta} "
           f"group={cfg.group_size} inner_steps={cfg.inner_steps}")
 
+    tasks = load_tasks(os.environ.get("CATALINA_PROMPTS_FILE"), "train")
+    eval_tasks = load_tasks(os.environ.get("CATALINA_EVAL_FILE"), "test")
+    validate_disjoint_tasks(tasks, eval_tasks)
+    for value in (cfg.group_size, cfg.prompts_per_batch, cfg.inner_steps, cfg.grad_accum, cfg.num_iterations, cfg.save_every, cfg.eval_every):
+        if value < 1:
+            raise ValueError("Loop and evaluation counts must be positive")
+    if cfg.group_size < 2 or not math.isfinite(cfg.beta) or cfg.beta < 0:
+        raise ValueError("Need group size >=2 and finite nonnegative beta")
+    generated_token_bound = (cfg.num_iterations * min(cfg.prompts_per_batch, len(tasks)) * cfg.group_size
+                             + (1 + cfg.num_iterations // cfg.eval_every) * len(eval_tasks)) * cfg.max_tokens
+    if cfg.max_generated_tokens < 1 or generated_token_bound > cfg.max_generated_tokens:
+        raise ValueError("Configured worst-case generated tokens exceed CATALINA_MAX_GENERATED_TOKENS; reduce the run or explicitly budget more")
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {"trainSha256": hashlib.sha256(Path(os.environ["CATALINA_PROMPTS_FILE"]).read_bytes()).hexdigest(),
+                "testSha256": hashlib.sha256(Path(os.environ["CATALINA_EVAL_FILE"]).read_bytes()).hexdigest(),
+                "trainTasks": len(tasks), "testTasks": len(eval_tasks), "grader": "reviewed-json-exact", "base": cfg.base_model,
+                "generatedTokenUpperBound": generated_token_bound, "scope": "Deterministic held-out task accuracy, not general intelligence or web-grounding quality"}
+    (cfg.out_dir / "dataset-manifest.json").write_text(json.dumps(manifest, indent=2))
+    if os.environ.get("CATALINA_VALIDATE_ONLY") == "1":
+        print(json.dumps(manifest))
+        return
     service_client = make_service_client()
     # ASSUMPTION: create_lora_training_client(base_model=, rank=). One client,
     # reused for the whole run.
-    training_client = service_client.create_lora_training_client(
-        base_model=cfg.base_model, rank=cfg.lora_rank)
+    training_client = await _resolve(service_client.create_lora_training_client_async(
+        base_model=cfg.base_model, rank=cfg.lora_rank))
     tokenizer = training_client.get_tokenizer()
 
     resume = os.environ.get("CATALINA_RESUME_PATH")
@@ -408,11 +405,13 @@ async def main():
         await _resolve(training_client.load_state_async(path=resume))
         print(f"[catalina-dro] resumed from {resume}")
 
-    prompts = load_prompts()
-    eval_prompts = prompts[:min(4, len(prompts))]
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
     metrics_log = cfg.out_dir / "metrics.jsonl"
     rng = np.random.default_rng(0)
+    baseline = await refresh_sampling_client(training_client, service_client, name=f"{cfg.run_name}-baseline")
+    baseline_accuracy = await evaluate(baseline, tokenizer, eval_tasks, cfg)
+    with metrics_log.open("a") as f:
+        f.write(json.dumps({"iter": 0, "heldout_exact_accuracy": baseline_accuracy, "tasks": len(eval_tasks), "dataset": manifest["testSha256"]}) + "\n")
 
     for it in range(1, cfg.num_iterations + 1):
         t0 = time.time()
@@ -422,14 +421,14 @@ async def main():
             training_client, service_client, name=f"{cfg.run_name}-s{it:06d}")
 
         # 2) Pick prompts, sample groups, score, build reusable Datums.
-        idx = rng.choice(len(prompts),
-                         size=min(cfg.prompts_per_batch, len(prompts)), replace=False)
+        idx = rng.choice(len(tasks),
+                         size=min(cfg.prompts_per_batch, len(tasks)), replace=False)
         rollout_data: list[Any] = []
         batch_rewards: list[float] = []
-        for p in (prompts[i] for i in idx):
-            ptoks = encode_prompt(tokenizer, p)
+        for task in (tasks[i] for i in idx):
+            ptoks = encode_prompt(tokenizer, task["prompt"])
             group = await sample_group(sampling_client, ptoks, cfg)
-            rewards = [reward_fn(p, tokenizer.decode(toks)) for toks, _ in group]
+            rewards = [reward_fn(task, tokenizer.decode(toks)) for toks, _ in group]
             batch_rewards.extend(rewards)
             for (toks, lps), adv in zip(group, group_relative_advantages(rewards, cfg.adv_eps)):
                 rollout_data.append(_make_datum(ptoks, toks, lps, adv))
@@ -466,10 +465,10 @@ async def main():
         if it % cfg.eval_every == 0:
             ev = await refresh_sampling_client(
                 training_client, service_client, name=f"{cfg.run_name}-e{it:06d}")
-            eval_r = await evaluate(ev, tokenizer, eval_prompts, cfg)
-            print(f"[catalina-dro][{it}] EVAL mean_reward={eval_r:.3f}")
+            eval_r = await evaluate(ev, tokenizer, eval_tasks, cfg)
+            print(f"[catalina-dro][{it}] HELDOUT exact_accuracy={eval_r:.3f}")
             with metrics_log.open("a") as f:
-                f.write(json.dumps({"iter": it, "eval_reward": eval_r}) + "\n")
+                f.write(json.dumps({"iter": it, "heldout_exact_accuracy": eval_r, "tasks": len(eval_tasks), "dataset": manifest["testSha256"]}) + "\n")
 
         # 6) Checkpoint.
         if it % cfg.save_every == 0:

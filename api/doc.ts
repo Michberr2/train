@@ -255,7 +255,7 @@ export default async function handler(req: any, res: any) {
   if (mode === 'outline' || mode === 'section') {
     const quotaL = await reserveStudioQuota(req, 'doc')
     if (!quotaL.ok) {
-      res.status(429).json({ error: studioLimitMessage('document', quotaL) })
+      res.status(quotaL.status || 429).json({ error: studioLimitMessage('document', quotaL) })
       return
     }
     try {
@@ -349,7 +349,7 @@ ${imageList.map((im, i) => `  [${i}] ${(typeof im.caption === 'string' && im.cap
 
   const quota = await reserveStudioQuota(req, 'doc')
   if (!quota.ok) {
-    res.status(429).json({ error: studioLimitMessage('document', quota) })
+    res.status(quota.status || 429).json({ error: studioLimitMessage('document', quota) })
     return
   }
   let succeeded = false

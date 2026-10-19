@@ -6,16 +6,15 @@
 export type ReasoningLevel = 'none' | 'min' | 'low' | 'medium' | 'high' | 'xhigh'
 export const REASONING_LEVELS: ReasoningLevel[] = ['none', 'min', 'low', 'medium', 'high', 'xhigh']
 
-// Reasoning: how much Nalu "thinks" before answering (routed to a hidden reasoning
-// channel, so the visible answer stays clean either way). High/XHigh also tell it to
-// answer more thoroughly — a longer, deeper answer, not just more hidden thinking.
+// Effort controls model deliberation. Answer length follows the user's request;
+// the separate token setting controls capacity, not a target response length.
 export const REASONING_DESC: Record<ReasoningLevel, string> = {
   none: 'Fastest — answers directly, no deliberation',
   min: 'Barely deliberates — quickest considered answer',
-  low: 'Light reasoning — faster, shorter responses',
-  medium: 'Balanced reasoning (recommended) — useful depth and detail',
-  high: 'Deep reasoning + a thorough, detailed answer',
-  xhigh: 'Maximum — reasons exhaustively and answers comprehensively (slowest)',
+  low: 'Light reasoning — prioritizes speed',
+  medium: 'Balanced reasoning (recommended)',
+  high: 'More deliberation for complex tasks',
+  xhigh: 'Most deliberation — can take longer',
 }
 // Shown next to the level so "XHigh" reads clean in the UI.
 export const REASONING_LABEL: Record<ReasoningLevel, string> = {

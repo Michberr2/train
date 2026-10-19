@@ -1,120 +1,49 @@
+import { lazy, Suspense, useState } from 'react'
+import { BookOpen, Code2, FileText, Globe, Image, ListChecks, Presentation, Table2, Wand2 } from 'lucide-react'
 import WorkspaceIntro from './WorkspaceIntro'
-import { useEffect, useState } from 'react';
-import { Wand2 } from 'lucide-react';
+const PluginsPanel = lazy(() => import('./PluginsPanel'))
 
-// Clean, professional flat icons via the open Iconify API (vscode-icons / logos / flat-color-icons).
-const ICON_BASE = 'https://api.iconify.design/';
+type Skill = { id: string; name: string; description: string; action: string; draft?: string; icon: typeof BookOpen; help?: boolean }
+const SKILLS: Skill[] = [
+  { id: 'browser', name: 'Browser research', description: 'Research public websites with sources in chat. Use Nalu for Chrome for actions in your signed-in browser tabs.', action: 'Plan research', draft: 'Research this topic using public web sources, and cite what you find: ', icon: Globe },
+  { id: 'documents', name: 'Documents', description: 'Draft and revise documents, then download Word or PDF files from the document preview.', action: 'Draft a document', draft: 'Create a document about ', icon: FileText },
+  { id: 'image-gen', name: 'Images', description: 'Generate images from your description. Choose your subject, style and dimensions before sending.', action: 'Describe an image', draft: 'Generate an image of ', icon: Image },
+  { id: 'nalu-docs', name: 'Workspace guide', description: 'See how chat, Studio, saved work and app connections fit together.', action: 'Read the guide', icon: BookOpen },
+  { id: 'pdf', name: 'PDFs', description: 'Attach a PDF to discuss its contents, or create a document and export it as a PDF.', action: 'Prepare a PDF request', draft: 'Help me work with a PDF. I want to ', icon: FileText },
+  { id: 'plugin-creator', name: 'Integration planning', description: 'Draft adapter code or setup instructions. Custom plugin installation is not available in this workspace.', action: 'Plan an integration', draft: 'Help me plan an integration for my app. Ask which platform and actions I need, then draft code and setup steps for review. Do not claim anything has been installed.', icon: Code2, help: true },
+  { id: 'presentations', name: 'Presentations', description: 'Create and edit slide decks with downloadable PowerPoint and PDF exports.', action: 'Plan a presentation', draft: 'Create a presentation about ', icon: Presentation },
+  { id: 'skill-creator', name: 'Reusable instructions', description: 'Write instructions you can review and reuse in your workflows. Drafting does not register an executable skill.', action: 'Draft instructions', draft: 'Help me write reusable instructions for a workflow. Ask about the task and tool that will use them, then produce a draft for review.', icon: Wand2, help: true },
+  { id: 'skill-installer', name: 'Skill setup guidance', description: 'Get help reviewing setup steps for your chosen coding tool. Nalu does not install external skill runtimes here.', action: 'Ask about setup', draft: 'Help me review skill setup instructions for my coding tool. First ask which tool and skill repository I use. Do not claim to install or enable anything.', icon: ListChecks, help: true },
+  { id: 'spreadsheets', name: 'Spreadsheets', description: 'Build spreadsheet workbooks with formulas and download them as Excel files.', action: 'Plan a workbook', draft: 'Create a spreadsheet workbook for ', icon: Table2 },
+]
 
-type Skill = {
-  id: string;
-  name: string;
-  description: string;
-  enabled: boolean;
-  icon: string; // iconify name, e.g. "vscode-icons:file-type-pdf2"
-};
-
-const DEFAULT_SKILLS: Skill[] = [
-  { id: 'browser', name: 'Browser', description: 'Let Nalu open and control the in-app browser to run research tasks.', enabled: true, icon: 'logos:chrome' },
-  { id: 'documents', name: 'Documents', description: 'Create and edit Word and Google Docs files.', enabled: true, icon: 'vscode-icons:file-type-word' },
-  { id: 'image-gen', name: 'Image Gen', description: 'Generate or edit images for websites, games, and more.', enabled: true, icon: 'vscode-icons:file-type-image' },
-  { id: 'nalu-docs', name: 'Nalu Docs', description: 'Reference docs, choose models, and explore the API.', enabled: true, icon: 'flat-color-icons:reading' },
-  { id: 'pdf', name: 'PDF', description: 'Read, create, render, and verify PDF files.', enabled: true, icon: 'vscode-icons:file-type-pdf2' },
-  { id: 'plugin-creator', name: 'Plugin Creator', description: 'Scaffold plugins and marketplace entries.', enabled: true, icon: 'flat-color-icons:puzzle' },
-  { id: 'presentations', name: 'Presentations', description: 'Create polished PowerPoint and Google Slides decks.', enabled: true, icon: 'vscode-icons:file-type-powerpoint2' },
-  { id: 'skill-creator', name: 'Skill Creator', description: 'Create or update a skill.', enabled: true, icon: 'flat-color-icons:edit-image' },
-  { id: 'skill-installer', name: 'Skill Installer', description: 'Install curated skills from nalu/skills or other repos.', enabled: true, icon: 'flat-color-icons:download' },
-  { id: 'spreadsheets', name: 'Spreadsheets', description: 'Create and edit spreadsheet or Google Sheets-ready files.', enabled: true, icon: 'vscode-icons:file-type-excel2' },
-];
-
-const STORAGE_KEY = 'nalu-skills';
-
-function loadEnabledMap(): Record<string, boolean> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const out: Record<string, boolean> = {};
-      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-        if (typeof value === 'boolean') out[key] = value;
-      }
-      return out;
-    }
-  } catch {
-    // ignore malformed persisted state and fall back to defaults
-  }
-  return {};
-}
-
-function Toggle({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={onChange}
-      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-400/40 ${
-        checked ? 'border-emerald-400/40 bg-emerald-500/80' : 'border-glass/[0.18] bg-glass/10'
-      }`}
-    >
-      <span
-        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
-          checked ? 'translate-x-6' : 'translate-x-1'
-        }`}
-      />
-    </button>
-  );
-}
-
-export default function SkillsPanel() {
-  const [skills, setSkills] = useState<Skill[]>(() => {
-    const map = loadEnabledMap();
-    return DEFAULT_SKILLS.map((s) => (s.id in map ? { ...s, enabled: map[s.id] } : s));
-  });
-
-  useEffect(() => {
-    try {
-      const map: Record<string, boolean> = {};
-      for (const s of skills) map[s.id] = s.enabled;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
-    } catch {
-      // storage may be unavailable (private mode); ignore
-    }
-  }, [skills]);
-
-  const toggle = (id: string) => {
-    setSkills((prev) => prev.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s)));
-  };
-
-  const enabledCount = skills.filter((s) => s.enabled).length;
-
-  return (
-    <div className="ws-skills ws-feature-page flex flex-1 min-h-0 flex-col font-sans text-ink">
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
-        <div className="mx-auto max-w-2xl"><WorkspaceIntro label="Skills" title="A little more possible." description="Give Nalu the abilities that fit your day."><span className="ws-save-status">{enabledCount} of {skills.length} skills on</span></WorkspaceIntro></div>
-        <ul className="ws-skill-cards mx-auto grid max-w-5xl gap-2">
-          {skills.map((skill) => (
-            <li
-              key={skill.id}
-              className="flex items-center gap-4 rounded-xl border border-glass/[0.18] bg-glass/[0.11] backdrop-blur-2xl px-4 py-3 transition-colors hover:bg-glass/5"
-            >
-              <div
-                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-glass/[0.06] ${
-                  skill.enabled ? '' : 'opacity-40 grayscale'
-                }`}
-              >
-                <img src={`${ICON_BASE}${skill.icon}.svg`} alt="" className="h-[22px] w-[22px]" loading="lazy" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-ink">{skill.name}</div>
-                <div className="truncate text-sm text-dim">{skill.description}</div>
-              </div>
-              <Toggle checked={skill.enabled} onChange={() => toggle(skill.id)} label={`Toggle ${skill.name}`} />
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
-  );
+export default function SkillsPanel({ onDraft }: { onDraft?: (prompt: string) => void }) {
+  const [tab, setTab] = useState<'tools' | 'connections'>('tools')
+  const [guide, setGuide] = useState(false)
+  return <div className="ws-skills ws-feature-page flex min-h-0 flex-1 flex-col font-sans text-ink">
+    <nav aria-label="Skills sections" className="flex gap-2 px-4 pt-4">
+      <button aria-pressed={tab === 'tools'} onClick={() => setTab('tools')} className="rounded-xl border border-glass/20 px-4 py-2 text-sm">Tools & guides</button>
+      <button aria-pressed={tab === 'connections'} onClick={() => setTab('connections')} className="rounded-xl border border-glass/20 px-4 py-2 text-sm">Connections & Chrome</button>
+    </nav>
+    {tab === 'connections' ? <Suspense fallback={<p role="status" className="p-6 text-sm text-dim">Opening connections…</p>}><PluginsPanel /></Suspense> : <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      <div className="mx-auto max-w-2xl"><WorkspaceIntro label="Skills" title="Make something useful." description="Choose a starting point. Your request opens in chat for you to complete and review before sending." /></div>
+      {guide && <section aria-label="Workspace guide" className="mx-auto mb-4 max-w-5xl rounded-xl border border-glass/20 bg-glass/10 p-4 text-sm">
+        <div className="mb-2 flex items-center justify-between gap-4"><h2 className="font-medium">Your workspace</h2><button onClick={() => setGuide(false)} className="rounded px-2 py-1 hover:bg-glass/10">Close guide</button></div>
+        <ol className="list-inside list-decimal space-y-2 text-dim">
+          <li>Use chat to explain what you need. Attach supported files to give Nalu context.</li>
+          <li>Open Studio to choose a creation type, review its preview and download your work.</li>
+          <li>Saved chats and creations let you return to an earlier draft.</li>
+          <li>Use Connections to verify accounts and choose destinations for AutoPilot workflows.</li>
+          <li>Nalu for Chrome is a separate extension you download and load in Chrome. It asks you to review consequential actions.</li>
+        </ol>
+      </section>}
+      <ul className="ws-skill-cards mx-auto grid max-w-5xl gap-2">
+        {SKILLS.map(skill => <li key={skill.id} className="flex flex-wrap items-center gap-4 rounded-xl border border-glass/[0.18] bg-glass/[0.11] px-4 py-3 backdrop-blur-2xl">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-glass/[0.06]"><skill.icon size={22} aria-hidden="true" /></div>
+          <div className="min-w-0 flex-1"><h2 className="text-sm font-medium">{skill.name}{skill.help && <span className="ml-2 text-xs font-normal text-dim">Guidance</span>}</h2><p className="mt-1 text-sm text-dim">{skill.description}</p></div>
+          <button disabled={!!skill.draft && !onDraft} onClick={() => skill.draft ? onDraft?.(skill.draft) : setGuide(open => !open)} aria-expanded={!skill.draft ? guide : undefined} className="rounded-xl border border-glass/20 px-3 py-2 text-xs hover:bg-glass/10 disabled:opacity-50">{skill.action}</button>
+        </li>)}
+      </ul>
+    </div>}
+  </div>
 }

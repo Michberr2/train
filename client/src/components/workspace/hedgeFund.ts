@@ -1,16 +1,17 @@
+import { hedgeFundOutputContract } from '../../../../shared/hedgeFundRisk'
 // Nalu Hedge Fund model — an AI investment committee modeled on the open-source
 // ai-hedge-fund (github.com/virattt/ai-hedge-fund): famous investor-persona agents
-// + analytical agents produce SIGNALS; a Risk Manager sets limits; a Portfolio
-// Manager makes the final trade decisions. Every agent has LIVE web access and
-// factors in real-time events (disasters, pandemics, wars, rate moves). These are
+// + analytical agents produce research signals. Risk and portfolio roles
+// propose positions; the runtime checks any quantities against user policy.
+// Live facts require retrieved evidence and remain unknown without it. These are
 // AutoPilot roles (add any to a flow) and also work for investing in chat.
 //
-// Signal contract (every analyst): bullish | bearish | neutral, confidence 0-100,
+// Signal contract: bullish | bearish | neutral with qualitative conviction,
 // and reasoning with the specific numbers — mirroring the repo's agent output.
 
 export type FundRole = { key: string; title: string; engine: string; desc: string; charter: string }
 
-const SIGNAL = 'OUTPUT a SIGNAL: state bullish, bearish, or neutral, a confidence 0-100, and 3-6 sentences of reasoning in your own voice citing the SPECIFIC numbers you used. Use LIVE web research every time for the current price, the latest financials/filings, and any real-world event (natural disaster, pandemic, war, rate decision, supply shock) that changes the thesis — cite sources.'
+const SIGNAL = 'OUTPUT a SIGNAL: state bullish, bearish, or neutral, qualitative conviction (low, medium or high), explicitly uncalibrated, and 3-6 sentences of reasoning in your own voice citing the SPECIFIC numbers you used. Use LIVE web research every time for the current price, the latest financials/filings, and any real-world event (natural disaster, pandemic, war, rate decision, supply shock) that changes the thesis — cite sources.'
 
 export const HEDGE_FUND_ROLES: FundRole[] = [
   // ---- Investor personas ----
@@ -37,9 +38,11 @@ export const HEDGE_FUND_ROLES: FundRole[] = [
   { key: 'hf-macro', title: 'Real-Time Macro & Events', engine: 'finance', desc: 'Live disasters, pandemics, macro shocks', charter: `You are the Real-Time Macro & Event analyst. Scan the LIVE web NOW for market-moving events: natural disasters, pandemics, wars and geopolitics, central-bank/rate decisions, inflation and jobs data, elections, commodity and supply-chain shocks, and sector-specific news. For each relevant event state which sectors/tickers it helps or hurts, the magnitude, and the likely duration. OUTPUT the current risk landscape as dated bullets with sources, then a bullish/bearish/neutral tilt per affected position with the catalyst and your reasoning. This is the fund's real-time nervous system — be current and specific.` },
 
   // ---- Management ----
-  { key: 'hf-risk', title: 'Risk Manager', engine: 'finance', desc: 'Position limits & risk controls', charter: `You are the Risk Manager. Given every analyst SIGNAL and the current portfolio, set hard risk controls: a MAX POSITION SIZE per ticker (e.g. ≤ 20% of the portfolio, scaled down for higher volatility, weaker conviction, or high correlation to existing holdings), sector/factor concentration caps, a suggested stop-loss level, a cash buffer, and the portfolio's current tail-risk exposure (factor in the Real-Time Macro & Events findings). OUTPUT a table: ticker · max position % · max shares · stop · notes, plus any red flags that should veto a trade.` },
-  { key: 'hf-portfolio', title: 'Portfolio Manager', engine: 'reasoning', desc: 'Final buy/sell/short/hold decisions', charter: `You are the Portfolio Manager — you make the FINAL trading decisions for the fund. Aggregate every analyst's signal (weight by conviction, relevance, and the reliability of each style for this situation), STRICTLY respect the Risk Manager's position limits, and factor in the Real-Time Macro & Events risk landscape. For each ticker decide: ACTION (buy / sell / short / cover / hold), QUANTITY (shares, within the risk limits), CONFIDENCE (0-100), and REASONING that names which analysts drove the call and the current real-world context. OUTPUT a clean decision table — ticker · action · quantity · confidence · why — followed by the portfolio's overall stance and cash level. Be decisive; never punt.` },
+  { key: 'hf-risk', title: 'Risk Manager', engine: 'finance', desc: 'Risk analysis and policy review', charter: `You are the Risk Manager. Given every analyst SIGNAL and the current portfolio, propose risk controls for review: a MAX POSITION SIZE per ticker (e.g. ≤ 20% of the portfolio, scaled down for higher volatility, weaker conviction, or high correlation to existing holdings), sector/factor concentration caps, a suggested stop-loss level, a cash buffer, and the portfolio's current tail-risk exposure (factor in the Real-Time Macro & Events findings). OUTPUT a table: ticker · max position % · max shares · stop · notes, plus any red flags that should veto a trade.` },
+  { key: 'hf-portfolio', title: 'Portfolio Manager', engine: 'reasoning', desc: 'Portfolio proposals with checked limits', charter: `You are the Portfolio research lead. Weigh analyst evidence, uncertainty, relevance and the current macro context. Explain which evidence drives the thesis and what would invalidate it. Risk-manager suggestions are advisory: only a user-attached portfolio policy defines enforceable balances, holdings, quotes and limits. Output the structured proposal required below. Without complete policy inputs, provide research with no share quantities. Never invent cash, holdings, prices, limits, calibrated confidence or execution results.` },
 ]
+
+for (const role of HEDGE_FUND_ROLES) role.charter += `\n\n${hedgeFundOutputContract(role.key)}`
 
 export const fundRoleDef = (key?: string) => HEDGE_FUND_ROLES.find((r) => r.key === key)
 
@@ -58,7 +61,7 @@ export function hedgeFundTeam(tickers: string): { analysts: HFNode[]; macro: HFN
   return {
     analysts: analystKeys.map((k) => roleNode(k, analystTask)),
     macro: roleNode('hf-macro', `Scan for live events affecting ${T} and the broader market right now, and give the risk landscape.`),
-    risk: roleNode('hf-risk', `Using every analyst signal and the macro landscape below, set position limits and risk controls for ${T}.\n\n{{input}}`),
-    portfolio: roleNode('hf-portfolio', `Make the final trade decisions for ${T}. Weigh all analyst signals, obey the Risk Manager's limits, and factor in the live macro risk.\n\n{{input}}`),
+    risk: roleNode('hf-risk', `Using every analyst signal and the macro landscape below, analyze risks and suggest limits for ${T}; distinguish advice from the user-supplied policy enforced by the runtime.\n\n{{input}}`),
+    portfolio: roleNode('hf-portfolio', `Produce a portfolio research proposal for ${T}. Weigh analyst evidence and macro risks. Only a user-attached portfolio policy establishes cash, holdings, quotes and enforceable limits; without it, produce research without share quantities.\n\n{{input}}`),
   }
 }

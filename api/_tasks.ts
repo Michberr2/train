@@ -8,6 +8,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { handleQuestionAction } from './_taskQuestions'
 import { handleVoiceRoute } from './_voiceRoute'
 import { listTeam } from './_team'
+import { continuationId, deferPipelineTask, PipelineContinuationError } from './_pipelineContinuation'
 
 type Client = { query: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, any>[] }> }
 type Body = Record<string, any>
@@ -91,13 +92,17 @@ export async function handleTaskAction(client: Client | CloudflareStore, userId:
     const repo = isPipeline ? '' : body.repo.trim(), prompt = isPipeline ? '' : body.prompt.trim()
     const target = isPipeline ? 'cloud' : 'desktop'
     const flowId = isPipeline ? body.flowId.trim() : null, mode = isPipeline ? body.mode || 'run' : null
-    let title = prompt.slice(0, 300)
+    let title = prompt.slice(0, 300), resumeStartedAt: number | undefined
     if (isPipeline) {
       const saved = await client.query("SELECT value FROM nalu_user_data WHERE user_id=$1 AND key='nalu-agent-flows'", [userId])
       let flows = saved.rows[0]?.value
       for (let i = 0; i < 6 && typeof flows === 'string'; i++) { try { flows = JSON.parse(flows) } catch { flows = null } }
       const flow = Array.isArray(flows) ? flows.find((f: any) => f && String(f.id) === flowId) : null
       if (!flow) { bad(res, 'pipeline not found', 404); return true }
+      if (mode === 'resume') {
+        if (!Number.isFinite(flow.run?.startedAt) || flow.run.startedAt <= 0) { bad(res, 'pipeline has no saved run to resume', 409); return true }
+        resumeStartedAt = flow.run.startedAt
+      }
       title = `${mode === 'resume' ? 'Resume' : 'Run'} ${String(flow.name || 'AutoPilot')}`.slice(0, 300)
     }
     await client.query('BEGIN')
@@ -107,7 +112,7 @@ export async function handleTaskAction(client: Client | CloudflareStore, userId:
          VALUES ($1,$2,'mobile',$3,'Waiting for a desktop worker','queued',0,
            jsonb_build_array(jsonb_build_object('t',NOW(),'m','Queued for desktop')),$4::jsonb)
          ON CONFLICT (id) DO NOTHING`,
-        [id, userId, title, JSON.stringify({ kind: 'remote', taskType: body.kind, repo, target, ...(member ? { memberId: member.id, memberName: member.name, memberVoice: member.voice, extension: member.extension } : {}), ...(isPipeline ? { flowId, mode } : {}) })],
+        [id, userId, title, JSON.stringify({ kind: 'remote', taskType: body.kind, repo, target, ...(member ? { memberId: member.id, memberName: member.name, memberVoice: member.voice, extension: member.extension } : {}), ...(isPipeline ? { flowId, mode } : {}), ...(resumeStartedAt ? { pipelineContinuation: { flowId, startedAt: resumeStartedAt } } : {}) })],
       )
       await client.query(
         `INSERT INTO nalu_task_jobs (id,user_id,request_id,kind,repo,prompt,target,flow_id,mode) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -182,7 +187,7 @@ export async function handleTaskAction(client: Client | CloudflareStore, userId:
     const row = result.rows[0]
     if (!row) { res.status(200).json({ ok: true, task: null }); return true }
     const { kind, repo, prompt, target, flow_id, mode, lease_token, lease_expires_at, ...task } = row
-    res.status(200).json({ ok: true, task: { ...task, request: { kind, repo, prompt, target, ...(kind === 'pipeline' ? { flowId: flow_id, mode } : {}) }, leaseToken: lease_token, leaseExpiresAt: lease_expires_at } })
+    res.status(200).json({ ok: true, task: { ...task, request: { kind, repo, prompt, target, ...(kind === 'pipeline' ? { flowId: flow_id, mode, ...(continuationId(task.meta) ? { startedAt: continuationId(task.meta) } : {}) } : {}) }, leaseToken: lease_token, leaseExpiresAt: lease_expires_at } })
     return true
   }
 
@@ -191,7 +196,7 @@ export async function handleTaskAction(client: Client | CloudflareStore, userId:
   if (action === 'task-cancel') {
     const result = await client.query(
       `WITH cancelled AS (
-         UPDATE nalu_task_jobs SET status='cancelled' WHERE id=$1 AND user_id=$2 AND status IN ('queued','running') RETURNING id
+         UPDATE nalu_task_jobs SET status='cancelled' WHERE id=$1 AND user_id=$2 AND status IN ('queued','running','waiting') RETURNING id
        ) UPDATE nalu_tasks t SET status='cancelled',detail='Cancellation requested',
          events=t.events || jsonb_build_array(jsonb_build_object('t',NOW(),'m','Cancellation requested')),updated_at=NOW()
          FROM cancelled c WHERE t.id=c.id AND t.user_id=$2 RETURNING ${FIELDS}`, [id, userId],
@@ -205,6 +210,11 @@ export async function handleTaskAction(client: Client | CloudflareStore, userId:
     bad(res, 'workerId and leaseToken required'); return true
   }
   const status = body.status || 'running'
+  if (['queued', 'waiting'].includes(status)) {
+    try { const task = await deferPipelineTask(client, userId, body); res.status(200).json({ ok: true, task, cancelRequested: task.status === 'cancelled' }) }
+    catch (error) { if (!(error instanceof PipelineContinuationError)) throw error; bad(res, error.message, 409) }
+    return true
+  }
   if (!['running', 'done', 'failed', 'cancelled'].includes(status)) { bad(res, 'invalid task status'); return true }
   if (body.progress != null && (typeof body.progress !== 'number' || !Number.isFinite(body.progress))) { bad(res, 'progress must be a finite number'); return true }
   const progress = body.progress == null ? null : Math.max(0, Math.min(1, body.progress))
