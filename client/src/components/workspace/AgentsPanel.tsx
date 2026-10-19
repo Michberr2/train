@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { parseFlowDraft } from './flowDraft'
+import { parseFlowFilter, selectFlowBranch, parsePlannerAction, routerEdgeLabels, routerGraphErrors } from '../../../../shared/autopilotDecisions'
 import AutopilotNodeCard from './AutopilotNodeCard'
 import AutopilotTemplates from './AutopilotTemplates'
 import { arrangeAutopilotNodes } from './autopilotLayout'
@@ -17,9 +18,12 @@ import { streamChat as requestChat } from './agentApi'
 import { runGraph, isScheduleDue, withAbort, nodeAttemptLimit } from './autopilotRuntime'
 import { importLegacyAutomations } from './legacyAutomations'
 import { HEDGE_FUND_ROLES, hedgeFundTeam } from './hedgeFund'
+import { hedgeFundOutputContract, guardHedgeFundOutput } from '../../../../shared/hedgeFundRisk'
+import { referenceDocumentContext } from '../../../../shared/referenceDocument'
+import { extractAttachment, attachmentExtractionSummary } from './extractText'
 import { listConnections, sendVia, sendPipelineVia, pipelineReviewStatus, appDef, type Connection } from '../../lib/connections'
 import ConnectionManager from './ConnectionManager'
-import { sessionWasCleared } from '../../lib/sync'
+import { sessionWasCleared, loadFromServer } from '../../lib/sync'
 import { deSlop as deSlopEmail } from '../../lib/emailStyle'
 import { generateVideo } from '../../lib/videoEngine'
 import { getBrand } from './brandKit'
@@ -187,25 +191,6 @@ const PLANNER_PROMPT = (goal: string, scratch: string[], step: number, max: numb
   `- To read a page: {"action":"fetch","url":"https://..."}\n` +
   `- When you have enough to deliver: {"action":"finish","answer":"<the full final deliverable>"}\n` +
   `Prefer to finish as soon as you can do a great job. Output JSON only.`
-function parsePlannerAction(raw: string): { action: 'search' | 'fetch' | 'finish'; query?: string; url?: string; answer?: string } {
-  const s = raw || ''
-  const start = s.indexOf('{')
-  if (start >= 0) {
-    // find the matching-ish JSON object (greedy to last brace)
-    const end = s.lastIndexOf('}')
-    if (end > start) {
-      try {
-        const j = JSON.parse(s.slice(start, end + 1)) as { action?: string; query?: string; url?: string; answer?: string }
-        if (j.action === 'search' || j.action === 'fetch' || j.action === 'finish') return j as ReturnType<typeof parsePlannerAction>
-      } catch { /* fall through to heuristics */ }
-    }
-  }
-  const url = s.match(/https?:\/\/[^\s"'<>]+/)?.[0]
-  if (/"action"\s*:\s*"fetch"/.test(s) && url) return { action: 'fetch', url }
-  const q = s.match(/"query"\s*:\s*"([^"]+)"/)?.[1]
-  if (q) return { action: 'search', query: q }
-  return { action: 'finish', answer: s }
-}
 // Thrown by an approval node with no decision yet → the engine pauses the run.
 class AwaitingApproval extends Error {}
 // Describe-to-Build: turn a plain-English ask into a pipeline plan (JSON).
@@ -250,7 +235,7 @@ type Company = { what: string; mission: string; notes?: string }
 type FlowRun = { status: 'running' | 'done' | 'error' | 'stuck' | 'stopped' | 'awaiting'; step: number; total: number; startedAt: number; updatedAt: number; heartbeat: number; node?: string; nodeLabel?: string; error?: string
   // Router/filter branch cuts made SO FAR ("from>to" edge keys). Persisted so a
   // resume / server-takeover doesn't lose them and re-run untaken branches. */
-  cutEdges?: string[] }
+  cutEdges?: string[]; yielded?: boolean; serverManaged?: boolean; checkpoints?: Record<string, unknown>; pendingEffect?: { nodeId: string; startedAt: number } }
 // A durable snapshot of one run for the Run Inspector: per-node input/output/status/ms.
 type RunSnap = { id: string; flowId: string; flowName: string; at: number; status: string; ms: number; nodes: Record<string, { label: string; type: string; input: string; output: string; state: string; ms: number }> }
 // A pending human-approval decision, stored on the flow until the user answers.
@@ -259,7 +244,7 @@ type Approval = { decision: 'approve' | 'edit' | 'reject'; text?: string; at: nu
 type Version = { id: string; at: number; note: string; nodes: PNode[]; edges: Edge[] }
 // refDoc: a document the user uploads from their computer that every agent in the
 // flow gets as authoritative reference context on each run.
-type RefDoc = { name: string; text: string }
+type RefDoc = { name: string; text: string; coverage?: string }
 type Flow = { id: string; name: string; nodes: PNode[]; edges: Edge[]; schedule: Schedule; time: string; timeZone?: string; enabled: boolean; lastRun?: number; results?: Record<string, string>; company?: Company; artifacts?: Record<string, OutputMeta>; defaultKey?: string; run?: FlowRun; refDoc?: RefDoc
   // 10x: persistent per-flow memory (survives runs), pending approvals, exposed-as-API,
   // and the last run's inspector snapshot.
@@ -306,7 +291,7 @@ function buildHedgeFundFlow(name: string, tickers: string): Flow {
   const macro = mk(team.macro, 40 + (analysts.length % 3) * 340, 40 + Math.floor(analysts.length / 3) * 210)
   const risk = mk(team.risk, 1220, 120)
   const portfolio = mk(team.portfolio, 1580, 120)
-  const memo: PNode = { id: uid(), x: 1940, y: 120, type: 'doc', label: 'Investment decision memo', prompt: "A clean investment-committee memo: each analyst's signal, the real-time macro/event risk landscape, the Risk Manager's position limits, and the Portfolio Manager's final decision table (ticker · action · quantity · confidence · why) with the overall stance and cash level." }
+  const memo: PNode = { id: uid(), x: 1940, y: 120, type: 'doc', label: 'Investment research memo', prompt: "Summarize the supplied research and checked portfolio result. Preserve its status and execution:none. If research-only, list the missing policy inputs and do not invent quantities, balances, or numerical confidence. If a proposal passed deterministic checks, reproduce only its supplied quantities and policy limits, label it an unexecuted proposal, and retain sources, timestamps, assumptions, and uncertainty." }
   const feeders = [...analysts, macro]
   return {
     id: uid(), name: name.trim() || 'Nalu Hedge Fund', schedule: 'daily', time: '07:00', enabled: false,
@@ -424,7 +409,7 @@ function topoOrder(nodes: PNode[], edges: Edge[]): string[] {
 
 // Pre-flight validation: catch broken graphs BEFORE spending tokens.
 function validateFlow(f: Flow): { blockers: string[]; warnings: string[] } {
-  const blockers = graphErrors(f.nodes, f.edges)
+  const blockers = [...graphErrors(f.nodes, f.edges), ...routerGraphErrors(f.nodes, f.edges)]
   const warnings: string[] = []
   for (const n of f.nodes) {
     const hasIn = f.edges.some((e) => e.to === n.id)
@@ -525,25 +510,28 @@ export default function AgentsPanel() {
   useEffect(() => { loadConns() }, [loadConns])
   const refDocInput = useRef<HTMLInputElement>(null)
   // Attach a document from the user's computer as reference context for the flow.
-  const onRefDocFile = useCallback((file: File) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const text = String(reader.result || '').slice(0, 40000) // keep the synced flow light
-      if (text.trim()) patchFlow(flow.id, { refDoc: { name: file.name, text } })
+  const refDocReads = useRef(new Map<string, number>())
+  const readRefDocFile = useCallback(async (file: File, nodeId?: string) => {
+    const targetFlow = flow?.id, token = getToken(), key = `${targetFlow}:${nodeId || 'flow'}`
+    const generation = (refDocReads.current.get(key) || 0) + 1
+    refDocReads.current.set(key, generation)
+    try {
+      const attachment = await extractAttachment(file)
+      if (token !== getToken() || sessionWasCleared() || refDocReads.current.get(key) !== generation) return
+      if (!attachment.text?.trim() || ['unsupported', 'failed', 'needs-ocr', 'image'].includes(attachment.extraction?.status || '')) {
+        throw new Error(`${attachmentExtractionSummary(attachment)}. ${attachment.extraction?.notes.join(' ') || 'Choose a document with selectable text.'}`)
+      }
+      const refDoc: RefDoc = { name: file.name, text: attachment.text, coverage: [attachmentExtractionSummary(attachment), ...(attachment.extraction?.notes || [])].join('. ') }
+      setFlows(fs => fs.map(f => f.id !== targetFlow ? f : nodeId ? { ...f, nodes: f.nodes.map(n => n.id === nodeId ? { ...n, refDoc } : n) } : { ...f, refDoc }))
+    } catch (error) {
+      if (token === getToken() && !sessionWasCleared() && refDocReads.current.get(key) === generation) setRunWarn(`Could not attach ${file.name}: ${error instanceof Error ? error.message : 'Document extraction failed.'}`)
     }
-    reader.readAsText(file)
-  }, [flow?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [flow?.id])
+  const onRefDocFile = (file: File) => { void readRefDocFile(file) }
   // Attach a reference to ONE individual agent (their own source of truth).
   const nodeRefInput = useRef<HTMLInputElement>(null)
   const nodeRefTarget = useRef<string>('')
-  const onNodeRefFile = useCallback((file: File) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const text = String(reader.result || '').slice(0, 40000)
-      if (text.trim() && nodeRefTarget.current) patchNode(nodeRefTarget.current, { refDoc: { name: file.name, text } })
-    }
-    reader.readAsText(file)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const onNodeRefFile = (file: File) => { const nodeId = nodeRefTarget.current; if (nodeId) void readRefDocFile(file, nodeId) }
   const [runsExpanded, setRunsExpanded] = useState(false)
   const [runWarn, setRunWarn] = useState<string | null>(null)
   const [durs, setDurs] = useState<Record<string, number>>({})
@@ -797,6 +785,40 @@ export default function AgentsPanel() {
   const runFlow = useCallback(async (target?: Flow, manual = true, resume = false) => {
     const source = target || flowsRef.current.find((x) => x.id === flowId) || flowsRef.current[0]
     if (!source || !source.nodes.length || abortRef.current) return
+    // Server checkpoints include partial map/planner work and uncertain HTTP
+    // outcomes. The browser must not reinterpret them as a fresh local node.
+    if (resume && source.run?.pendingEffect) {
+      setRunWarn('This HTTP request has an unconfirmed outcome. Check the destination before explicitly starting a new run; Resume will not replay it.')
+      return
+    }
+    if (resume && source.run && (source.run.yielded || Object.keys(source.run.checkpoints || {}).length || source.run.serverManaged && ['running', 'awaiting'].includes(source.run.status))) {
+      const token = getToken()
+      if (!token) { setRunWarn('Sign in to continue this saved server run. Its checkpoint is preserved.'); return }
+      const controller = new AbortController()
+      abortRef.current = controller
+      setRunning(source.id)
+      let stopping: Promise<unknown> | undefined
+      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+      const stop = () => { stopping = fetch('/api/data', { method: 'POST', headers, body: JSON.stringify({ action: 'flow-run', flowId: source.id, mode: 'stop', expectedStartedAt: source.run!.startedAt }), signal: AbortSignal.timeout(20000) }).catch(() => {}) }
+      controller.signal.addEventListener('abort', stop, { once: true })
+      try {
+        const review = source.run.node ? source.approvals?.[source.run.node] : undefined
+        const approval = source.run.status === 'awaiting' && review ? { nodeId: source.run.node, decision: review.decision, text: review.text } : undefined
+        const response = await fetch('/api/data', { method: 'POST', headers, body: JSON.stringify({ action: 'flow-run', flowId: source.id, mode: 'resume', expectedStartedAt: source.run.startedAt, approval }), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(245000)]) })
+        const result = await response.json()
+        if (!response.ok || !result.ok) throw new Error(result.error || 'The saved pipeline could not continue. Its checkpoint is preserved.')
+        setRunWarn(result.yielded ? 'Progress saved. Remaining work is queued to continue.' : result.status === 'awaiting' ? 'Waiting for your review.' : null)
+      } catch (error) {
+        if (!controller.signal.aborted) setRunWarn(error instanceof Error ? error.message : 'Could not reach the saved pipeline. Check its activity before retrying.')
+      } finally {
+        controller.signal.removeEventListener('abort', stop)
+        if (stopping) await stopping
+        abortRef.current = null
+        setRunning(null)
+        await loadFromServer()
+      }
+      return
+    }
     // Decisions belong to one run; memory is mutable only within this run snapshot.
     const f: Flow = { ...source, approvals: resume ? source.approvals : {}, memory: { ...(source.memory || {}) } }
     if (!resume) patchFlow(f.id, { approvals: {} })
@@ -904,14 +926,15 @@ export default function AgentsPanel() {
                   persist('running'); return
                 }
                 results[nid] = out.slice(0, 24000) // protect storage quota
-                // router → cut every out-edge whose branch wasn't taken. Edges may be
-                // labeled; if not, they map to branches by ORDER (1st edge = 1st branch).
+                // Use the same unambiguous branch mapping as the server runner.
                 if (node.type === 'router') {
                   const taken = routeRef.current[nid] || []
-                  const brs = node.branches || []
-                  f.edges.filter((e) => e.from === nid).forEach((e, i) => {
-                    const label = e.label || brs[i]?.label
-                    if (label && !taken.includes(label)) cutEdges.add(edgeKey(e.from, e.to))
+                  const brs = node.branches?.length ? node.branches : [{ label: 'A' }, { label: 'B' }]
+                  const outgoing = f.edges.filter((e) => e.from === nid)
+                  const labels = routerEdgeLabels(brs, outgoing)
+                  if (taken.length !== 1) throw new Error('The router did not select exactly one branch.')
+                  outgoing.forEach((e, i) => {
+                    if (labels[i] !== taken[0]) cutEdges.add(edgeKey(e.from, e.to))
                   })
                 }
                 setStates((st) => ({ ...st, [nid]: 'done' }))
@@ -1034,7 +1057,9 @@ export default function AgentsPanel() {
       text = t
     }
     const approvals = { ...(f.approvals || {}), [nid]: { decision, text, at: Date.now() } }
-    patchFlow(f.id, { approvals })
+    // Server approvals travel atomically with the bound resume request; do not
+    // race a stale whole-flow sync against its new completed checkpoint.
+    if (!f.run.serverManaged) patchFlow(f.id, { approvals })
     const updated: Flow = { ...f, approvals }
     setTimeout(() => { if (!abortRef.current) void runFlow(updated, false, true) }, 60)
   }
@@ -1154,12 +1179,13 @@ export default function AgentsPanel() {
       // A reference document the user attached to this pipeline — authoritative
       // context every agent should ground its work in.
       if (f.refDoc?.text?.trim()) {
-        prompt = `REFERENCE DOCUMENT the user attached for this pipeline — "${f.refDoc.name}". Treat it as authoritative context and ground your work in it:\n"""\n${f.refDoc.text.slice(0, 12000)}\n"""\n\n${prompt}`
+        prompt = `${referenceDocumentContext(f.refDoc)}\n\n${prompt}`
       }
       // A reference attached to THIS individual — even more specific to their role.
       if (node.refDoc?.text?.trim()) {
-        prompt = `YOUR OWN REFERENCE — "${node.refDoc.name}", attached specifically to you. This is your source of truth for your work; follow it closely:\n"""\n${node.refDoc.text.slice(0, 12000)}\n"""\n\n${prompt}`
+        prompt = `${referenceDocumentContext(node.refDoc)}\n\n${prompt}`
       }
+      prompt += '\n\n' + hedgeFundOutputContract(node.role)
       let out = ''
       let streamErr = ''
       const r = await streamChat([{ role: 'user', content: prompt }], undefined, {
@@ -1169,7 +1195,7 @@ export default function AgentsPanel() {
       }, undefined, undefined, undefined, node.agent, undefined, { webSearch: node.webSearch !== false, researchPrompt: (node.prompt || '').replace(/\{\{[^}]+\}\}/g, '').trim() })
       const result = out.trim() || r.text.trim()
       if (!result) throw new Error(streamErr || 'The model returned no answer.')
-      return result
+      return guardHedgeFundOutput(node.role, result, { policyText: node.refDoc?.text || f.refDoc?.text })
     }
     // ---- 10x: template expansion for {{input}} + {{memory.KEY}} in any node ----
     const tpl = (s: string) => (s || '')
@@ -1234,14 +1260,12 @@ export default function AgentsPanel() {
     // ---- 10x: Router / Switch — decide which ONE branch takes the input ----
     if (node.type === 'router') {
       const branches = node.branches && node.branches.length ? node.branches : [{ label: 'A' }, { label: 'B' }]
+      routerEdgeLabels(branches, f.edges.filter(edge => edge.from === node.id))
       let taken: string
       if ((node.routeBy || 'ai') === 'ai') {
         let pick = ''
         await streamChat([{ role: 'user', content: `Route the INPUT to EXACTLY ONE of these labels: ${branches.map((b) => b.label).join(' | ')}.${node.prompt ? ` Rule: ${node.prompt}` : ''}\nReply with ONLY the single best label, nothing else.\n\nINPUT:\n${(input || '(empty)').slice(0, 4000)}` }], undefined, { signal: ctrl.signal, onDelta: (t) => { pick += t } }, undefined, undefined, undefined, 'general', undefined, { webSearch: false })
-        const p = pick.trim().toLowerCase()
-        const selected = branches.find((b) => p.replace(/^[\s"'`]+|[\s"'`.!]+$/g, '') === b.label.toLowerCase())
-        if (!selected) throw new Error(`Router did not choose a valid branch: ${pick.slice(0, 120)}`)
-        taken = selected.label
+        taken = selectFlowBranch(pick, branches)
       } else {
         taken = (branches.find((b) => evalCond('contains', b.cond, input)) || branches[branches.length - 1]).label
       }
@@ -1255,9 +1279,7 @@ export default function AgentsPanel() {
       if ((node.condMode || 'notempty') === 'ai') {
         let ans = ''
         await streamChat([{ role: 'user', content: `Answer ONLY "yes" or "no". Condition: ${node.cond || node.prompt || 'is this worth continuing?'}\n\nINPUT:\n${(input || '').slice(0, 4000)}` }], undefined, { signal: ctrl.signal, onDelta: (t) => { ans += t } }, undefined, undefined, undefined, 'general', undefined, { webSearch: false })
-        const answer = ans.trim().replace(/^[\s"'`]+|[\s"'`.!]+$/g, '').toLowerCase()
-        if (answer !== 'yes' && answer !== 'no') throw new Error('The filter did not return yes or no.')
-        pass = answer === 'yes'
+        pass = parseFlowFilter(ans)
       } else pass = evalCond(node.condMode, node.cond, input)
       onLive(pass ? 'Passed ✓' : 'Stopped — condition not met')
       return pass ? (input || 'passed') : STOP_SENTINEL
@@ -1277,7 +1299,7 @@ export default function AgentsPanel() {
     }
     // ---- 10x: For-each (map) — split a list + run a step on EACH item, then join ----
     if (node.type === 'foreach') {
-      const items = splitItems(input, node.splitBy).slice(0, Math.max(1, node.maxItems || 20))
+      const items = splitItems(input, node.splitBy).slice(0, Math.max(1, Math.min(24, node.maxItems || 20)))
       if (!items.length) return '(nothing to map over)'
       const itemPrompt = node.prompt?.trim() || 'Process this item:\n{{item}}'
       const outs: string[] = new Array(items.length).fill('')
@@ -1293,6 +1315,7 @@ export default function AgentsPanel() {
           try {
             await streamChat([{ role: 'user', content: p }], undefined, { signal: ctrl.signal, onDelta: (t) => { o += t } }, undefined, undefined, undefined, node.agent || 'general', undefined, { webSearch: node.webSearch !== false, researchPrompt: (node.prompt || '').replace(/\{\{[^}]+\}\}/g, '').trim() })
           } catch (e) { throw new Error(`Item ${i + 1} failed: ${(e as Error).message}`) }
+          if (!o.trim()) throw new Error(`Item ${i + 1} returned no output.`)
           outs[i] = o.trim()
           done++
           onLive(`Mapped ${done}/${items.length}…\n\n${outs.filter(Boolean).map((x, j) => `【${j + 1}】 ${x}`).join('\n\n')}`)
@@ -1313,18 +1336,17 @@ export default function AgentsPanel() {
         let raw = ''
         await streamChat([{ role: 'user', content: PLANNER_PROMPT(goal, scratch, step, maxSteps) }], undefined, { signal: ctrl.signal, onDelta: (t) => { raw += t } }, undefined, undefined, undefined, node.agent || 'general', undefined, { webSearch: false })
         const act = parsePlannerAction(raw)
-        if (act.action === 'search' && act.query) {
+        if (act.action === 'search') {
           onLive(`🔎 ${act.query}`)
-          const rs = await fetch('/api/web', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'search', query: act.query.slice(0, 300) }), signal: ctrl.signal }).then((r) => r.json()).catch(() => ({})) as { results?: { title?: string; url?: string; snippet?: string }[] }
+          const rs = await fetch('/api/web', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'search', query: act.query.slice(0, 300) }), signal: ctrl.signal }).then(async r => { if (!r.ok) throw new Error('Planner search failed. Retry this step.'); return r.json() }) as { results?: { title?: string; url?: string; snippet?: string }[] }
           const txt = (rs.results || []).slice(0, 6).map((x, i) => `${i + 1}. ${x.title} — ${x.url}\n   ${x.snippet || ''}`).join('\n')
-          scratch.push(`SEARCHED "${act.query}":\n${txt || '(no results)'}`)
-        } else if (act.action === 'fetch' && act.url) {
+          scratch.push(`SEARCH EXCERPTS ONLY (pages not read) "${act.query}":\n${txt || '(no results)'}`)
+        } else if (act.action === 'fetch') {
           onLive(`🌐 ${act.url}`)
-          const rs = await fetch('/api/web', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'fetch', url: act.url }), signal: ctrl.signal }).then((r) => r.json()).catch(() => ({})) as { text?: string; markdown?: string; content?: string }
-          scratch.push(`READ ${act.url}:\n${(rs.text || rs.markdown || rs.content || '(empty)').slice(0, 4000)}`)
+          const rs = await fetch('/api/web', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'fetch', url: act.url }), signal: ctrl.signal }).then(async r => { if (!r.ok) throw new Error('Planner page read failed. Retry this step.'); return r.json() }) as { status?: string; url?: string; text?: string; error?: string }
+          scratch.push(`${rs.status === 'read' ? 'READ' : 'UNAVAILABLE'} ${rs.url || act.url}:\n${(rs.text || rs.error || 'Page not read. This is not evidence.').slice(0, 6500)}`)
         } else {
-          // finish (or unparseable → treat as final)
-          const answer = act.answer || raw
+          const answer = act.answer
           onLive(answer)
           return answer.trim() || '(agent produced no output)'
         }
@@ -1332,7 +1354,8 @@ export default function AgentsPanel() {
       // Ran out of steps — synthesize a final answer from the scratchpad.
       let fin = ''
       await streamChat([{ role: 'user', content: `GOAL: ${goal}\n\nYou have gathered:\n${scratch.join('\n\n').slice(0, 12000)}\n\nNow write the best possible final deliverable for the goal. Output only the deliverable.` }], undefined, { signal: ctrl.signal, onDelta: (t) => { fin += t; onLive(fin) } }, undefined, undefined, undefined, node.agent || 'general', undefined, { webSearch: false })
-      return fin.trim() || scratch.join('\n\n')
+      if (!fin.trim()) throw new Error('The planner returned no final deliverable.')
+      return fin.trim()
     }
     if (node.type === 'email') {
       const to = node.to || ''
@@ -1370,8 +1393,8 @@ export default function AgentsPanel() {
     // don't affect the generated deck/doc/sheet. Fold them in as leading context.
     const refCtx = [
       f.company?.notes?.trim() ? `HARD RULES for this output (follow exactly, they override defaults): ${f.company.notes.trim()}` : '',
-      f.refDoc?.text?.trim() ? `REFERENCE DOCUMENT "${f.refDoc.name}" — authoritative source; ground the output in it, use its real facts/numbers:\n"""\n${f.refDoc.text.slice(0, 12000)}\n"""` : '',
-      node.refDoc?.text?.trim() ? `REFERENCE for this step "${node.refDoc.name}":\n"""\n${node.refDoc.text.slice(0, 12000)}\n"""` : '',
+      referenceDocumentContext(f.refDoc),
+      referenceDocumentContext(node.refDoc),
     ].filter(Boolean).join('\n\n')
     const withCtx = (p: string) => (refCtx ? `${refCtx}\n\n${p}` : p)
     const material = input ? `\n\n--- THE MATERIAL (build the entire piece from this substance; keep its numbers and structure) ---\n${input.slice(0, 14000)}` : ''
@@ -1420,7 +1443,8 @@ export default function AgentsPanel() {
       return finish(blob, safeName(node.label, 'html'), 'website', `WEBSITE BUILT (${Math.round(d.html.length / 1024)}KB html): ${node.label}`)
     }
     if (node.type === 'image') {
-      const r = await fetch('/api/image', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: [brief, input.slice(0, 500)].filter(Boolean).join(' — ') || node.label }), signal: ctrl.signal })
+      const token = getToken()
+      const r = await fetch('/api/image', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ prompt: [brief, input.slice(0, 500)].filter(Boolean).join(' — ') || node.label }), signal: ctrl.signal })
       const d = await r.json()
       if (!r.ok || !d.url) throw new Error(d.error || 'image failed')
       const ir = await fetch(d.url, { signal: ctrl.signal })
@@ -1940,7 +1964,7 @@ export default function AgentsPanel() {
             <button onClick={(e) => { e.stopPropagation(); nodeRefTarget.current = n.id; nodeRefInput.current?.click() }} onPointerDown={(e) => e.stopPropagation()}
               title="Attach a reference just for this agent" className="mb-1.5 flex w-full items-center gap-1.5 rounded-lg border border-glass/[0.12] bg-glass/[0.04] px-2 py-1.5 text-[11px] text-ink transition-colors hover:border-glass/25 hover:bg-glass/[0.08]">
               <Paperclip size={11} className="shrink-0 text-gold" />
-              <span className="flex-1 truncate text-left font-medium">{n.refDoc ? n.refDoc.name : 'Reference'}</span>
+              <span className="flex-1 truncate text-left font-medium" title={n.refDoc?.coverage}>{n.refDoc ? n.refDoc.name : 'Reference'}{n.refDoc?.coverage && <small className="block truncate text-[9px] font-normal text-dim">{n.refDoc.coverage}</small>}</span>
               {n.refDoc ? <span onClick={(e) => { e.stopPropagation(); patchNode(n.id, { refDoc: undefined }) }} className="shrink-0 text-dim hover:text-red-300"><X size={10} /></span> : <span className="shrink-0 text-[9.5px] text-dim">optional</span>}
             </button>
           )}
@@ -2085,9 +2109,9 @@ export default function AgentsPanel() {
           <button className="ap-build" onClick={() => setBuildOpen(true)}><Wand2 size={17} />Build with AI</button>
 
           {/* hidden file inputs (reference doc for flow / per-agent, and import) */}
-          <input ref={refDocInput} type="file" accept=".txt,.md,.markdown,.csv,.json,.html,.xml,.log,.tsv,.yaml,.yml,text/*" className="hidden"
+          <input ref={refDocInput} type="file" accept=".txt,.md,.markdown,.csv,.json,.html,.xml,.log,.tsv,.yaml,.yml,.pdf,.docx,.xlsx,.pptx,text/*" className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) onRefDocFile(f); e.target.value = '' }} />
-          <input ref={nodeRefInput} type="file" accept=".txt,.md,.markdown,.csv,.json,.html,.xml,.log,.tsv,.yaml,.yml,text/*" className="hidden"
+          <input ref={nodeRefInput} type="file" accept=".txt,.md,.markdown,.csv,.json,.html,.xml,.log,.tsv,.yaml,.yml,.pdf,.docx,.xlsx,.pptx,text/*" className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) onNodeRefFile(f); e.target.value = '' }} />
           <input ref={importInput} type="file" accept=".json,application/json" className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) void importFlow(f); e.target.value = '' }} />
@@ -2213,7 +2237,7 @@ export default function AgentsPanel() {
                     {flow.refDoc ? (
                       <div className="flex items-center gap-1.5 rounded-lg bg-gold/15 px-2.5 py-1.5 text-[12px] text-ink" title={flow.refDoc.name}>
                         <Paperclip size={12} className="shrink-0 text-gold" />
-                        <span className="min-w-0 flex-1 truncate">{flow.refDoc.name}</span>
+                        <span className="min-w-0 flex-1 truncate" title={flow.refDoc.coverage}>{flow.refDoc.name}{flow.refDoc.coverage && <small className="block truncate text-[10px] text-dim">{flow.refDoc.coverage}</small>}</span>
                         <button onClick={() => patchFlow(flow.id, { refDoc: undefined })} title="Remove" className="shrink-0 text-dim hover:text-red-300"><X size={12} /></button>
                       </div>
                     ) : (
@@ -2558,7 +2582,8 @@ export default function AgentsPanel() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur" onClick={() => setHfSetup(null)}>
           <div className="w-full max-w-lg rounded-2xl border border-emerald-400/25 bg-panel2 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="text-[13px] font-semibold text-ink">Nalu Hedge Fund model</div>
-            <p className="mt-1 text-[11.5px] leading-relaxed text-dim">A full AI investment committee — Buffett, Munger, Graham, Wood, Burry, Ackman, Lynch, Druckenmiller, Damodaran, Taleb, Pabrai, Jhunjhunwala + fundamentals, valuation, technicals, sentiment and growth analysts, a real-time macro/events desk (disasters, pandemics, rates), a Risk Manager and a Portfolio Manager. Every agent researches live data; the PM makes the final buy/sell/short/hold calls.</p>
+            <p className="mt-1 text-[11.5px] leading-relaxed text-dim">Research your watchlist through analyst, macro, risk, and portfolio perspectives. These are AI roles using investing approaches, with sourced research and clearly stated uncertainty. Attach your completed risk policy to the pipeline to check proposed quantities against your holdings, prices, cash, and limits. Orders are never executed here.</p>
+            <a href="/fund-risk-policy.example.json" download className="mt-2 inline-block text-[11.5px] text-emerald-300 underline">Download risk policy example</a>
             <label className="mt-3 block text-[10px] font-semibold uppercase tracking-[0.16em] text-dim">Fund name</label>
             <input autoFocus value={hfSetup.name} onChange={(e) => setHfSetup({ ...hfSetup, name: e.target.value })} placeholder="Nalu Hedge Fund"
               className="mt-1 w-full rounded-lg border border-glass/[0.12] bg-glass/[0.05] px-2.5 py-1.5 text-[13px] text-ink outline-none placeholder:text-dim focus:border-glass/30" />

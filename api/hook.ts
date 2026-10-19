@@ -15,6 +15,7 @@ import { cors } from './_cors'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default async function handler(req: any, res: any) {
+  const deadlineMs = Date.now() + 240000
   if (cors(req, res)) return
   if (req.method !== 'POST' && req.method !== 'GET') {
     res.status(405).json({ error: 'use POST' }); return
@@ -37,7 +38,7 @@ export default async function handler(req: any, res: any) {
   try {
     await backend.connect()
     if (!(client instanceof CloudflareStore)) await ensureSchema(client as any)
-    const r = await runFlowByHook(client, flowId, secret, payload)
+    const r = await runFlowByHook(client, flowId, secret, payload, { deadlineMs })
     res.status(r.status || (r.ok ? 200 : 500)).json({ ok: r.ok, output: r.output, error: r.error })
   } catch (e) {
     res.status(500).json({ error: e instanceof Error ? e.message : 'hook failed' })

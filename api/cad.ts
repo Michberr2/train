@@ -4,15 +4,17 @@
 //   POST { prompt }                 -> { code }   (new model)
 //   POST { code, error, prompt? }   -> { code }   (self-repair a compile failure)
 
-import { chatCompleteContinued } from './_llm'
+import { chatCompleteContinued, providerChain } from './_llm'
 import { reserveStudioQuota, studioLimitMessage } from './_limits'
+import { cancellationSignal, throwIfCancelled, withRequestCancellation } from './_requestCancellation'
+import { publicFetch } from './_publicFetch'
+import { cors } from './_cors'
 
 function env(name: string): string | undefined {
   const v = process.env[name]
   return v && v.trim() ? v : undefined
 }
 
-const LLM_KEY = env('TINKER_API_KEY') || ''
 const LLM_MODEL = env('NALU_CAD_MODEL') || 'thinkingmachines/Inkling'
 
 const SYSTEM = `You are a world-class mechanical and industrial product designer who writes expert, production-grade OpenSCAD. Given a description, output ONE compilable OpenSCAD program that models the object in realistic, detailed, professional quality — like a finished engineered product, never a bare primitive.
@@ -56,20 +58,20 @@ const UA =
 // designs to accurate, standard measurements instead of guessing.
 async function reference(prompt: string): Promise<string> {
   try {
-    const s = await fetch(
+    const s = await publicFetch(
       `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
         prompt + ' dimensions specification standard',
       )}&format=json&srlimit=2`,
-      { headers: { 'User-Agent': UA } },
+      { headers: { 'User-Agent': UA }, timeoutMs: 4000, signal: cancellationSignal() },
     )
     const sd = (await s.json()) as { query?: { search?: Array<{ title?: string }> } }
     const title = sd.query?.search?.[0]?.title
     if (!title) return ''
-    const e = await fetch(
+    const e = await publicFetch(
       `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&exintro&explaintext&titles=${encodeURIComponent(
         title,
       )}&format=json`,
-      { headers: { 'User-Agent': UA } },
+      { headers: { 'User-Agent': UA }, timeoutMs: 4000, signal: cancellationSignal() },
     )
     const ed = (await e.json()) as { query?: { pages?: Record<string, { extract?: string }> } }
     const page = Object.values(ed.query?.pages || {})[0]
@@ -79,21 +81,34 @@ async function reference(prompt: string): Promise<string> {
   }
 }
 
-async function llm(messages: Array<{ role: string; content: string }>): Promise<string> {
-  // Robust: timeout + provider failover + a continuation pass if the model hits
-  // the token ceiling (super-detailed assemblies are long) — so complex models
-  // arrive complete instead of truncated mid-module.
-  const r = await chatCompleteContinued(messages, { model: LLM_MODEL, maxTokens: 13000, timeoutMs: 100000, retryPrimary: false, temperature: 0.15 })
-  return cleanScad(r.content)
+async function llm(messages: Array<{ role: string; content: string }>, deadlineMs: number): Promise<string> {
+  for (const provider of providerChain(LLM_MODEL)) {
+    throwIfCancelled()
+    // Continuation makes at most two calls; budget both before starting either.
+    const timeoutMs = Math.min(95000, Math.floor((deadlineMs - Date.now() - 10000) / 2))
+    if (timeoutMs < 1000) break
+    try {
+      const r = await chatCompleteContinued(messages, { model: LLM_MODEL, maxTokens: 13000, timeoutMs, providers: [provider], maxAttempts: 1, retryPrimary: false, temperature: 0.15 })
+      const code = cleanScad(r.content)
+      if (r.finishReason === 'stop' && code.length >= 10) return code
+    } catch { throwIfCancelled() }
+  }
+  throw new Error('Could not finish a complete CAD model within this request. Please retry; the previous model is preserved.')
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default async function handler(req: any, res: any) {
+  return withRequestCancellation(req, res, () => handleCad(req, res))
+}
+
+async function handleCad(req: any, res: any) {
+  const deadlineMs = Date.now() + 265000
+  if (cors(req, res)) return
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'POST only' })
     return
   }
-  if (!LLM_KEY) {
+  if (!providerChain(LLM_MODEL).length) {
     res.status(500).json({ error: 'Nalu engine is not configured.' })
     return
   }
@@ -110,16 +125,19 @@ export default async function handler(req: any, res: any) {
   const error = typeof body.error === 'string' ? body.error : ''
   const prevCode = typeof body.prevCode === 'string' ? body.prevCode : ''
 
-  // Meter fresh generations/edits, but NOT automatic self-repair (it's a retry of
-  // work the user already paid a slot for).
+  if (prompt.length > 16000 || badCode.length > 180000 || prevCode.length > 180000 || error.length > 10000) { res.status(413).json({ error: 'The CAD request is too large. Use a smaller model or shorter instructions.' }); return }
+  if (!prompt && !(badCode && error)) { res.status(400).json({ error: 'prompt required' }); return }
+  // Repair has a separate allowance. A caller cannot bypass metering merely by
+  // adding code/error fields, and genuine repairs do not use the creation cap.
   const isRepair = !!(badCode && error)
-  const quota = isRepair ? null : await reserveStudioQuota(req, 'cad')
-  if (quota && !quota.ok) {
-    res.status(429).json({ error: studioLimitMessage('3D model', quota) })
+  const quota = await reserveStudioQuota(req, isRepair ? 'cad-repair' : 'cad')
+  if (!quota.ok) {
+    res.status(quota.status || 429).json({ error: studioLimitMessage('3D model', quota) })
     return
   }
   let succeeded = false
   try {
+    throwIfCancelled()
     let code: string
     if (badCode && error) {
       // Self-repair mode.
@@ -129,13 +147,13 @@ export default async function handler(req: any, res: any) {
           role: 'user',
           content: `${prompt ? `Intended object: ${prompt}\n\n` : ''}Code:\n${badCode}\n\nCompile error / problem:\n${error.slice(0, 1500)}`,
         },
-      ])
+      ], deadlineMs)
     } else if (prevCode && prompt) {
       // Iterate mode — edit the current model (keep the screen, new mockup).
       code = await llm([
         { role: 'system', content: EDIT_SYSTEM },
         { role: 'user', content: `Current model:\n${prevCode}\n\nRequested change: ${prompt}` },
-      ])
+      ], deadlineMs)
     } else {
       if (!prompt) {
         res.status(400).json({ error: 'prompt required' })
@@ -150,17 +168,19 @@ export default async function handler(req: any, res: any) {
             ? `Reference data (use these real, accurate dimensions/standards/proportions where relevant):\n${ref}\n\nNow design this in OpenSCAD: ${prompt}`
             : prompt,
         },
-      ])
+      ], deadlineMs)
     }
     if (!code || code.length < 10) {
       res.status(502).json({ error: 'Could not generate the model. Try rephrasing.' })
       return
     }
-    res.status(200).json({ code, name: 'Nalu CAD' })
+    throwIfCancelled()
+    res.status(200).json({ code, name: 'Nalu CAD', quality: { compilation: 'pending-client' } })
     succeeded = true
   } catch (err) {
-    res.status(500).json({ error: err instanceof Error ? err.message : 'cad error' })
+    throwIfCancelled()
+    res.status(502).json({ error: err instanceof Error ? err.message : 'cad error' })
   } finally {
-    if (quota && !succeeded) await quota.release()
+    if (!succeeded || cancellationSignal()?.aborted) await quota.release()
   }
 }

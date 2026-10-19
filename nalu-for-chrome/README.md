@@ -25,6 +25,11 @@ side panel (goal) ──▶ background worker
   buttons, inputs, …) each with a numeric `ref`; the model picks a ref to act on.
 - **Safe by default:** consequential actions (purchase/pay/send/delete/submit, or
   navigating to a different site) require a one-click **Allow** in the panel.
+- **Bound to the observed page:** each action retains the original tab and Chrome
+  document identity. Navigation, a changed target, or a tab switch while Nalu is
+  thinking or awaiting approval invalidates the action. Coordinate clicks and
+  non-search submissions require review even when the typed text is innocuous.
+  Approval is specific to one proposed action and shows its page and target.
 - **It can ask:** if it needs info or a choice, it pauses and asks you.
 
 ## Install (load unpacked)
@@ -35,6 +40,9 @@ side panel (goal) ──▶ background worker
 4. Pin "Nalu for Chrome" and click it (or its toolbar icon) to open the side panel.
 5. Open any normal web page (not a `chrome://` page), type a goal, and hit **Run**.
 
+Requires Chrome 116 or newer. After updating the extension, reload existing tabs
+so their content script uses the new document-bound action protocol.
+
 > The `/api/web` agentstep action must be deployed on n4lu.ai (it is — it ships with the
 > main app). To point at a different backend, change `API` in `background.js`.
 
@@ -43,9 +51,16 @@ side panel (goal) ──▶ background worker
 - Works on normal http/https pages. Chrome system pages (`chrome://`, the web
   store) can't be scripted — that's a browser restriction.
 - Hybrid grounding: DOM refs PLUS a viewport screenshot sent to a vision model, so it also handles <canvas>/custom UIs (via coordinate clicks). Saved tasks let you re-run a goal in one click.
-- This is an MVP (single tab, up to 25 steps/run). Roadmap: multi-tab, workflow
-  record/replay, scheduled runs, a prompt-injection content classifier, and an
-  optional vision fallback.
+- Multi-tab actions use the tab IDs observed with the page, rather than reusing
+  an index after the tab strip changes. Scheduled tasks never auto-approve
+  consequential actions; tasks requiring a reply must be run interactively.
+- Input executes through the content script, with validation and dispatch in the
+  same document. Sites that require trusted native input may need the user to
+  perform that step manually. Tab-only debugger input cannot enforce document
+  binding during navigation and is not used as a fallback.
+- Search submits are automatic only for an explicitly identified GET search
+  form. Unknown forms and coordinate clicks require review. This is a bounded
+  browser agent (up to 25 steps); page content and model output remain untrusted.
 
 ## Get it from inside Nalu
 
@@ -58,7 +73,7 @@ The downloadable zip *is* the Web Store upload artifact:
 
 1. Rebuild the zip after changes: `cd nalu-for-chrome && zip -rq ../client/public/nalu-for-chrome.zip . -x '*.DS_Store'`.
 2. Go to the [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole) (one-time $5 registration), **Add new item**, upload the zip.
-3. Listing: name "Nalu for Chrome", category Productivity, add screenshots of the side panel, a 128px icon (already in `icons/`), and a privacy policy URL (n4lu.ai/privacy). Justify the `debugger`, `tabs`, and broad host permissions in the review notes ("AI agent that acts on the user's active tab on their behalf, with confirmation gating").
+3. Listing: name "Nalu for Chrome", category Productivity, add screenshots of the side panel, a 128px icon (already in `icons/`), and a privacy policy URL (n4lu.ai/privacy). Justify the `tabs`, `scripting`, and host permissions in the review notes ("AI agent that acts on the user's observed page with action-specific confirmation and document binding").
 4. Submit for review. Once approved, users install in one click and you can link the store URL from the in-app card.
 
 ## Config (optional)

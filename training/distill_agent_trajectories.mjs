@@ -178,8 +178,12 @@ for (let i = 0; i < results.length; i++) {
   // domain rows carry the routed-specialist note the production prompt implies,
   // so each fleet model trains under a system prompt shaped like its own.
   const system = domain === 'code' ? NALU_CLI_SYSTEM : `${NALU_CLI_SYSTEM}\nYou are routed as the Nalu ${domain} specialist — answer with that domain's expertise.`
-  rows.push({ system, turns, task: t.task, archetype: arch.id, domain })
+  // A teacher's verified flag is only a claim. The dataset policy requires a
+  // separate hash-bound runner/human review before any of these rows train.
+  rows.push({ system, turns, task: t.task, archetype: arch.id, domain,
+    verification: {status: 'pending-independent-review', teacherClaimedSuccess: t.verified === true,
+      reason: 'Teacher-returned tool_output strings are not authenticated runner events'} })
 }
 
-log(`${rows.length}/${ARCHETYPES.length} trajectories passed validation (${rejected.length} rejected)`)
+log(`${rows.length}/${ARCHETYPES.length} trajectories passed structural validation (not execution verification) (${rejected.length} rejected)`)
 return { rows, rejected }

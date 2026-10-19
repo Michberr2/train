@@ -1,228 +1,59 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Blocks, Check, Download } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Download, RefreshCw } from 'lucide-react'
+import { CONNECT_APPS, listConnections, type Connection } from '../../lib/connections'
+import { ConnLogo } from '../../lib/connLogos'
+import ConnectionManager from './ConnectionManager'
 
-type Plugin = {
-  id: string
-  name: string
-  description: string
-  installed: boolean
-}
-
-// Full-color brand logos via the open Iconify API.
-const PLUGIN_LOGOS: Record<string, string> = {
-  browser: 'logos:chrome',
-  github: 'logos:github-icon',
-  linear: 'logos:linear-icon',
-  slack: 'logos:slack-icon',
-  postgres: 'logos:postgresql',
-  vercel: 'logos:vercel-icon',
-  notion: 'logos:notion-icon',
-  figma: 'logos:figma',
-}
-
-const DEFAULT_PLUGINS: Plugin[] = [
-  {
-    id: 'browser',
-    name: 'Browser',
-    description: 'Let Nalu browse the web, read pages, and run research tasks.',
-    installed: true,
-  },
-  {
-    id: 'github',
-    name: 'GitHub',
-    description: 'Open PRs, review diffs, and manage issues from your repos.',
-    installed: true,
-  },
-  {
-    id: 'linear',
-    name: 'Linear',
-    description: 'Create, update, and triage issues across your Linear teams.',
-    installed: false,
-  },
-  {
-    id: 'slack',
-    name: 'Slack',
-    description: 'Send messages, summarize threads, and ping channels.',
-    installed: false,
-  },
-  {
-    id: 'postgres',
-    name: 'Postgres',
-    description: 'Query databases, inspect schemas, and run safe migrations.',
-    installed: true,
-  },
-  {
-    id: 'vercel',
-    name: 'Vercel',
-    description: 'Trigger deploys, read build logs, and manage environments.',
-    installed: false,
-  },
-  {
-    id: 'notion',
-    name: 'Notion',
-    description: 'Read and write pages, databases, and docs in your workspace.',
-    installed: false,
-  },
-  {
-    id: 'figma',
-    name: 'Figma',
-    description: 'Pull frames, inspect components, and export design specs.',
-    installed: false,
-  },
-]
-
-const STORAGE_KEY = 'nalu-plugins'
-
-function loadInstalled(): Record<string, boolean> {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return {}
-    const parsed = JSON.parse(raw) as unknown
-    if (Array.isArray(parsed)) {
-      // Stored as a set of installed ids.
-      return parsed.reduce<Record<string, boolean>>((acc, id) => {
-        if (typeof id === 'string') acc[id] = true
-        return acc
-      }, {})
-    }
-    if (parsed && typeof parsed === 'object') {
-      return parsed as Record<string, boolean>
-    }
-    return {}
-  } catch {
-    return {}
-  }
-}
-
+// This catalogue uses the same supported adapters and account inventory as the
+// actual setup flow. Legacy nalu-plugins preferences are deliberately untouched.
 export default function PluginsPanel() {
-  const [plugins, setPlugins] = useState<Plugin[]>(() => {
-    const installed = loadInstalled()
-    const hasSaved = Object.keys(installed).length > 0
-    return DEFAULT_PLUGINS.map((p) => ({
-      ...p,
-      installed: hasSaved ? Boolean(installed[p.id]) : p.installed,
-    }))
-  })
-
-  useEffect(() => {
-    try {
-      const installedIds = plugins.filter((p) => p.installed).map((p) => p.id)
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(installedIds))
-    } catch {
-      // Ignore persistence failures (private mode, quota, etc.).
-    }
-  }, [plugins])
-
-  const installedCount = useMemo(
-    () => plugins.filter((p) => p.installed).length,
-    [plugins],
-  )
-
-  const toggle = (id: string) => {
-    setPlugins((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, installed: !p.installed } : p)),
-    )
-  }
-
-  return (
-    <div className="flex h-full flex-col bg-glass/[0.09] backdrop-blur-2xl font-sans text-ink">
-      <header className="flex items-center gap-3 border-b border-glass/[0.18] px-6 py-4">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-glass/5 text-emerald-300">
-          <Blocks size={18} />
-        </div>
-        <div className="min-w-0">
-          <h1 className="text-base font-semibold text-ink">Plugins</h1>
-          <p className="truncate text-sm text-dim">
-            Extend Nalu with integrations
-          </p>
-        </div>
-        <span className="ml-auto rounded-full bg-glass/5 px-3 py-1 text-xs text-dim">
-          {installedCount} installed
-        </span>
-      </header>
-
-      <div className="flex-1 overflow-y-auto px-6 py-5">
-        {/* Featured: Nalu for Chrome (the browser-agent extension). */}
-        <div className="mb-5 rounded-2xl border border-accent/30 bg-accent/[0.08] p-5">
-          <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-glass/10">
-              <img src="/wolf-icon.png" alt="" className="h-6 w-6 brightness-0 dark:brightness-0 dark:invert" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <h2 className="text-[15px] font-semibold text-ink">Nalu for Chrome</h2>
-                <span className="rounded-full bg-accent/20 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent">New</span>
-              </div>
-              <p className="mt-1 text-[13px] leading-relaxed text-dim">
-                Nalu in your browser — give it a goal and it reads the current page and acts for you (clicks, types, navigates), asking before anything consequential. Vision-grounded, multi-tab, with saved &amp; scheduled tasks.
-              </p>
-              <ol className="mt-3 space-y-1 text-[12.5px] text-dim">
-                <li>1. Download the extension and unzip it.</li>
-                <li>2. Open <span className="font-mono text-ink">chrome://extensions</span> → turn on <span className="text-ink">Developer mode</span>.</li>
-                <li>3. Click <span className="text-ink">Load unpacked</span> and select the unzipped <span className="font-mono text-ink">nalu-for-chrome</span> folder.</li>
-                <li>4. Pin it and click the wolf to open the side panel on any page.</li>
-              </ol>
-              <a
-                href="/nalu-for-chrome.zip"
-                download
-                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-[13px] font-semibold text-[#0a1018] transition-opacity hover:opacity-90"
-              >
-                <Download size={15} /> Download Nalu for Chrome
-              </a>
-            </div>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {plugins.map((plugin) => {
-            return (
-              <div
-                key={plugin.id}
-                className="flex flex-col rounded-2xl border border-glass/[0.18] bg-glass/[0.11] backdrop-blur-2xl p-4 transition-colors hover:bg-glass/5"
-              >
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/90">
-                    <img
-                      src={`https://api.iconify.design/${PLUGIN_LOGOS[plugin.id] ?? 'flat-color-icons:puzzle'}.svg`}
-                      alt=""
-                      className="h-[22px] w-[22px]"
-                      loading="lazy"
-                    />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <h2 className="text-sm font-medium text-ink">
-                      {plugin.name}
-                    </h2>
-                    <p className="mt-1 text-xs leading-relaxed text-dim">
-                      {plugin.description}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => toggle(plugin.id)}
-                  className={`mt-4 inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                    plugin.installed
-                      ? 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30'
-                      : 'bg-glass/5 text-ink hover:bg-glass/10'
-                  }`}
-                >
-                  {plugin.installed ? (
-                    <>
-                      <Check size={14} />
-                      Installed
-                    </>
-                  ) : (
-                    <>
-                      <Download size={14} />
-                      Install
-                    </>
-                  )}
-                </button>
-              </div>
-            )
-          })}
-        </div>
+  const [connections, setConnections] = useState<Connection[]>([])
+  const [loading, setLoading] = useState(true), [error, setError] = useState('')
+  const [editorApp, setEditorApp] = useState<string | null>(null)
+  const loadVersion = useRef(0)
+  const load = useCallback(async () => {
+    const version = ++loadVersion.current
+    setLoading(true); setError('')
+    try { const items = await listConnections(); if (loadVersion.current === version) setConnections(items) }
+    catch (e) { if (loadVersion.current === version) { setConnections([]); setError(e instanceof Error ? e.message : 'Could not load connections.') } }
+    finally { if (loadVersion.current === version) setLoading(false) }
+  }, [])
+  useEffect(() => { void load(); return () => { loadVersion.current++ } }, [load])
+  return <div className="flex min-h-0 flex-1 flex-col font-sans text-ink">
+    <header className="flex flex-wrap items-center gap-3 px-6 py-4">
+      <div className="min-w-0 flex-1"><h1 className="text-base font-medium">Connections & Chrome</h1><p className="mt-1 text-sm text-dim">Connect an account through verified setup, or add Nalu to Chrome.</p></div>
+      {!loading && !error && <span className="text-xs text-dim">{connections.length} saved {connections.length === 1 ? 'account' : 'accounts'}</span>}
+      <button aria-label="Refresh connection status" disabled={loading} onClick={() => void load()} className="rounded-xl p-2 hover:bg-glass/10 disabled:opacity-50"><RefreshCw size={17} /></button>
+    </header>
+    <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5">
+      <section aria-label="Nalu for Chrome" className="mb-5 rounded-2xl border border-accent/30 bg-accent/[0.08] p-5">
+        <h2 className="text-[15px] font-medium">Nalu for Chrome</h2>
+        <p className="mt-1 text-sm text-dim">Work with the page you are viewing. Nalu can read pages, click, type and navigate, with review before consequential actions. Scheduled runs stop when review is needed.</p>
+        <ol className="mt-3 list-inside list-decimal space-y-1 text-sm text-dim">
+          <li>Download and unzip the extension.</li>
+          <li>Open <span className="font-mono text-ink">chrome://extensions</span> and turn on Developer mode.</li>
+          <li>Choose Load unpacked, then select the unzipped nalu-for-chrome folder.</li>
+          <li>Pin Nalu and open its side panel. Reload open tabs after updating the extension.</li>
+        </ol>
+        <a href="/nalu-for-chrome.zip" download className="mt-4 inline-flex items-center gap-2 rounded-xl bg-accent px-3.5 py-2 text-sm text-[#0a1018]"><Download size={15} />Download Nalu for Chrome</a>
+        <p className="mt-2 text-xs text-dim">Check installation in Chrome. This page cannot verify whether the extension is installed.</p>
+      </section>
+      {loading && <p role="status" className="mb-4 text-sm text-dim">Loading your saved connections…</p>}
+      {error && <p role="alert" className="mb-4 rounded-xl border border-red-400/30 p-3 text-sm">{error}</p>}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {CONNECT_APPS.map(app => {
+          const accounts = connections.filter(c => c.app === app.app)
+          const connected = accounts.filter(c => c.status === 'connected').length
+          const status = loading ? 'Checking status' : error ? 'Status unavailable' : connected ? `${connected} connected` : accounts.some(c => c.status === 'error') ? 'Needs attention' : accounts.length ? 'Finish setup' : 'Not connected'
+          return <section key={app.app} aria-label={`${app.name} connection`} className="flex flex-col rounded-2xl border border-glass/[0.18] bg-glass/[0.11] p-4 backdrop-blur-2xl">
+            <div className="flex items-start gap-3"><ConnLogo app={app.app} size={25} /><div className="min-w-0 flex-1"><h2 className="text-sm font-medium">{app.name}</h2><p className="mt-1 text-xs leading-relaxed text-dim">{app.blurb}</p></div></div>
+            <p className="mt-3 text-xs text-dim">{status}</p>
+            {app.requirement && <p className="mt-2 text-xs text-dim">{app.requirement}</p>}
+            <button onClick={() => setEditorApp(app.app)} className="mt-4 rounded-xl border border-glass/20 px-3 py-2 text-xs hover:bg-glass/10">{accounts.length ? 'Manage connection' : 'Set up connection'}</button>
+          </section>
+        })}
       </div>
     </div>
-  )
+    {editorApp && <ConnectionManager initialApp={editorApp} onClose={() => setEditorApp(null)} onChange={() => void load()} />}
+  </div>
 }

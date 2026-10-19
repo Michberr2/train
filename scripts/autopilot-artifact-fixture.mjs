@@ -14,6 +14,7 @@ export async function loadArtifactServer() {
       build.onLoad({ filter: /.*/, namespace: 'offline' }, ({ path }) => ({ loader: 'js', contents: path === 'model'
         ? 'export async function chatComplete(...args) { if (!globalThis.__artifactModel) throw new Error("Unexpected model call"); return globalThis.__artifactModel(...args) }'
         : `export const getClient=()=>globalThis.__artifactDatabase;
+           export const normalizePhone=()=>{throw new Error('Unexpected phone normalization in artifact fixture')};
            export const safeJson=s=>{try{return JSON.parse(s)}catch{return {}}};
            export const readToken=req=>(req.headers.authorization||'').replace(/^Bearer /,'')||null;
            export const userIdForToken=async(c,t)=>(await c.query('SELECT user_id FROM nalu_sessions WHERE token=$1',[t])).rows[0]?.user_id||null;`,
@@ -35,6 +36,7 @@ export function artifactDatabase(flow, userId = 'artifact-user') {
     async query(sql, params = []) {
       await this.beforeQuery?.(sql, params)
       const q = sql.trim()
+      if (q.startsWith('WITH settled AS')) return { rows: [] } // no remote dispatch jobs in this fixture
       if (q.includes('pg_try_advisory_lock')) { const locked = !locks.has(params[0]); if (locked) locks.add(params[0]); return { rows: [{ locked }] } }
       if (q.includes('pg_advisory_unlock')) { locks.delete(params[0]); return { rows: [] } }
       if (q.startsWith('CREATE TABLE') || /^(BEGIN|COMMIT|ROLLBACK)$/.test(q)) return { rows: [] }

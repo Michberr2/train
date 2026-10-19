@@ -159,18 +159,18 @@ function setRunning(on) {
   runBtn.disabled = false
 }
 
-function showConfirm(action) {
+function showConfirm(action, review) {
   promptEl.className = 'prompt'
   promptEl.innerHTML = `
     <div class="q">Nalu wants to do something consequential. Allow it?</div>
-    <div class="actbox">${esc(describe(action))}</div>
+    <div class="actbox">${esc(describe(action))}<br>${esc(review.url || "")}${review.target ? `<br>Target: ${esc(review.target)}` : ""}</div>
     <div class="btns"><button class="approve">Allow</button><button class="decline">Skip</button></div>`
   promptEl.querySelector('.approve').onclick = () => {
-    chrome.runtime.sendMessage({ type: 'approve', ok: true })
+    chrome.runtime.sendMessage({ type: 'approve', id: review.id, ok: true })
     hidePrompt()
   }
   promptEl.querySelector('.decline').onclick = () => {
-    chrome.runtime.sendMessage({ type: 'approve', ok: false })
+    chrome.runtime.sendMessage({ type: 'approve', id: review.id, ok: false })
     hidePrompt()
   }
 }
@@ -238,7 +238,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   } else if (ev === 'step') {
     addStep({ step: data.step, thought: data.thought, action: data.action })
   } else if (ev === 'confirm') {
-    showConfirm(data.action)
+    showConfirm(data.action, data)
   } else if (ev === 'ask') {
     showAsk(data.question)
   } else if (ev === 'done') {

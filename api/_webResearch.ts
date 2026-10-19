@@ -1,6 +1,7 @@
 // Shared, bounded search providers. Public /api/web retains its existing contract.
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { cancellationSignal } from './_requestCancellation'
+import { publicFetch, publicHttpUrl, PublicUrlError } from './_publicFetch'
 
 const requestDeadline = new AsyncLocalStorage<number>()
 const requestSignal = new AsyncLocalStorage<AbortSignal | undefined>()
@@ -42,7 +43,9 @@ async function fetch(input: string, init: RequestInit = {}): Promise<Response> {
           } finally { reader.cancel().catch(() => {}) }
         }
         const bytes = Buffer.concat(chunks)
-        return new Response(bytes, { status: response.status, statusText: response.statusText, headers: response.headers })
+        const result = new Response([204, 205, 304].includes(response.status) ? null : bytes, { status: response.status, statusText: response.statusText, headers: response.headers })
+        Object.defineProperty(result, 'url', { value: response.url || input })
+        return result
       })(),
       new Promise<never>((_, reject) => { timer = setTimeout(() => { stop(); reject(new Error('Source timed out')) }, remaining) }),
       aborted,
@@ -390,14 +393,7 @@ async function ddgViaRelay(query: string): Promise<Result[]> {
 }
 
 export function publicSourceUrl(value: string): string | null {
-  try {
-    const url = new URL(value)
-    const host = url.hostname.toLowerCase()
-    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return null
-    if (!host.includes('.') || /^(localhost|127\.|0\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) || /\.(local|internal|localhost)$/.test(host) || host.includes(':')) return null
-    url.hash = ''
-    return url.href
-  } catch { return null }
+  try { return publicHttpUrl(value).href } catch { return null }
 }
 
 export async function search(query: string): Promise<{ text: string; results: Result[]; searchedAt: string }> {
@@ -446,11 +442,14 @@ export async function fetchPage(value: string): Promise<ReadSource> {
   if (!url) return failure('a public HTTP or HTTPS page is required')
   return requestDeadline.run(Math.min(requestDeadline.getStore() ?? Infinity, Date.now() + 11000), async () => {
     let title = '', publishedAt: string | undefined, modifiedAt: string | undefined
+    let sourceUrl = url, directSucceeded = false
     // Direct source first. The reader is only a fallback for a JS-only shell.
     for (const reader of [false, true]) {
       try {
-        const response = await fetch(reader ? `https://r.jina.ai/${url}` : url, {
+        if (reader && !directSucceeded) break
+        const response = await publicFetch(reader ? `https://r.jina.ai/${sourceUrl}` : url, {
           headers: { 'User-Agent': UA, Accept: 'text/html,text/plain,application/json', ...(reader ? { 'x-no-cache': 'true', 'x-timeout': '5' } : {}) }, redirect: 'follow',
+          signal: cancellationSignal(requestSignal.getStore()), timeoutMs: Math.min(6000, Math.max(1, (requestDeadline.getStore() ?? Date.now() + 6000) - Date.now())),
         })
         if (!response.ok) {
           // A missing or forbidden source must never become "read" via a cache.
@@ -458,6 +457,7 @@ export async function fetchPage(value: string): Promise<ReadSource> {
           continue
         }
         if (!/text\/|json|xml/.test(response.headers.get('content-type') || '')) continue
+        if (!reader) { sourceUrl = response.url || url; directSucceeded = true }
         const raw = await response.text()
         if (blockedPage.test(raw.slice(0, 14000))) continue
         if (!reader) {
@@ -473,7 +473,7 @@ export async function fetchPage(value: string): Promise<ReadSource> {
         // Retain the page's evidence links and table boundaries. Flattening HTML
         // used to erase the official schedule link and merge adjacent date cells.
         content = content.replace(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_all, href: string, label: string) => {
-          try { const target = publicSourceUrl(new URL(href, url).href); return target ? `${label} (${target})` : label } catch { return label }
+          try { const target = publicSourceUrl(new URL(href, sourceUrl).href); return target ? `${label} (${target})` : label } catch { return label }
         }).replace(/<\/t[dh]>/gi, ' | ').replace(/<\/(?:tr|p|li|h[1-6])>/gi, '\n')
         let text = decodeEntities(content.replace(/^Title:.*$|^URL Source:.*$|^Markdown Content:.*$/gm, '')).slice(0, 14000)
         if (url === 'https://raw.githubusercontent.com/nodejs/Release/main/schedule.json') {
@@ -486,8 +486,8 @@ export async function fetchPage(value: string): Promise<ReadSource> {
           } catch { /* retain the original evidence if its schema changes */ }
         }
         if (text.length < 180 || blockedPage.test(text)) continue
-        return { text, url, title: title || new URL(url).hostname, status: 'read', accessedAt, ...(publishedAt ? { publishedAt } : {}), ...(modifiedAt ? { modifiedAt } : {}) }
-      } catch { /* bounded fallback */ }
+        return { text, url: sourceUrl, title: title || new URL(sourceUrl).hostname, status: 'read', accessedAt, ...(publishedAt ? { publishedAt } : {}), ...(modifiedAt ? { modifiedAt } : {}) }
+      } catch (error) { if (error instanceof PublicUrlError) return failure(error.message) }
     }
     return failure('source blocked, empty, unsupported, or timed out')
   })

@@ -15,6 +15,7 @@ export default async function handler(
   req: { headers: Record<string, string | string[] | undefined> },
   res: { status: (n: number) => { json: (v: unknown) => void } },
 ) {
+  const deadlineMs = Date.now() + 240000
   const secret = process.env.CRON_SECRET
   if (!secret || req.headers['authorization'] !== `Bearer ${secret}`) {
     res.status(401).json({ error: 'unauthorized' })
@@ -27,7 +28,7 @@ export default async function handler(
     await processConnectionPosts(client)
     await Promise.all([processMessages(phoneOwnerId()),deliverTaskCompletions(phoneOwnerId())])
     await deliverPushUpdates()
-    const r = await runDueCrons(client)
+    const r = await runDueCrons(client, { deadlineMs })
     if (client instanceof CloudflareStore) await client.collectDocumentParts()
     res.status(200).json({ ok: true, ...r, at: new Date().toISOString() })
   } catch (e) {

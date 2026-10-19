@@ -1,0 +1,27 @@
+{
+  "_instructions": "EXAMPLE ONLY. Replace every portfolio/price value with your actual inputs and both timestamps with current ISO dates including timezone. All values use the stated currency. Attach the completed JSON file to the fund flow. Nothing here authorizes or executes trades. A price source is user-supplied evidence, not independently verified by Nalu.",
+  "schema": "nalu-fund-risk-v1",
+  "currency": "USD",
+  "asOf": "REPLACE_WITH_CURRENT_ISO_TIMESTAMP",
+  "equity": 10000,
+  "cash": 9000,
+  "minCash": 2000,
+  "maxPositionPct": 25,
+  "maxSectorPct": 40,
+  "maxGrossExposurePct": 80,
+  "maxQuoteAgeHours": 24,
+  "tradeCostBps": 10,
+  "allowShort": false,
+  "shortMarginPct": 150,
+  "positions": [
+    {
+      "ticker": "EXAMPLE",
+      "quantity": 10,
+      "price": 100,
+      "priceAsOf": "REPLACE_WITH_CURRENT_ISO_TIMESTAMP",
+      "priceSource": "REPLACE_WITH_QUOTE_SOURCE",
+      "sector": "REPLACE_WITH_SECTOR",
+      "maxShares": 20
+    }
+  ]
+}

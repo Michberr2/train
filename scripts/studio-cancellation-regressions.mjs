@@ -19,6 +19,8 @@ try {
   process.env.NALU_FALLBACK_API_KEY = 'synthetic-fallback-test'
   process.env.NALU_DISABLE_EMERGENCY = '1'
   const bundle = await build({ stdin: { contents: "export {default as handler} from './api/design'; export {withRequestCancellation} from './api/_requestCancellation'; export {chatComplete} from './api/_llm'", resolveDir: process.cwd() }, bundle: true, write: false, platform: 'node', format: 'esm', packages: 'external', plugins: [{ name: 'isolated-services', setup(build) {
+    build.onResolve({filter:/^\.\/_publicFetch$/},()=>({path:'public-transport',namespace:'public-fixture'}))
+    build.onLoad({filter:/.*/,namespace:'public-fixture'},()=>({contents:`export {publicHttpUrl,PublicUrlError} from ${JSON.stringify(join(process.cwd(),'api/_publicFetch.ts'))};export const publicFetch=(...args)=>globalThis.fetch(...args);`,loader:'js',resolveDir:process.cwd()}))
     build.onResolve({ filter: /^\.\/(?:_db|_limits|_websiteRuntime)$/ }, args => ({ path: args.path, namespace: 'fixture' }))
     build.onLoad({ filter: /.*/, namespace: 'fixture' }, ({ path }) => ({ contents: path === './_db' ? 'export const identityForRequest=async()=>null;export const identityBlock=()=>"";' : path === './_limits' ? 'export const reserveStudioQuota=async()=>{globalThis.cancelFixture.reservations++;return {ok:true,release:async()=>{if(globalThis.cancelFixture.cleanupWaits[0].resolved)throw new Error("cleanup lifetime ended before refund");await Promise.resolve();globalThis.cancelFixture.releases++}}};export const studioLimitMessage=()=>"limited";' : 'export const WEBSITE_RUNTIME_TEST_SCHEMA="";export const parseRuntimeTests=value=>Array.isArray(value)?value:[];export const inspectRuntimeTests=value=>({tests:parseRuntimeTests(value),issues:[]});export const reviewWebsiteRuntime=async()=>({status:globalThis.cancelFixture.runtimeUnavailable?"unavailable":"passed",widths:[1440,390],checks:[],issues:[],limitations:[]});' }))
   } }] })
@@ -81,7 +83,7 @@ try {
       assert.equal(res.writes.length, 0, `${mode}: a disconnected caller must never receive a response attempt`)
       assert.equal(fixture.aborted, 1, `${mode}: cancel active upstream transport`)
       assert.equal(fixture.calls.at(-1).stage, cancelStage, `${mode}: do not start any subsequent provider/stage`)
-      assert.equal(fixture.releases, mode === 'research' ? 0 : 1, `${mode}: refund exactly once when a reserved design is not delivered`)
+      assert.equal(fixture.releases, 1, `${mode}: research also reserves usage and refunds exactly once when cancelled`)
     }
     records.push({ mode, ...fixture, cleanupWaits: fixture.cleanupWaits.map(entry => ({ ...entry })), writes: res.writes.length })
   }

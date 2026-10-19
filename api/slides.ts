@@ -190,7 +190,7 @@ export default async function handler(req: any, res: any) {
   const today = new Date().toISOString().slice(0, 10)
   const quota = await reserveStudioQuota(req, 'slides')
   if (!quota.ok) {
-    res.status(429).json({ error: studioLimitMessage('deck', quota) })
+    res.status(quota.status || 429).json({ error: studioLimitMessage('deck', quota) })
     return
   }
   let succeeded = false

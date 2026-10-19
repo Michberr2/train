@@ -28,7 +28,7 @@ import { randomUUID, createHash } from 'node:crypto'
 // its bootstrap flag to programs launched by the agent.
 if (process.versions.electron) delete process.env.ELECTRON_RUN_AS_NODE
 
-const VERSION = '1.11.4'
+const VERSION = '1.11.5'
 const DEFAULT_API = 'https://n4lu.com'
 const MAX_STEPS = 40 // ordinary conversation/read-only round-trip budget
 const CODING_MAX_STEPS = 120 // implementation, integration and verification
@@ -2742,11 +2742,12 @@ async function wrapSession(state, cmdline, tool) {
 }
 
 // ── the training-data flywheel sink ──────────────────────────────────────────
-// Every successful Nalu turn becomes a training row (locally, in
+// With explicit capture opt-in, successful Nalu turns become draft rows in
 // ~/.nalu/data/sessions.jsonl) — Nalu's OWN sessions are the cleanest fuel for
 // training Nalu's own models. The flywheel (train repo, training/flywheel.mjs)
 // harvests these, retrains, eval-gates, and deploys winners automatically.
-// Opt out with NALU_NO_TRAINING_DATA=1.
+// Capture is off by default. Opt in locally with NALU_TRAINING_DATA=1.
+// Capture consent is NOT remote-training approval; records remain drafts.
 function turnsFromWire(slice) {
   const turns = []
   let pendingUser = ''
@@ -2773,20 +2774,40 @@ function turnsFromWire(slice) {
   return turns
 }
 
+function redactTrainingText(value) {
+  let text = String(value)
+  for (const [key, secret] of Object.entries(process.env)) {
+    if (/(?:KEY|TOKEN|SECRET|PASSWORD|AUTHORIZATION|CREDENTIAL)/i.test(key) && secret && secret.length >= 8) text = text.split(secret).join('[REDACTED]')
+  }
+  return text
+    .replace(/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g, '[REDACTED PRIVATE KEY]')
+    .replace(/\b(?:sk-(?:proj-)?|tml-|gh[pousr]_)[A-Za-z0-9_-]{20,}/g, '[REDACTED]')
+    .replace(/\bAKIA[A-Z0-9]{16}\b/g, '[REDACTED]')
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+\/-]{16,}/gi, '$1[REDACTED]')
+}
+
 function recordTrainingRow(state, startIdx) {
   try {
-    if (process.env.NALU_NO_TRAINING_DATA) return
+    if (process.env.NALU_NO_TRAINING_DATA || process.env.NALU_TRAINING_DATA !== '1') return
     const slice = state.messages.slice(startIdx)
-    const turns = turnsFromWire(slice)
+    const turns = turnsFromWire(slice).map(turn => ({user: redactTrainingText(turn.user), assistant: redactTrainingText(turn.assistant)}))
     if (!turns.length) return
     const last = turns[turns.length - 1].assistant
     if (/^\(error|^\(no response/.test(last) || announcesIntent(last.trim())) return // only keep clean, finished turns
-    const row = { v: 1, ts: new Date().toISOString(), route: state.lastRoute || '', repo: path.basename(process.cwd()), turns }
+    const id = randomUUID()
+    const row = { v: 2, id, ts: new Date().toISOString(), route: state.lastRoute || '', turns,
+      training: {schemaVersion: 1, contentSha256: createHash('sha256').update(JSON.stringify({system: '', turns})).digest('hex'),
+        source: {kind: 'user-session', id, version: VERSION},
+        consent: {capture: true, remoteTraining: false, recordId: 'local-env-opt-in'},
+        review: {redaction: 'automated-only', quality: 'pending', reviewer: '', evidence: ''},
+        surface: 'terminal', domain: 'agent', split: 'unassigned'}}
     const rowStr = JSON.stringify(row)
     if (rowStr.length > 30000) return
     const dataDir = path.join(os.homedir(), '.nalu', 'data')
-    fs.mkdirSync(dataDir, { recursive: true })
-    fs.appendFileSync(path.join(dataDir, 'sessions.jsonl'), rowStr + '\n')
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 })
+    fs.chmodSync(dataDir, 0o700)
+    const fd = fs.openSync(path.join(dataDir, 'sessions.jsonl'), 'a', 0o600)
+    try { fs.fchmodSync(fd, 0o600); fs.writeSync(fd, rowStr + '\n') } finally { fs.closeSync(fd) }
   } catch {
     /* the flywheel is best-effort — never disturb the session */
   }
@@ -3248,23 +3269,33 @@ async function runRemoteWorker(options, dependencies = {}) {
   }
   const executePipeline = async (task, taskSignal) => {
     const req = task.request
+    const pipelineWorker = { id: task.id, workerId, leaseToken: task.leaseToken }
+    let confirmedStartedAt = req.startedAt
+    const stopFields = () => ({ flowId: req.flowId, mode: 'stop', pipelineWorker, ...(confirmedStartedAt != null ? { expectedStartedAt: confirmedStartedAt } : {}) })
     const runAbort = new AbortController()
     const timeout = setTimeout(() => runAbort.abort(), 240000)
     let stopping
     const stop = () => {
       // Stopping the HTTP request alone cannot stop a serverless pipeline.
-      stopping = request('flow-run', { flowId: req.flowId, mode: 'stop' }).catch(() => {})
+      stopping = request('flow-run', stopFields()).catch(() => {})
       runAbort.abort()
     }
     taskSignal.addEventListener('abort', stop, { once: true })
     try {
       if (taskSignal.aborted) { stop(); return { code: 1, output: '', cancelled: true } }
-      const data = await request('flow-run', { flowId: req.flowId, mode: req.mode }, { signal: runAbort.signal })
+      const data = await request('flow-run', { flowId: req.flowId, mode: req.mode, pipelineWorker, ...(req.startedAt != null ? { expectedStartedAt: req.startedAt } : {}) }, { signal: runAbort.signal })
+      if (Number.isFinite(data.startedAt) && data.startedAt > 0) confirmedStartedAt = data.startedAt
+      // A checkpoint/approval is unfinished work. Release this worker lease to
+      // a validated server continuation, never publish a successful completion.
+      const pendingStatus = data.ok && Number.isFinite(data.startedAt) && data.startedAt > 0
+        ? data.status === 'awaiting' ? 'waiting' : data.status === 'running' && data.yielded === true ? 'queued' : null
+        : null
+      if (pendingStatus) return { code: 75, pendingStatus, output: JSON.stringify(data), continuation: { flowId: req.flowId, startedAt: data.startedAt }, detail: pendingStatus === 'waiting' ? 'Pipeline is waiting for your review.' : 'Pipeline saved its checkpoint; remaining work is queued.' }
       return { code: data.status === 'done' ? 0 : 1, cancelled: data.status === 'stopped', output: JSON.stringify(data), error: data.status === 'done' ? '' : data.error || `Pipeline returned ${data.status || 'no completion status'}` }
     } finally {
       clearTimeout(timeout)
       taskSignal.removeEventListener('abort', stop)
-      if (runAbort.signal.aborted && !stopping) stopping = request('flow-run', { flowId: req.flowId, mode: 'stop' }).catch(() => {})
+      if (runAbort.signal.aborted && !stopping) stopping = request('flow-run', stopFields()).catch(() => {})
       if (stopping) await stopping
     }
   }
@@ -3305,7 +3336,7 @@ async function runRemoteWorker(options, dependencies = {}) {
       const req = task.request
       const pipeline = req?.kind === 'pipeline'
       const validRequest = pipeline
-        ? req.target === 'cloud' && typeof req.flowId === 'string' && req.flowId.trim() && ['run', 'resume'].includes(req.mode)
+        ? req.target === 'cloud' && typeof req.flowId === 'string' && req.flowId.trim() && ['run', 'resume'].includes(req.mode) && (req.startedAt == null || Number.isFinite(req.startedAt) && req.startedAt > 0)
         : req?.target === 'desktop' && ['chat', 'ide', 'autopilot'].includes(req.kind) && typeof req.prompt === 'string' && req.prompt.trim() && Object.hasOwn(repos, req.repo)
       if (!task.id || !task.leaseToken || !validRequest) throw new Error('Rejected an invalid task or an unregistered repository')
       const started = await request('task-update', { ...fields, status: 'running', progress: 0.05, event: pipeline ? `Running saved pipeline ${req.flowId}` : `Running ${req.kind} in ${req.repo}` })
@@ -3317,9 +3348,11 @@ async function runRemoteWorker(options, dependencies = {}) {
       clearTimeout(timer)
       if (heartbeat) await heartbeat
       if (leaseError) throw leaseError
-      const status = cancelled || result.cancelled ? 'cancelled' : result.code === 0 ? 'done' : 'failed'
-      await request('task-update', { ...fields, status, progress: status === 'done' ? 1 : undefined, result: result.output || '', detail: status === 'failed' ? (result.error || 'CLI did not finish successfully').slice(-2000) : undefined, event: status === 'done' ? 'CLI completed the task' : `CLI task ${status}` })
-      ui(`${task.id}: ${status}\n`)
+      const pending = pipeline && ['queued', 'waiting'].includes(result.pendingStatus) && result.continuation
+      const status = cancelled || result.cancelled ? 'cancelled' : pending ? result.pendingStatus : result.code === 0 ? 'done' : 'failed'
+      const acknowledged = await request('task-update', { ...fields, status, progress: status === 'done' ? 1 : undefined, result: result.output || '', ...(pending && !['cancelled', 'failed'].includes(status) ? { pipelineContinuation: result.continuation } : {}), detail: pending ? result.detail : status === 'failed' ? (result.error || 'CLI did not finish successfully').slice(-2000) : undefined, event: status === 'done' ? 'CLI completed the task' : pending ? `Pipeline ${status}; completion is still pending` : `CLI task ${status}` })
+      const confirmedStatus = ['queued', 'waiting', 'running', 'done', 'failed', 'cancelled'].includes(acknowledged.task?.status) ? acknowledged.task.status : status
+      ui(`${task.id}: ${confirmedStatus}\n`)
     } catch (error) {
       ac.abort()
       finishing = true

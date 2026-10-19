@@ -9,9 +9,10 @@ type Editor = { app: string; id?: string; method: ConnMethod; label: string; use
 const inputClass = 'mt-1 w-full rounded-xl border border-glass/20 bg-glass/[0.06] px-3 py-2.5 text-sm text-ink outline-none placeholder:text-dim focus:border-gold/60'
 const buttonClass = 'rounded-xl border border-glass/20 px-3 py-2 text-sm text-ink hover:bg-glass/10 disabled:opacity-50'
 
-export default function ConnectionManager({ onClose, onChange }: { onClose: () => void; onChange: () => void }) {
+export default function ConnectionManager({ onClose, onChange, initialApp }: { onClose: () => void; onChange: () => void; initialApp?: string }) {
   const [connections, setConnections] = useState<Connection[]>([]), [providers, setProviders] = useState<string[]>([])
   const [editor, setEditor] = useState<Editor | null>(null), [query, setQuery] = useState('')
+  const initialOpened = useRef('')
   const [busy, setBusy] = useState(''), [error, setError] = useState(''), [notice, setNotice] = useState('')
   const [destinations, setDestinations] = useState<ConnectionDestination[]>([]), [nextCursor, setNextCursor] = useState<string | undefined>()
   const [destinationQuery, setDestinationQuery] = useState(''), [confirmDelete, setConfirmDelete] = useState('')
@@ -20,11 +21,17 @@ export default function ConnectionManager({ onClose, onChange }: { onClose: () =
   const dialog = useRef<HTMLDivElement>(null)
   const load = useCallback(async () => {
     const result = await Promise.allSettled([listConnections(), availableConnectionProviders()])
-    if (result[0].status === 'fulfilled') setConnections(result[0].value)
+    if (result[0].status === 'fulfilled') {
+      setConnections(result[0].value)
+      if (initialApp && initialOpened.current !== initialApp && CONNECT_APPS.some(app => app.app === initialApp)) {
+        initialOpened.current = initialApp
+        openEditor(initialApp, result[0].value.find(item => item.app === initialApp))
+      }
+    }
     else setError(result[0].reason instanceof Error ? result[0].reason.message : 'Could not load connections. Try again.')
     if (result[1].status === 'fulfilled') setProviders(result[1].value)
     else setError(result[1].reason instanceof Error ? result[1].reason.message : 'Could not load sign-in options.')
-  }, [])
+  }, [initialApp]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { void load(); dialog.current?.focus(); return () => { if (polling.current) clearInterval(polling.current) } }, [load])
   useEffect(() => {
     const received = (event: MessageEvent) => {
@@ -36,7 +43,7 @@ export default function ConnectionManager({ onClose, onChange }: { onClose: () =
     window.addEventListener('message', received)
     return () => window.removeEventListener('message', received)
   }, [load, onChange])
-  const openEditor = (app: string, existing?: Connection) => {
+  function openEditor(app: string, existing?: Connection) {
     const method = existing?.method && existing.method !== 'managed' && existing.method !== 'resend' ? existing.method : app === 'webhook' || app === 'outlook' ? 'endpoint' : app === 'gmail' ? 'smtp' : 'apikey'
     setEditor({ app, id: existing?.id, method, label: existing?.label || appDef(app).name, username: existing?.username || '', secret: '', endpoint: '', meta: existing?.meta || {}, hasSecret: !!existing?.hasSecret, hasEndpoint: !!existing?.endpoint })
     setDestinations([]); setNextCursor(undefined); setDestinationQuery(''); setInbox(null); setError(''); setNotice('')
