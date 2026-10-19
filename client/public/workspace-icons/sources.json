@@ -1,11 +1,12 @@
 {
-  "purpose": "Local Nalu workspace design preview. Native macOS artwork and user-supplied Studio, Autopilot, Memory, and Skills artwork for visual review.",
+  "purpose": "Local Nalu workspace design preview. Native macOS artwork and user-supplied Studio, Autopilot, Map, Memory, and Skills artwork for visual review.",
   "method": "Unmodified embedded 256px PNG payload from the ic13 ICNS entry.",
   "assets": {
     "chat-v1.png": "/System/Applications/Messages.app/Contents/Resources/AppIcon.icns",
     "studio-v1.png": "/System/Applications/Freeform.app/Contents/Resources/AppIcon.icns",
     "autopilot-v1.png": "/System/Applications/Shortcuts.app/Contents/Resources/AppIcon.icns",
     "map-v1.png": "/System/Applications/Maps.app/Contents/Resources/AppIcon.icns",
+    "map-glossy-blue-pin.png": "User-supplied Glossy Blue Pin Map Icon.png; original image copied without modification.",
     "memory-v1.png": "/System/Applications/Notes.app/Contents/Resources/AppIcon.icns",
     "skills-v1.png": "/System/Applications/Utilities/Terminal.app/Contents/Resources/Terminal.icns",
     "autopilot-neon-molecule.png": "User-supplied Glowing Neon Network Molecule Icon.png; original image copied without modification.",

@@ -103,7 +103,7 @@
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .workspace-app-dock-icon[data-app=agents] .workspace-app-dock-image { background:#000; border-radius:10px; object-fit:contain; }
 
 /* Round supplied artwork; crop outer canvas only for images with inset app tiles. */
-.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .workspace-app-dock-icon:is([data-app=studio],[data-app=memory],[data-app=skills]) {
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .workspace-app-dock-icon:is([data-app=studio],[data-app=map],[data-app=memory],[data-app=skills]) {
   overflow:hidden;
   border-radius:26%;
 }
@@ -123,6 +123,13 @@
   inset:-9%;
   width:118%;
   height:118%;
+  max-width:none;
+}
+/* Fit the supplied Map tile inside the dock without its outer white canvas. */
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .workspace-app-dock-icon[data-app=map] .workspace-app-dock-image {
+  inset:-16%;
+  width:132%;
+  height:132%;
   max-width:none;
 }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .workspace-app-dock-icon[data-app=skills] .workspace-app-dock-image {

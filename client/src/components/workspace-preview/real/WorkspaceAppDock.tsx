@@ -71,7 +71,7 @@ const ICON_ASSETS: Record<WorkspaceAppView, string> = {
   chat: '/workspace-icons/chat-v1.png',
   studio: '/workspace-icons/studio-glossy-paintbrush.png',
   agents: '/workspace-icons/autopilot-neon-molecule.png',
-  map: '/workspace-icons/map-v1.png',
+  map: '/workspace-icons/map-glossy-blue-pin.png',
   memory: '/workspace-icons/memory-glossy-brain.png',
   skills: '/workspace-icons/skills-plug-socket.png',
 }
