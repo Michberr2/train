@@ -10,11 +10,12 @@ export type WorkspaceAgentScreensProps = {
   selectedItemId: string | null
   onSelectItem: (id: string | null) => void
   onOpenChat: (id: string) => void
+  onOpenSwarm?: (room: NonNullable<ActivityItem['swarm']>) => void
   onOpenSpace?: (view: 'agents' | 'studio' | 'map') => void
   onClose: () => void
 }
-const statusText = (item: ActivityItem) => ({ queued: 'Queued', running: 'Working', waiting: 'Needs you', failed: 'Needs attention', done: 'Completed', saved: 'Saved', cancelled: 'Stopped' })[item.status]
-const priority = (item: ActivityItem) => ({ running: 0, waiting: 1, queued: 2, failed: 3, done: 4, saved: 5, cancelled: 6 })[item.status]
+const statusText = (item: ActivityItem) => ({ queued: 'Queued', running: 'Working', waiting: 'Needs you', failed: 'Needs attention', done: 'Completed', saved: 'Saved', cancelled: 'Stopped', paused: 'Paused' })[item.status]
+const priority = (item: ActivityItem) => ({ running: 0, waiting: 1, queued: 2, failed: 3, paused: 4, done: 5, saved: 6, cancelled: 7 })[item.status]
 const progressValue = (item: ActivityItem) => typeof item.progress === 'number' && Number.isFinite(item.progress) ? Math.max(0, Math.min(1, item.progress)) : undefined
 const readableTime = (value: string | number) => {
   const date = new Date(value)
@@ -49,7 +50,7 @@ function DesktopWindow({ item, chat, onSelect }: { item: ActivityItem; chat?: Ac
   </button>
 }
 
-export default function WorkspaceAgentScreens({ chats, activity, selectedItemId, onSelectItem, onOpenChat, onOpenSpace, onClose }: WorkspaceAgentScreensProps) {
+export default function WorkspaceAgentScreens({ chats, activity, selectedItemId, onSelectItem, onOpenChat, onOpenSwarm, onOpenSpace, onClose }: WorkspaceAgentScreensProps) {
   const demo = activity.demo
   const root = useRef<HTMLDivElement>(null)
   const titleId = useId()
@@ -91,7 +92,7 @@ export default function WorkspaceAgentScreens({ chats, activity, selectedItemId,
         <section className="agent-screen-focus-window" aria-label={`${selectedAgent.name} saved work preview`}><WindowTitlebar item={selected}/><div className="agent-screen-focus-artifact"><SavedWork chat={selectedChat} item={selected}/></div><div className="agent-screen-preview-note">{selected.preview ? 'Saved sample work' : 'Latest saved work'}<span>Open chat to continue or interact</span></div></section>
         <aside className="agent-screen-detail" aria-label="Workspace details"><div className="agent-screen-detail-heading"><AgentHead name={selectedAgent.name} className="agent-detail-head"/><div><strong>{selectedAgent.name}</strong><Status item={selected}/></div></div><h2>{selected.title}</h2><p className="agent-screen-detail-copy">{selected.pendingQuestion?.text || selected.detail || 'Your saved work is ready to return to.'}</p>
           {progress !== undefined && (selected.status === 'running' || selected.status === 'queued') && <div className="agent-screen-detail-progress"><div><span>{selected.preview ? 'Sample progress' : 'Progress'}</span><strong>{Math.round(progress * 100)}%</strong></div><progress value={progress} max={1} aria-label={`${selected.preview ? 'Sample progress' : 'Progress'}: ${selected.title}`}/></div>}
-          {selectedChat ? <button className="agent-screen-open-chat" onClick={() => onOpenChat(selectedChat.id)}>{selected.status === 'waiting' ? 'Review in chat' : 'Open chat'}<span aria-hidden="true">↗</span></button> : !selected.preview && onOpenSpace ? <button className="agent-screen-open-chat" onClick={() => onOpenSpace('agents')}>Open Autopilot<span aria-hidden="true">↗</span></button> : <p className="agent-screen-unlinked">This task has no linked conversation.</p>}
+          {selected.swarm && onOpenSwarm ? <button className="agent-screen-open-chat" onClick={() => onOpenSwarm(selected.swarm!)}>Open {selected.swarm.thread === 'group' ? 'group conversation' : `${selected.swarm.thread} chat`}<span aria-hidden="true">↗</span></button> : selectedChat ? <button className="agent-screen-open-chat" onClick={() => onOpenChat(selectedChat.id)}>{selected.status === 'waiting' ? 'Review in chat' : 'Open chat'}<span aria-hidden="true">↗</span></button> : !selected.preview && onOpenSpace ? <button className="agent-screen-open-chat" onClick={() => onOpenSpace('agents')}>Open Autopilot<span aria-hidden="true">↗</span></button> : <p className="agent-screen-unlinked">This task has no linked conversation.</p>}
           {selected.events.length > 0 && <div className="agent-screen-updates"><h3>Latest updates</h3><ol>{selected.events.slice(-3).reverse().map((event, index) => <li key={`${event.t}-${index}`}><p>{event.m}</p><time dateTime={event.t}>{readableTime(event.t)}</time></li>)}</ol></div>}
           <div className="agent-screen-other-workers"><h3>Other workspaces</h3><div>{items.filter(item => item.id !== selected.id).map(item => { const agent = agentForItem(item); return <button key={item.id} onClick={() => onSelectItem(item.id)}><AgentHead name={agent.name} className="agent-other-head"/><span><strong>{agent.name}</strong><span>{item.title}</span></span><i data-status={item.status} aria-label={statusText(item)}/></button> })}{items.every(item => item.id === selected.id) && <p>No other workspaces right now.</p>}</div></div>
         </aside>

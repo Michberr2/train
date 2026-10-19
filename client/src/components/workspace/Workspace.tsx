@@ -119,6 +119,9 @@ import { idbGetChats, idbSetChats } from '../../lib/chatStore'
 import { getToken } from '../../lib/localAuth'
 import WorkspaceAccountMenu from './design/WorkspaceAccountMenu'
 import useLiveWorkspaceActivity from './design/useLiveWorkspaceActivity'
+import useSwarm from './design/useSwarm'
+import { withSwarmActivity } from './design/swarmActivity'
+import { isSwarmRoom, type SwarmRoomReference } from './design/swarmTypes'
 
 // ---- model ---------------------------------------------------------------
 
@@ -761,7 +764,10 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   // Local design review tracks real request IDs separately from the send guard,
   // whose '__new__' sentinel cannot identify a newly created conversation.
   const [reviewActiveChats, setReviewActiveChats] = useState<string[]>([])
-  const liveActivity = useLiveWorkspaceActivity({ chats, activeChatIds: reviewActiveChats, accountId: user?.id, enabled: reviewLayout && !previewLayout })
+  const baseActivity = useLiveWorkspaceActivity({ chats, activeChatIds: reviewActiveChats, accountId: user?.id, enabled: reviewLayout && !previewLayout })
+  const liveSwarm = useSwarm({ accountId: user?.id, enabled: reviewLayout && !previewLayout, active: reviewChatOpen || agentScreensOpen || view === 'memory' })
+  const liveActivity = withSwarmActivity({ ...baseActivity, error: [baseActivity.error, liveSwarm.error].filter(Boolean).join(' '), refresh: () => { baseActivity.refresh(); liveSwarm.refresh?.() } }, liveSwarm.state)
+  const [swarmNavigationRequest, setSwarmNavigationRequest] = useState<(SwarmRoomReference & { key: number }) | undefined>()
   const [saveState, setSaveState] = useState(getSyncState)
   useEffect(() => {
     const update = () => setSaveState(getSyncState())
@@ -866,6 +872,17 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     setAgentScreensOpen(false)
     requestAnimationFrame(() => agentScreenTrigger.current?.focus({ preventScroll: true }))
   }, [])
+  const openSwarmActivity = useCallback((room: SwarmRoomReference) => {
+    if (previewLayout || !isSwarmRoom(liveSwarm.state, room.projectId, room.thread)) return
+    setSwarmNavigationRequest(current => ({ ...room, key: (current?.key || 0) + 1 }))
+    setAgentScreensOpen(false)
+    setReviewChatOpen(true)
+  }, [previewLayout, liveSwarm.state, setReviewChatOpen])
+  const selectActivityItem = useCallback((id: string | null) => {
+    const item = liveActivity.items.find(item => item.id === id)
+    if (item?.swarm) { setSelectedAgentItem(id); openSwarmActivity(item.swarm) }
+    else openAgentScreens(id)
+  }, [liveActivity.items, openSwarmActivity, openAgentScreens])
   const abortRef = useRef<AbortController | null>(null)
   // Synchronous per-target in-flight guard. `streaming` state is stale during the
   // multi-second intent/clarify preflight, so a fast second Enter could double-fire
@@ -2992,7 +3009,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           <Suspense fallback={<div className="review-launcher-loading" role="status">Opening your work…</div>}>
             <WorkspaceLiveHub chats={chats} activeChatIds={reviewActiveChats} activity={liveActivity}
               onOpenChat={id => { setActiveId(id); openSpace('chat') }}
-              onOpenSpace={openSpace}
+              onOpenSpace={openSpace} onOpenSwarm={openSwarmActivity}
               onNewChat={() => { newChat(); openSpace('chat') }}
               savedMemory={<MemoryPanel designEnabled onOpenChat={id => { setActiveId(id); openSpace('chat') }} />}/>
           </Suspense>
@@ -3019,18 +3036,18 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
 
       {reviewLayout && agentScreensOpen && WorkspaceAgentScreens && <Suspense fallback={<div className="review-launcher-loading" role="status">Opening agent screens…</div>}>
         <WorkspaceAgentScreens chats={chats} activeChatIds={reviewActiveChats} activity={liveActivity} selectedItemId={selectedAgentItem}
-          onSelectItem={setSelectedAgentItem} onOpenChat={id => { setActiveId(id); openSpace('chat') }} onOpenSpace={openSpace} onClose={closeAgentScreens}/>
+          onSelectItem={selectActivityItem} onOpenSwarm={openSwarmActivity} onOpenChat={id => { setActiveId(id); openSpace('chat') }} onOpenSpace={openSpace} onClose={closeAgentScreens}/>
       </Suspense>}
       {reviewLayout && WorkspaceAgentTray && <Suspense fallback={null}>
         <WorkspaceAgentTray chats={chats} activeChatIds={reviewActiveChats} activity={liveActivity}
           onOpenChat={id => { setActiveId(id); openSpace('chat') }}
           onOpenPicker={() => setReviewChatOpen(false)}
-          onOpenMemory={() => openSpace('memory')} selectedItemId={agentScreensOpen ? selectedAgentItem || undefined : undefined}
-          onSelectItem={openAgentScreens} onOpenScreens={() => openAgentScreens(null)}/>
+          onOpenMemory={() => openSpace('memory')} selectedItemId={selectedAgentItem || undefined}
+          onSelectItem={selectActivityItem} onOpenScreens={() => openAgentScreens(null)}/>
       </Suspense>}
 
       {reviewLayout && WorkspaceChatPopover && <Suspense fallback={null}>
-        <WorkspaceChatPopover open={reviewChatOpen} onOpen={() => setReviewChatOpen(true)}
+        <WorkspaceChatPopover swarm={previewLayout ? undefined : liveSwarm} swarmNavigationRequest={swarmNavigationRequest} open={reviewChatOpen} onOpen={() => setReviewChatOpen(true)}
           fullPageAnchor={chatInlineAnchor}
           fullPageVisible={view === 'chat' && !launcherOpen && !agentScreensOpen}
           onChatVisibilityChange={setChatContentVisible}

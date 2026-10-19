@@ -17,7 +17,7 @@ export interface WorkspaceAgentTrayProps {
 
 const AGENTS: AgentName[] = ['Nalu', 'Rocky', 'Milo']
 const isCurrent = (item: ActivityItem) => ['running', 'queued', 'waiting', 'failed'].includes(item.status)
-const statusLabel = (item: ActivityItem) => ({ queued: 'Queued', running: 'Working', waiting: 'Needs you', done: 'Ready', saved: 'Saved', failed: 'Attention', cancelled: 'Cancelled' })[item.status]
+const statusLabel = (item: ActivityItem) => ({ queued: 'Queued', running: 'Working', waiting: 'Needs you', done: 'Ready', saved: 'Saved', failed: 'Attention', cancelled: 'Cancelled', paused: 'Paused' })[item.status]
 
 /** Navigation to existing work; the caller owns its account-scoped activity. */
 export default function WorkspaceAgentTray({ chats, activity, onOpenChat, onOpenMemory, onSelectItem, onOpenScreens, onOpenPicker, selectedItemId }: WorkspaceAgentTrayProps) {

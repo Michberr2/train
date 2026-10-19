@@ -7,6 +7,7 @@ export type HubProps = {
   chats: ActivityChat[]
   activity: WorkspaceActivityController
   onOpenChat: (id: string) => void
+  onOpenSwarm?: (room: NonNullable<ActivityItem['swarm']>) => void
   onNewChat: () => void
   onOpenSpace?: (view: 'agents' | 'studio' | 'map') => void
   savedMemory: ReactNode
@@ -14,8 +15,8 @@ export type HubProps = {
 type WorkFilter = 'all' | 'working' | 'attention' | 'finished'
 const isWorking = (item: ActivityItem) => item.status === 'running' || item.status === 'queued'
 const needsAttention = (item: ActivityItem) => item.status === 'waiting' || item.status === 'failed'
-const isRecent = (item: ActivityItem) => item.status === 'done' || item.status === 'saved' || item.status === 'cancelled'
-const statusLabel = (item: ActivityItem) => ({ queued: 'Queued', running: 'In progress', waiting: 'Needs you', done: 'Completed', saved: 'Saved', failed: 'Needs attention', cancelled: 'Stopped' })[item.status]
+const isRecent = (item: ActivityItem) => item.status === 'done' || item.status === 'saved' || item.status === 'cancelled' || item.status === 'paused'
+const statusLabel = (item: ActivityItem) => ({ queued: 'Queued', running: 'In progress', waiting: 'Needs you', done: 'Completed', saved: 'Saved', failed: 'Needs attention', cancelled: 'Stopped', paused: 'Paused' })[item.status]
 const timestamp = (value: number) => Number.isFinite(value) && value > 0 ? new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''
 
 function ArtifactThumbnail({ chat, compact = false }: { chat?: ActivityChat; compact?: boolean }) {
@@ -39,7 +40,7 @@ function ActivityTimeline({ item }: { item: ActivityItem }) {
   </details>
 }
 
-function WorkCard({ item, chat, onOpenChat, onOpenSpace }: { item: ActivityItem; chat?: ActivityChat; onOpenChat: HubProps['onOpenChat']; onOpenSpace?: HubProps['onOpenSpace'] }) {
+function WorkCard({ item, chat, onOpenChat, onOpenSwarm, onOpenSpace }: { item: ActivityItem; chat?: ActivityChat; onOpenChat: HubProps['onOpenChat']; onOpenSwarm?: HubProps['onOpenSwarm']; onOpenSpace?: HubProps['onOpenSpace'] }) {
   const sourceSpace = item.source === 'pipeline' || item.source === 'autopilot' ? 'agents' : item.source === 'studio' ? 'studio' : item.source === 'map' ? 'map' : !item.preview ? 'agents' : undefined
   const progress = typeof item.progress === 'number' && Number.isFinite(item.progress) ? Math.max(0, Math.min(1, item.progress)) : undefined
   return <article className="live-hub-card" data-status={item.status}>
@@ -50,7 +51,7 @@ function WorkCard({ item, chat, onOpenChat, onOpenSpace }: { item: ActivityItem;
       <div className="live-hub-update"><span>{item.preview ? 'Sample update' : 'Updated'} {timestamp(item.updatedAt)}</span>{isWorking(item) && progress !== undefined && <span>{Math.round(progress * 100)}%</span>}</div>
     </div>
     <div className="live-hub-card-actions">
-      {chat ? <button className="live-hub-open" onClick={() => onOpenChat(chat.id)}>{item.status === 'waiting' ? 'Review in chat' : 'Open chat'}<span aria-hidden="true">↗</span></button>
+      {item.swarm && onOpenSwarm ? <button className="live-hub-open" onClick={() => onOpenSwarm(item.swarm!)}>Open {item.swarm.thread === 'group' ? 'group conversation' : `${item.swarm.thread} chat`}<span aria-hidden="true">↗</span></button> : chat ? <button className="live-hub-open" onClick={() => onOpenChat(chat.id)}>{item.status === 'waiting' ? 'Review in chat' : 'Open chat'}<span aria-hidden="true">↗</span></button>
         : sourceSpace && onOpenSpace ? <button className="live-hub-open" onClick={() => onOpenSpace(sourceSpace)}>Open {sourceSpace === 'agents' ? 'Autopilot' : sourceSpace === 'studio' ? 'Studio' : 'Map'}<span aria-hidden="true">↗</span></button>
         : <span className="live-hub-no-source">Updates from {item.source || 'your task'}</span>}
     </div>
@@ -58,7 +59,7 @@ function WorkCard({ item, chat, onOpenChat, onOpenSpace }: { item: ActivityItem;
   </article>
 }
 
-export default function WorkspaceLiveHub({ chats, activity, onOpenChat, onNewChat, onOpenSpace, savedMemory }: HubProps) {
+export default function WorkspaceLiveHub({ chats, activity, onOpenChat, onOpenSwarm, onNewChat, onOpenSpace, savedMemory }: HubProps) {
   const demo = activity.demo
   const [tab, setTab] = useState<'live' | 'saved'>('live')
   const [filter, setFilter] = useState<WorkFilter>('all')
@@ -93,7 +94,7 @@ export default function WorkspaceLiveHub({ chats, activity, onOpenChat, onNewCha
       {activity.error && <div className="live-hub-error" role="status"><p>{activity.error}</p><button onClick={activity.refresh}>Refresh</button></div>}
       <div className="live-hub-filters" aria-label="Filter work">{filters.map(option => <button key={option.key} aria-pressed={filter === option.key} onClick={() => setFilter(option.key)}>{option.label}<span>{option.count}</span></button>)}</div>
       <div className="live-hub-section-heading"><h2>{filter === 'all' ? 'Happening now' : filters.find(option => option.key === filter)?.label}</h2><span>{visibleWork.length} {visibleWork.length === 1 ? 'thread' : 'threads'}</span></div>
-      {visibleWork.length ? <div className="live-hub-work-grid">{visibleWork.map(item => <WorkCard key={item.id} item={item} chat={item.chatId ? byChat.get(item.chatId) : undefined} onOpenChat={onOpenChat} onOpenSpace={onOpenSpace}/>)}</div>
+      {visibleWork.length ? <div className="live-hub-work-grid">{visibleWork.map(item => <WorkCard key={item.id} item={item} chat={item.chatId ? byChat.get(item.chatId) : undefined} onOpenChat={onOpenChat} onOpenSwarm={onOpenSwarm} onOpenSpace={onOpenSpace}/>)}</div>
         : <div className="live-hub-empty"><h3>{filter === 'attention' ? 'Nothing waiting on you.' : filter === 'finished' ? 'Room for what comes next.' : 'A quiet moment.'}</h3><p>{filter === 'attention' ? 'When a task needs your input, you’ll find it here.' : 'Start a conversation. Your work will have a place here as it takes shape.'}</p><button onClick={onNewChat}>Start a conversation<span aria-hidden="true">↗</span></button></div>}
       {filter === 'all' && savedWork.length > 0 && <section className="live-hub-saved-work" aria-label="Recent saved work"><div className="live-hub-section-heading"><h2>Ready to return to</h2><button onClick={() => setFilter('finished')}>See recent work <span aria-hidden="true">↗</span></button></div><div className="live-hub-saved-grid">{savedWork.map(item => { const chat = byChat.get(item.chatId!)!; return <button key={item.id} className="live-hub-saved-card" onClick={() => onOpenChat(chat.id)}><ArtifactThumbnail chat={chat} compact/><div><span>{item.status === 'saved' ? 'Saved conversation' : statusLabel(item)}</span><strong>{item.title}</strong><span className="live-hub-saved-open">Open chat <span aria-hidden="true">↗</span></span></div></button> })}</div></section>}
     </div>

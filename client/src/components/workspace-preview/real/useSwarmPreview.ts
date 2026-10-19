@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { SwarmController } from '../../workspace/design/swarmTypes'
+export type { SwarmController } from '../../workspace/design/swarmTypes'
 import { PREVIEW_OWNER, PREVIEW_TOKEN, PREVIEW_VERSION } from './fixtures'
 import {
   initialSwarmState, isSwarmState, isSwarmRoom, mergeSwarmStates, reduceSwarm, sampleReply, selectSwarmMessages, selectSwarmTasks,
   selectSwarmPending, swarmRoomId,
-  type SwarmState, type SwarmThread, type SwarmAgentId, type SwarmMessage, type SwarmTask, type SwarmTaskStatus,
+  type SwarmState, type SwarmThread, type SwarmAgentId,
 } from './swarmPreviewModel'
 
 // Deliberately outside nalu-* account sync: these are local sample conversations.
@@ -42,31 +44,6 @@ function mergeSnapshot(current: Snapshot, incoming: Snapshot): Snapshot {
   return { ...current, state, drafts: { ...incoming.drafts, ...current.drafts },
     recipient: isSwarmRoom(state, current.activeProjectId, current.recipient) ? current.recipient : 'group',
     recentRooms: current.recentRooms.filter(room => isSwarmRoom(state, room.projectId, room.thread)) }
-}
-
-export interface SwarmController {
-  state: SwarmState
-  activeProjectId: string
-  recipient: SwarmThread
-  messages: SwarmMessage[]
-  tasks: SwarmTask[]
-  draft: string
-  setDraft: (text: string) => void
-  pending: boolean
-  pendingCount: number
-  creating: boolean
-  setCreating: (value: boolean) => void
-  error: string
-  selectProject: (id: string) => void
-  selectRecipient: (thread: SwarmThread) => void
-  navigate: (projectId: string, thread: SwarmThread) => void
-  send: (text?: string) => boolean
-  stop: () => void
-  createProject: (title: string, brief: string) => string | null
-  addTask: (title: string, assignee: SwarmAgentId) => void
-  updateTask: (taskId: string, status: SwarmTaskStatus) => void
-  assignTask: (taskId: string, assignee: SwarmAgentId) => void
-  recentRooms: Room[]
 }
 
 export default function useSwarmPreview(): SwarmController {
@@ -166,7 +143,11 @@ export default function useSwarmPreview(): SwarmController {
     navigate(id, 'group')
     return id
   }, [commit, navigate])
-  const updateTask = useCallback((taskId: string, status: SwarmTaskStatus) => commit(current => ({ ...current, state: reduceSwarm(current.state, { type: 'update-task', projectId: current.activeProjectId, taskId, status, at: Date.now() }) })), [commit])
+  const updateTask: SwarmController['updateTask'] = useCallback((taskId, status) => {
+    // Live-only terminal states are never introduced into the sample reducer.
+    if (status === 'failed' || status === 'cancelled') return
+    commit(current => ({ ...current, state: reduceSwarm(current.state, { type: 'update-task', projectId: current.activeProjectId, taskId, status, at: Date.now() }) }))
+  }, [commit])
   const addTask = useCallback((title: string, assignee: SwarmAgentId) => {
     if (!title.trim()) return
     commit(current => ({ ...current, state: reduceSwarm(current.state, { type: 'add-task', task: {
