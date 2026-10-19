@@ -63,17 +63,13 @@
   --tw-ring-color:rgb(var(--ws-accent)/.4);
 }
 
-/* Autopilot: retain the actual nodes, ports and SVG hit targets. Inline model
-   colors in the editor/menu are deliberately normalized only in this panel. */
-.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node { --node-tint:var(--review-accent-ink)!important; }
+/* Autopilot retains each tool's semantic icon color, actual ports and hit targets. */
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node-running { border-color:var(--review-accent-ink); box-shadow:0 0 0 3px rgb(var(--ws-accent)/.12); }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node-running .ap-node-status { color:var(--review-accent-ink); }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node-awaiting { border-color:var(--review-notice-ink); }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node-awaiting .ap-node-status { color:var(--review-notice-ink); }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node-error { border-color:#e7a5b0; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-node-error .ap-node-status { color:#efb5bf; }
-.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-step-editor>div:first-child[style] { background:rgb(var(--ws-accent)/.08)!important; }
-.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-toolbar-menu svg[style] { color:var(--review-accent-ink)!important; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-workspace svg[aria-label="Workflow connections"] :is(path[stroke="#d5ae6f" i],path[stroke="#E4B96F" i]) { stroke:var(--review-accent-ink); }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace .ap-template-dialog header>div>span { color:var(--review-accent-ink); }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .nalu-workspace :is(.ap-template-grid button,.ap-template-dialog footer button) { background:rgb(var(--ws-accent)/.11); border-color:rgb(var(--ws-accent)/.35); color:rgb(var(--ws-ink)); }

@@ -1,8 +1,9 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowUp, Plus, Square, X } from 'lucide-react'
 import { AgentHead, type AgentName } from './WorkspaceAgentIdentity'
-import { selectSwarmThreadTasks, swarmProjectOverview, type SwarmController } from '../../workspace/design/swarmTypes'
+import { selectSwarmPending, selectSwarmThreadTasks, swarmProjectOverview, type SwarmController } from '../../workspace/design/swarmTypes'
 import Markdown from '../../workspace/Markdown'
+import NaluGlobe from '../../NaluGlobe'
 import './workspace-swarm.css'
 
 const SwarmStudioPreview = lazy(() => import('../../workspace/design/SwarmStudioPreview'))
@@ -104,6 +105,8 @@ export default function WorkspaceSwarm({ swarm, startingAgent, navigationKey, on
   const previouslyCreating = useRef(creating)
   const focusComposerAfterCreate = useRef(false)
   const visibleTasks = selectSwarmThreadTasks(swarm.state, swarm.activeProjectId, swarm.recipient)
+  const pendingSpeakers = [...new Set(selectSwarmPending(swarm.state, swarm.activeProjectId, swarm.recipient).map(turn => turn.replySpeaker))]
+  const pendingReplyLabel = pendingSpeakers.length ? `${pendingSpeakers.join(', ')} ${pendingSpeakers.length === 1 ? 'is' : 'are'} replying…` : 'Your team is replying…'
   const messages = swarm.messages
   const threadKey = `${project?.id || ''}:${swarm.recipient}`
   const taskFormState = useRef({ threadKey, taskTitle, taskAssignee }); taskFormState.current = { threadKey, taskTitle, taskAssignee }
@@ -200,7 +203,7 @@ export default function WorkspaceSwarm({ swarm, startingAgent, navigationKey, on
   }
 
   return <section ref={root} className="workspace-swarm" data-wide={wide} aria-label="Swarm project workspace">
-    {swarm.loading && !project ? <p className="swarm-pending" role="status">Loading your Swarm workspaces…</p> : swarm.creating || !project ? <NewSwarm key={startingAgent || 'group'} swarm={swarm} startingAgent={startingAgent}/> : <>
+    {swarm.loading && !project ? <p className="swarm-pending" role="status"><NaluGlobe size={22}/><span>Loading your Swarm workspaces…</span></p> : swarm.creating || !project ? <NewSwarm key={startingAgent || 'group'} swarm={swarm} startingAgent={startingAgent}/> : <>
       <header className="swarm-header">
         <div className="swarm-heading"><div><small>Swarm</small>{sample && <span className="swarm-sample-label">Local sample</span>}</div><h2 title={project.title}>{project.title}</h2></div>
         <div className="swarm-project-controls">
@@ -235,11 +238,11 @@ export default function WorkspaceSwarm({ swarm, startingAgent, navigationKey, on
               {message.speaker !== 'You' && <button type="button" className="swarm-message-agent" aria-label={`Open ${message.speaker} direct conversation`} onClick={() => openThread(message.speaker as AgentName)}><Face name={message.speaker}/></button>}
               <div className="swarm-message-copy"><div className="swarm-message-meta"><strong>{message.speaker}</strong><time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div>{!sample && message.speaker !== 'You' ? <div className="swarm-message-markdown"><Markdown>{message.content}</Markdown></div> : <p>{message.content}</p>}<button type="button" className="swarm-track-message" aria-label={message.speaker === 'You' ? 'Track work from your message' : `Track work from ${message.speaker}'s message`} onClick={() => trackMessage(message.content, message.speaker)}>Track work</button></div>
             </article>)}
-            {swarm.sending && !swarm.pending && <p className="swarm-pending" role="status">Sending your message…</p>}
-            {swarm.pending && <p className="swarm-pending" role="status">{sample ? swarm.recipient === 'group' ? 'A sample team reply is on its way…' : `${swarm.recipient} is replying in this sample…` : swarm.recipient === 'group' ? 'Your team is replying…' : `${swarm.recipient} is replying…`}</p>}
+            {swarm.sending && !swarm.pending && <p className="swarm-pending" role="status"><NaluGlobe size={22}/><span>Sending your message…</span></p>}
+            {swarm.pending && <p className="swarm-pending" role="status"><NaluGlobe size={22}/><span>{sample ? swarm.recipient === 'group' ? 'A sample team reply is on its way…' : `${swarm.recipient} is replying in this sample…` : pendingReplyLabel}</span></p>}
           </div>
           <div className="swarm-compose-dock"><form className="swarm-composer" onSubmit={send}>
-            <textarea ref={composer} rows={1} maxLength={4000} aria-label={swarm.recipient === 'group' ? 'Message the Swarm group' : `Message ${swarm.recipient}`} placeholder={swarm.recipient === 'group' ? 'Message the group…' : `Message ${swarm.recipient}…`} value={swarm.draft} onChange={event => swarm.setDraft(event.target.value)} onKeyDown={event => {
+            <textarea ref={composer} rows={1} maxLength={4000} aria-label={swarm.recipient === 'group' ? 'Message the Swarm group' : `Message ${swarm.recipient}`} placeholder={swarm.recipient === 'group' ? 'Message everyone, or @mention a teammate…' : `Message ${swarm.recipient}…`} value={swarm.draft} onChange={event => swarm.setDraft(event.target.value)} onKeyDown={event => {
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send() }
             }}/>
             {swarm.pending ? <button type="button" className="swarm-send" aria-label={sample ? 'Stop sample reply' : 'Stop reply'} onClick={swarm.stop}><Square size={12}/></button> : <button type="submit" className="swarm-send" aria-label="Send Swarm message" disabled={!swarm.draft.trim() || swarm.sending}><ArrowUp size={16} strokeWidth={2.4}/></button>}

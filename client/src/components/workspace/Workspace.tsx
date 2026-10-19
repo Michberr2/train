@@ -5,6 +5,7 @@ import WorkspaceIntro from './WorkspaceIntro'
 import Scenery from '../Scenery'
 import NaluAvatar from '../avatar/NaluAvatar'
 import NaluMark from '../landing/NaluMark'
+import NaluGlobe from '../NaluGlobe'
 import { fallbackStudioIntent, parseStudioIntent, shouldClassifyStudio, studioKind as normalizeStudioKind, type StudioIntent } from '../../../../shared/studioIntent'
 import { buildChatMemory } from './crossChatMemory'
 import { mergeChatMessages } from '../../../../shared/chatMessages'
@@ -63,7 +64,7 @@ import { lazy, Suspense } from 'react'
 import type { WorkspaceCarouselView } from '../workspace-preview/real/WorkspaceCarousel'
 import Markdown from './Markdown'
 import { useTheme } from '../ThemeProvider'
-import MediaLoader, { WolfWord } from './MediaLoader'
+import MediaLoader from './MediaLoader'
 import CardErrorBoundary from './CardErrorBoundary'
 import { extractAttachment, attachmentContext, attachmentExtractionSummary, type Attachment } from './extractText'
 import { saveChatAttachment, loadChatAttachment } from './chatAttachments'
@@ -703,9 +704,10 @@ function AssistantThink({
     <div className="min-w-0">
       <button
         onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
         className="mb-2 inline-flex items-center gap-1.5 rounded-lg border border-glass/[0.14] bg-glass/[0.05] px-2.5 py-1 text-xs text-dim transition-colors hover:bg-glass/10 hover:text-ink"
       >
-        <Brain size={12} className={isLive ? 'animate-pulse text-accent' : ''} />
+        <NaluGlobe size={18} active={isLive} />
         {isLive ? 'Thinking…' : 'View thinking'}
         {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
       </button>
@@ -2535,7 +2537,8 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
                 <div className="w-full min-w-0">
                   <div className="ws-assistant-identity">
                     {reviewLayout ? <NaluMark className="review-assistant-logo" /> : streaming && i === messages.length - 1 ? <NaluAvatar size={42} phase="thinking"/> : <img src={avatarArtwork} alt=""/>}
-                    <span>Nalu<small>{streaming && i === messages.length - 1 ? 'Thinking with you' : 'Here to help'}</small></span>
+                    <span>Nalu<small>{streaming && i === messages.length - 1 ? m.content ? 'Writing your answer' : 'Thinking with you' : 'Here to help'}</small></span>
+                    {streaming && i === messages.length - 1 && !!m.content && <NaluGlobe size={22} />}
                   </div>
                   <AssistantThink reasoning={m.reasoning} isLive={streaming && i === messages.length - 1}>
                   <>
@@ -2545,18 +2548,16 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
                       // Render full Markdown LIVE while streaming, so the
                       // styling appears as the text arrives (rAF-throttled
                       // upstream keeps it smooth). A subtle caret trails it.
-                      <div className={streaming && i === messages.length - 1 ? 'streaming-caret nalu-stream-fade' : undefined}>
+                      <div className={`ws-answer-content${streaming && i === messages.length - 1 ? ' streaming-caret nalu-stream-fade' : ''}`}>
                         <Markdown>{cleanForDisplay(m.content)}</Markdown>
                         {m.clarify && !m.clarify.answered && !streaming && (
                           <ClarifyBlock questions={m.clarify.questions} onSubmit={(ans) => submitClarify(i, ans)} />
                         )}
                       </div>
                     ) : !m.sheet && !m.doc && !m.video && !m.cad && !m.design && !m.deck && streaming && i === messages.length - 1 ? (
-                      // Waiting for the first token — the Nalu mark breathes
-                      // with three soft dots while waiting for the first token.
-                      <div className="flex items-center gap-2 py-0.5">
-                        {reviewLayout ? <NaluMark className="review-assistant-logo nalu-think" /> : <img src={avatarArtwork} alt="" className="w-7 h-7 rounded-lg nalu-think" />}
-                        <WolfWord className="text-[13px]" />
+                      <div className="nalu-answer-wait" role="status">
+                        <NaluGlobe size={24} />
+                        <span>Thinking with you…</span>
                       </div>
                     ) : null}
                     <div
@@ -2565,28 +2566,28 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
                     >
                     {m.sheet && (
                       <CardErrorBoundary label="The spreadsheet">
-                        <Suspense fallback={<MediaLoader kind="sheet" />}>
+                        <Suspense fallback={<MediaLoader kind="sheet" action="opening" />}>
                           <SheetCard data={m.sheet} />
                         </Suspense>
                       </CardErrorBoundary>
                     )}
                     {m.doc && (
                       <CardErrorBoundary label="The document">
-                        <Suspense fallback={<MediaLoader kind="doc" />}>
+                        <Suspense fallback={<MediaLoader kind="doc" action="opening" />}>
                           <DocCard data={m.doc} />
                         </Suspense>
                       </CardErrorBoundary>
                     )}
                     {m.email && (
                       <CardErrorBoundary label="The email">
-                        <Suspense fallback={<MediaLoader kind="doc" />}>
+                        <Suspense fallback={<MediaLoader kind="email" action="opening" />}>
                           <EmailCard data={m.email} />
                         </Suspense>
                       </CardErrorBoundary>
                     )}
                     {m.deck && (
                       <CardErrorBoundary label="The deck">
-                        <Suspense fallback={<div role="status" className="flex items-center gap-2 py-6 text-sm text-dim"><Loader2 size={18} className="motion-safe:animate-spin" />Opening deck…</div>}>
+                        <Suspense fallback={<MediaLoader kind="slides" action="opening" />}>
                           <SlidesCard data={m.deck} onUpdate={deck => setChats(cs => cs.map(ch =>
                             ch.id === activeId ? { ...ch, messages: ch.messages.map((mm, k) => k === i ? { ...mm, deck } : mm) } : ch
                           ))} />
@@ -2595,7 +2596,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
                     )}
                     {m.cad && (
                       <CardErrorBoundary label="The 3D model">
-                        <Suspense fallback={<MediaLoader kind="cad" />}>
+                        <Suspense fallback={<MediaLoader kind="cad" action="opening" />}>
                           <CADCard
                             code={m.cad}
                             prompt={(() => {
@@ -2609,7 +2610,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
                     )}
                     {m.design && (
                       <CardErrorBoundary label="The design" resetKey={m.design} previewHtml={typeof m.design === 'object' && 'html' in m.design && typeof m.design.html === 'string' ? m.design.html : undefined}>
-                        <Suspense fallback={<MediaLoader kind="design" />}>
+                        <Suspense fallback={<MediaLoader kind="design" action="opening" />}>
                           <DesignArtifactCard
                             art={m.design}
                             onUpdate={(art) => {
@@ -2950,7 +2951,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
               if (m.design)
                 return (
                   <CardErrorBoundary label="The design" resetKey={m.design} previewHtml={typeof m.design === 'object' && 'html' in m.design && typeof m.design.html === 'string' ? m.design.html : undefined}>
-                    <Suspense fallback={<MediaLoader kind="design" />}>
+                    <Suspense fallback={<MediaLoader kind="design" action="opening" />}>
                       <DesignArtifactCard
                         art={m.design}
                         onUpdate={(art) =>
@@ -2969,7 +2970,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
               if (m.deck)
                 return (
                   <CardErrorBoundary label="The deck">
-                    <Suspense fallback={<div role="status" className="flex items-center gap-2 py-6 text-sm text-dim"><Loader2 size={18} className="motion-safe:animate-spin" />Opening deck…</div>}>
+                    <Suspense fallback={<MediaLoader kind="slides" action="opening" />}>
                       <SlidesCard data={m.deck} onUpdate={deck => setChats(cs => cs.map(ch =>
                         ch.id === c.chatId ? { ...ch, messages: ch.messages.map((mm, k) => k === c.mi ? { ...mm, deck } : mm) } : ch
                       ))} />
@@ -2979,19 +2980,19 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
               if (m.sheet)
                 return (
                   <CardErrorBoundary label="The spreadsheet">
-                    <Suspense fallback={<MediaLoader kind="sheet" />}><SheetCard data={m.sheet} /></Suspense>
+                    <Suspense fallback={<MediaLoader kind="sheet" action="opening" />}><SheetCard data={m.sheet} /></Suspense>
                   </CardErrorBoundary>
                 )
               if (m.doc)
                 return (
                   <CardErrorBoundary label="The document">
-                    <Suspense fallback={<MediaLoader kind="doc" />}><DocCard data={m.doc} /></Suspense>
+                    <Suspense fallback={<MediaLoader kind="doc" action="opening" />}><DocCard data={m.doc} /></Suspense>
                   </CardErrorBoundary>
                 )
               if (m.cad)
                 return (
                   <CardErrorBoundary label="The 3D model">
-                    <Suspense fallback={<MediaLoader kind="cad" />}><CADCard code={m.cad} /></Suspense>
+                    <Suspense fallback={<MediaLoader kind="cad" action="opening" />}><CADCard code={m.cad} /></Suspense>
                   </CardErrorBoundary>
                 )
               if (m.video) return <H3MoviePlayer url={m.video} className="mx-auto max-h-[70vh] w-auto max-w-full rounded-xl" />
@@ -3019,7 +3020,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           </Suspense>
         ) : <MemoryPanel onOpenChat={selectChat} />)}
         {view === 'agents' && (
-          <Suspense fallback={<div className="flex flex-1 items-center justify-center text-sm text-dim"><Loader2 size={18} className="mr-2 animate-spin" /> Loading AutoPilot…</div>}>
+          <Suspense fallback={<div role="status" className="flex flex-1 items-center justify-center gap-2 text-sm text-dim"><NaluGlobe size={24} /> Opening AutoPilot…</div>}>
             <div className="ws-feature-shell"><WorkspaceIntro compact label="AutoPilot" title="Leave it with me." description="Plan the steps, connect your tools, and follow your work as it happens."/><AgentsPanel /></div>
           </Suspense>
         )}

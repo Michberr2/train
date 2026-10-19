@@ -17,13 +17,13 @@ const result = await build({ stdin: { contents: entry, resolveDir: process.cwd()
     path.endsWith('_db') ? `export function readToken(req){return req.headers?.authorization?.replace(/^Bearer /,'') || null} export function safeJson(value){try{return JSON.parse(value)}catch{return null}}` :
     path.endsWith('_swarmWorker') ? 'export async function runSwarmOwner(owner){globalThis.__swarmRoutes.wakes.push(owner)} export async function runDueSwarmJobs(){globalThis.__swarmRoutes.crons++;return {accountsChecked:0}}' :
     path.endsWith('_swarmStudioRunner') ? 'export async function runSwarmStudioJob(){throw new Error("No real Studio provider in route regressions")}' :
-    'export async function executeSwarmWork(){throw new Error("No real model in route regressions")}' }))
+    'export async function executeSwarmWork(input){if(!globalThis.__swarmRoutes.execute)throw new Error("No real model in route regressions");return globalThis.__swarmRoutes.execute(input)}' }))
 } }] })
 const mod = { exports: {} }
 new Function('require', 'module', 'exports', result.outputFiles[0].text)(createRequire(import.meta.url), mod, mod.exports)
-const { handler, cronHandler, SwarmStore, CloudflareStore, swarmContext, executeLeasedSwarmJob, applySwarmAction } = mod.exports
+const { handler, cronHandler, SwarmStore, CloudflareStore, swarmContext, executeLeasedSwarmJob, runSwarmOwner, applySwarmAction } = mod.exports
 class LocalD1 extends CloudflareStore {
-  constructor(sql) { super('https://fixture.invalid', 'isolated-regression-key-not-a-credential'); this.db = new DatabaseSync(':memory:'); this.db.exec("PRAGMA foreign_keys=ON;CREATE TABLE nalu_users(id TEXT PRIMARY KEY);INSERT INTO nalu_users VALUES('alice'),('bob');"); this.db.exec(sql); this.tail = Promise.resolve() }
+  constructor(sql) { super('https://fixture.invalid', 'isolated-regression-key-not-a-credential'); this.db = new DatabaseSync(':memory:'); this.db.exec("PRAGMA foreign_keys=ON;CREATE TABLE nalu_users(id TEXT PRIMARY KEY);INSERT INTO nalu_users VALUES('alice'),('bob'),('carol');"); this.db.exec(sql); this.tail = Promise.resolve() }
   async batch(statements) {
     const previous = this.tail; let release; this.tail = new Promise(resolve => { release = resolve }); await previous
     this.db.exec('BEGIN')
@@ -35,7 +35,7 @@ class LocalD1 extends CloudflareStore {
 const db = new LocalD1(await readFile('cloudflare/nalu-data/migrations/0016_swarm.sql', 'utf8'))
 const store = new SwarmStore(db)
 const fixture = globalThis.__swarmRoutes = { background: [], wakes: [], crons: 0, connects: 0, closes: 0, reservations: 0, releases: 0, quotaAllowed: true, quotaStatus: 429,
-  backend() { return { client: db, connect: async () => { fixture.connects++ }, close: async () => { fixture.closes++ }, userId: async token => ({ 'alice-token': 'alice', 'bob-token': 'bob' })[token] || null } },
+  backend() { return { client: db, connect: async () => { fixture.connects++ }, close: async () => { fixture.closes++ }, userId: async token => ({ 'alice-token': 'alice', 'bob-token': 'bob', 'carol-token': 'carol' })[token] || null } },
   quota() { fixture.reservations++; return Promise.resolve({ ok: fixture.quotaAllowed, status: fixture.quotaAllowed ? undefined : fixture.quotaStatus, used: 1, limit: 10, signedIn: true, release: async () => { fixture.releases++ } }) },
 }
 async function request(body, token = 'alice-token', method = 'POST', run = handler) {
@@ -187,6 +187,61 @@ await regression('reassigned task does not disclose original private conversatio
   const job = data.jobs.find(item => item.id === task.executionId)
   assert.equal(job.speaker, 'Milo')
   assert.doesNotMatch(JSON.stringify(swarmContext(data, job).context), /ROCKY_ONLY_PRIVATE_CONTEXT/)
+})
+await regression('ordinary group sends persist one real worker reply per teammate with private branches isolated', async () => {
+  const teamRequest = body => request(body, 'carol-token')
+  const made = await teamRequest({ ...create, requestId: 'team-project-001', title: 'Team conversation' })
+  assert.equal(made.code, 200)
+  const teamProject = made.body.projectId
+  for (const speaker of ['Rocky', 'Milo']) {
+    assert.equal((await teamRequest({ action: 'send', projectId: teamProject, thread: speaker, requestId: `team-private-${speaker}`, content: `${speaker.toUpperCase()}_TEAM_PRIVATE_CANARY` })).code, 200)
+    assert.equal((await teamRequest({ action: 'stop', projectId: teamProject, thread: speaker })).code, 200)
+  }
+  const groupSend = { action: 'send', projectId: teamProject, thread: 'group', requestId: 'team-default-001', content: 'Everyone, give your view on the launch.' }
+  const beforeQuota = fixture.reservations
+  assert.equal((await teamRequest(groupSend)).code, 200)
+  assert.equal(fixture.reservations, beforeQuota + 1, 'one accepted user message reserves quota once')
+  const jobs = (await store.read('carol')).jobs.filter(job => job.projectId === teamProject && job.thread === 'group')
+  assert.deepEqual(jobs.map(job => job.speaker).sort(), ['Milo', 'Nalu', 'Rocky'])
+  assert.equal((await teamRequest(groupSend)).code, 200)
+  assert.equal(fixture.reservations, beforeQuota + 1, 'lost acknowledgement cannot reserve again')
+  const executed = []
+  fixture.execute = async input => {
+    executed.push(input.speaker)
+    assert.match(JSON.stringify(input.context), /give your view on the launch/)
+    assert.doesNotMatch(JSON.stringify(input.context), /TEAM_PRIVATE_CANARY/)
+    return { status: 'done', content: `${input.speaker}: my own contribution.`, summary: 'Reply ready' }
+  }
+  try { await runSwarmOwner('carol', 20000) } finally { delete fixture.execute }
+  assert.deepEqual(executed.sort(), ['Milo', 'Nalu', 'Rocky'])
+  const done = await store.read('carol')
+  const replies = done.state.messages.filter(message => message.projectId === teamProject && message.thread === 'group' && message.speaker !== 'You')
+  assert.deepEqual(replies.map(message => message.speaker).sort(), ['Milo', 'Nalu', 'Rocky'])
+  assert.equal(new Set(replies.map(message => message.id)).size, 3)
+  assert.ok(done.state.turns.filter(turn => turn.projectId === teamProject && turn.thread === 'group').every(turn => turn.status === 'completed'))
+  assert.equal((await teamRequest(groupSend)).code, 200)
+  assert.deepEqual(await store.read('carol'), done, 'retry after completion must not requeue teammates')
+
+  assert.equal((await teamRequest({ action: 'send', projectId: teamProject, thread: 'Rocky', requestId: 'private-unrelated-001', content: 'An unrelated private reply.' })).code, 200)
+  const nextSend = { ...groupSend, requestId: 'team-cancel-001', content: 'Discuss the next step.' }
+  assert.equal((await teamRequest(nextSend)).code, 200)
+  const pending = (await store.read('carol')).jobs.filter(job => job.projectId === teamProject && job.thread === 'group' && job.status === 'queued')
+  assert.equal(pending.length, 3)
+  const claim = await store.claim('carol', pending[0].id), started = defer(), late = defer()
+  const running = executeLeasedSwarmJob(store, 'carol', claim, { execute: async () => { started.resolve(); await late.promise; return { status: 'done', content: 'LATE_TEAM_REPLY', summary: 'Late' } } })
+  await started.promise
+  assert.equal((await teamRequest({ action: 'stop', projectId: teamProject, thread: 'group' })).code, 200)
+  late.resolve(); await running
+  const stopped = await store.read('carol')
+  assert.ok(stopped.jobs.filter(job => pending.some(item => item.id === job.id)).every(job => job.status === 'cancelled'))
+  assert.ok(stopped.state.turns.filter(turn => turn.projectId === teamProject && turn.requestId === nextSend.requestId).every(turn => turn.status === 'cancelled'))
+  assert.equal(stopped.state.messages.some(message => message.content === 'LATE_TEAM_REPLY'), false)
+  assert.deepEqual(stopped.jobs.filter(job => job.projectId === teamProject && job.requestId === 'reply:private-unrelated-001:Rocky').map(job => job.status), ['queued'], 'stopping the group must not stop private replies')
+  assert.equal((await teamRequest(nextSend)).code, 200)
+  assert.deepEqual(await store.read('carol'), stopped, 'retrying a stopped turn must not revive it')
+  const targeted = { ...groupSend, requestId: 'team-target-001', content: '@milo, what is your recommendation?' }
+  assert.equal((await teamRequest(targeted)).code, 200)
+  assert.deepEqual((await store.read('carol')).jobs.filter(job => job.requestId.startsWith(`reply:${targeted.requestId}:`)).map(job => job.speaker), ['Milo'])
 })
 if (failures.length) { console.error(`${failures.length} outstanding Swarm regression(s): ${failures.join('; ')}`); process.exitCode = 1 }
 delete globalThis.__swarmRoutes

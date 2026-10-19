@@ -14,6 +14,9 @@ import './workspace-design-surface.css'
 import './workspace-panel-fit.css'
 import './workspace-activity-fit.css'
 import './workspace-chat-fit.css'
+import './workspace-window-theme.css'
+import './workspace-studio-theme.css'
+import './workspace-chat-theme.css'
 
 /** Shared visual surface only. Authentication, storage and network access stay
  * with the caller; importing this component never initializes sample data. */

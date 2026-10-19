@@ -1,0 +1,239 @@
+/* Authenticated working windows. The desktop scene, launcher, dock and generated
+   artifacts keep their own styling; these tokens belong to the tool chrome. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace {
+  --window-panel-rgb:255 255 255;
+  --window-subtle-rgb:244 244 242;
+  --window-canvas-rgb:238 239 237;
+  --window-ink-rgb:36 39 43;
+  --window-muted-rgb:96 101 108;
+  --window-line-rgb:70 76 84;
+  --window-accent-rgb:57 65 74;
+  --window-warning-rgb:133 82 20;
+  --window-success-rgb:35 112 76;
+  --window-danger-rgb:174 55 66;
+  --window-on-accent:#fff;
+  --window-shadow:0 18px 52px -30px #25282d55,0 1px 3px #25282d12;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-view=studio] { --window-accent-rgb:105 78 155; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-view=map] { --window-accent-rgb:24 112 107; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:is([data-workspace-view=agents],[data-workspace-view=automations]) { --window-accent-rgb:43 112 78; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-view=memory] { --window-accent-rgb:137 91 39; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-view=skills] { --window-accent-rgb:80 91 153; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-theme=dark] {
+  --window-panel-rgb:35 37 41;
+  --window-subtle-rgb:45 48 53;
+  --window-canvas-rgb:29 31 35;
+  --window-ink-rgb:240 241 242;
+  --window-muted-rgb:177 182 190;
+  --window-line-rgb:190 195 202;
+  --window-accent-rgb:219 223 228;
+  --window-warning-rgb:232 189 123;
+  --window-success-rgb:137 208 168;
+  --window-danger-rgb:239 159 166;
+  --window-on-accent:#202225;
+  --window-shadow:0 18px 52px -26px #0009,0 1px 3px #0004;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-theme=dark][data-workspace-view=studio] { --window-accent-rgb:195 171 236; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-theme=dark][data-workspace-view=map] { --window-accent-rgb:131 204 193; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-theme=dark]:is([data-workspace-view=agents],[data-workspace-view=automations]) { --window-accent-rgb:145 206 169; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-theme=dark][data-workspace-view=memory] { --window-accent-rgb:221 187 141; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-theme=dark][data-workspace-view=skills] { --window-accent-rgb:177 187 238; }
+
+/* Define aliases on each window, after the per-tool/theme primitives resolve.
+   Chat's lazy stylesheet redeclares tokens on its body, history and tools. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-main,.ws-sidebar,.workspace-chat-inline,.workspace-chat-popover,.workspace-chat-popover-body,.workspace-chat-history,.workspace-chat-tools) {
+  --ws-panel:var(--window-panel-rgb);
+  --ws-panel2:var(--window-subtle-rgb);
+  --ws-canvas:var(--window-canvas-rgb);
+  --ws-sidebar:var(--window-subtle-rgb);
+  --ws-ink:var(--window-ink-rgb);
+  --ws-dim:var(--window-muted-rgb);
+  --ws-glass:var(--window-line-rgb);
+  --ws-accent:var(--window-accent-rgb);
+  --color-primary:var(--window-ink-rgb);
+  --window-surface:rgb(var(--window-panel-rgb));
+  --window-subtle:rgb(var(--window-subtle-rgb));
+  --window-border:rgb(var(--window-line-rgb)/.18);
+  --window-ink:rgb(var(--window-ink-rgb));
+  --window-muted:rgb(var(--window-muted-rgb));
+  --window-accent:rgb(var(--window-accent-rgb));
+  --window-accent-soft:rgb(var(--window-accent-rgb)/.09);
+  --window-warning:rgb(var(--window-warning-rgb));
+  --window-success:rgb(var(--window-success-rgb));
+  --window-danger:rgb(var(--window-danger-rgb));
+  --review-paper:var(--window-surface);
+  --review-soft-paper:var(--window-subtle);
+  --review-accent-ink:var(--window-accent);
+  --review-action-fill:var(--window-accent);
+  --review-action-ink:var(--window-on-accent);
+  --review-notice-ink:var(--window-warning);
+  --review-notice-fill:var(--window-warning-rgb);
+  color:var(--window-ink);
+  color-scheme:light;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-theme=dark] :is(.ws-main,.ws-sidebar,.workspace-chat-inline,.workspace-chat-popover,.workspace-chat-popover-body,.workspace-chat-history,.workspace-chat-tools) { color-scheme:dark; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-sidebar,.workspace-chat-inline,.workspace-chat-popover,.workspace-chat-popover-body,.workspace-chat-history,.workspace-chat-tools) { --window-accent-rgb:57 65 74; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-theme=dark] :is(.ws-sidebar,.workspace-chat-inline,.workspace-chat-popover,.workspace-chat-popover-body,.workspace-chat-history,.workspace-chat-tools) { --window-accent-rgb:219 223 228; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace>.ws-main {
+  background:var(--window-surface);
+  border-color:var(--window-border);
+  box-shadow:var(--window-shadow);
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace>.ws-sidebar {
+  background:var(--window-subtle);
+  border-color:var(--window-border);
+  box-shadow:var(--window-shadow);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-topbar { border-color:var(--window-border); color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-topbar>:is(span,button) { color:var(--window-ink); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-topbar .text-dim { color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-main :is(.ws-page-intro,.ws-page-intro-compact,.ws-feature-page,.ws-feature-shell) { background:transparent; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-main .ws-page-intro :is(.ws-eyebrow,h1) { color:var(--window-ink); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-save-status { color:var(--window-muted); background:var(--window-subtle); border-color:var(--window-border); }
+
+/* Utility controls use semantic colors. Restrict utility-class corrections to
+   product UI so generated documents, websites and map data retain their colors. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-settings,.ws-skills,.ws-projects,.ap-workspace) :is(input:not([type=checkbox]):not([type=radio]):not([type=range]),textarea,select) {
+  background-color:var(--window-surface);
+  color:var(--window-ink);
+  border-color:rgb(var(--ws-glass)/.3);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-settings,.ws-skills,.ws-projects,.ap-workspace) :is(input,textarea)::placeholder { color:var(--window-muted); opacity:1; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-settings,.ws-skills,.ws-projects,.ap-workspace) :is(button,input,textarea,select,a):focus-visible {
+  outline:2px solid var(--window-accent);
+  outline-offset:3px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-settings,.ws-skills,.ws-projects,.ap-workspace) :is(.bg-gold,.bg-accent,.btn-gold) { background:var(--window-accent); color:var(--window-on-accent); border-color:var(--window-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-settings,.ws-skills,.ws-projects,.ap-workspace) :is(.bg-gold,.bg-accent,.btn-gold):hover:not(:disabled) { background:color-mix(in srgb,var(--window-accent) 88%,var(--window-ink)); color:var(--window-on-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-settings,.ws-skills,.ws-projects,.ap-workspace) :is([class^="text-emerald-"],[class*=" text-emerald-"],[class^="text-green-"],[class*=" text-green-"]) { color:var(--window-success); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-settings,.ws-skills,.ws-projects,.ap-workspace) :is([class^="text-red-"],[class*=" text-red-"]) { color:var(--window-danger); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-settings,.ws-skills,.ws-projects,.ap-workspace) :is([class^="text-amber-"],[class*=" text-amber-"],[class^="text-yellow-"],[class*=" text-yellow-"]) { color:var(--window-warning); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-settings,.ws-skills,.ws-projects,.ap-workspace) :is([class^="bg-emerald-"],[class*=" bg-emerald-"]):not([role=switch]) { background-color:rgb(var(--window-success-rgb)/.1); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-settings,.ws-skills,.ws-projects,.ap-workspace) :is([class^="bg-amber-"],[class*=" bg-amber-"],[class^="bg-yellow-"],[class*=" bg-yellow-"]) { background-color:rgb(var(--window-warning-rgb)/.09); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-settings,.ws-skills,.ws-projects,.ap-workspace) :is([class*="hover:text-gold"],[class*="hover:text-amber-"],[class*="hover:text-yellow-"]):hover { color:var(--window-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-settings,.ws-skills,.ws-projects) [class*="hover:text-red-"]:hover { color:var(--window-danger); }
+
+/* Settings, connections and projects: quiet cards on a neutral window, with
+   colored selection and real account/provider marks left intact. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-settings-content>nav,.ws-settings-group>section,.ws-skill-cards>li) { border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-group>section { background:var(--window-subtle); border-radius:12px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-content>nav button[aria-pressed=true] { background:var(--window-accent-soft); color:var(--window-accent); border-color:transparent; border-radius:8px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-group [role=switch][aria-checked=true] { background:var(--window-success); border-color:var(--window-success); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-settings-group code.bg-black\/30 { background:var(--window-subtle); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-skills>nav button[aria-pressed=true] { background:var(--window-accent-soft); border-color:rgb(var(--ws-accent)/.35); color:var(--window-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-skill-cards>li>div:first-child { background:var(--window-accent-soft); color:var(--window-accent); border-color:transparent; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-skill-cards>li>button { border-color:var(--window-border); background:var(--window-subtle); color:var(--window-ink); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-plugins-grid>section,.ws-projects-grid>div) { background:var(--window-subtle); border-color:var(--window-border); backdrop-filter:none; -webkit-backdrop-filter:none; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-plugins-chrome { background:var(--window-accent-soft); border-color:rgb(var(--ws-accent)/.22); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-plugins-chrome>a { background:var(--window-accent); color:var(--window-on-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-projects { background:var(--window-surface); backdrop-filter:none; -webkit-backdrop-filter:none; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-projects button.bg-white { background:var(--window-accent); color:var(--window-on-accent); }
+
+/* Memory: browser-like card headers and a warm archival accent. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-live-hub { --hub-attention:var(--window-warning); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.live-hub-card,.live-hub-saved-card,.memory-review-library,.memory-review-network,.memory-review-details) {
+  background:var(--window-surface); border-color:var(--window-border); border-radius:12px; box-shadow:0 2px 8px #20222506;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.live-hub-card-heading,.live-hub-thumbnail-chrome,.memory-review-library-footer) { background:var(--window-subtle); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .live-hub-card-heading { border-bottom:1px solid var(--window-border); margin-bottom:10px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .live-hub-card[data-status=waiting] { border-color:rgb(var(--window-warning-rgb)/.35); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .live-hub-card[data-status=failed] { border-color:rgb(var(--window-danger-rgb)/.35); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .live-hub-card[data-status=failed] .live-hub-status { color:var(--window-danger); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .live-hub-card[data-status=done] .live-hub-status { color:var(--window-success); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.live-hub-open,.live-hub-filters>button,.live-hub-header>button,.live-hub-empty button,.memory-review-search,.memory-review-graph-tools button) { border-radius:7px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .live-hub-card[data-status=waiting] .live-hub-open { border-color:rgb(var(--window-warning-rgb)/.35); background:rgb(var(--window-warning-rgb)/.08); color:var(--window-warning); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .live-hub-card[data-status=waiting] .live-hub-open:hover { background:rgb(var(--window-warning-rgb)/.14); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .live-hub-question { border-color:rgb(var(--window-warning-rgb)/.4); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .live-hub-question>span { color:var(--window-warning); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .live-hub-question p { color:var(--window-ink); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-search { background:var(--window-subtle); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-item[aria-pressed=true] { background:var(--window-accent-soft); border-color:rgb(var(--ws-accent)/.3); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-open { background:var(--window-accent); color:var(--window-on-accent); border-radius:7px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .memory-review-open:hover { background:color-mix(in srgb,var(--window-accent) 88%,var(--window-ink)); }
+
+/* Map colors belong to geographic data. Only controls and the search/layer
+   inspectors get the neutral window palette and restrained teal accent. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-workspace {
+  --map-surface:var(--window-surface); --map-floating:var(--window-surface);
+  --map-ink:var(--window-ink); --map-dim:var(--window-muted);
+  --map-accent:var(--window-accent); --map-border:var(--window-border);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-workspace :is(.map-surface,.map-search-panel,.map-layer-panel) { border-color:var(--window-border); border-radius:12px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-workspace :is(.map-search-header,.map-layer-panel footer) { background:var(--window-subtle); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-workspace :is(.map-search-panel,.map-layer-panel,.map-control,.map-base-select,.map-coverage,.map-view-state) { backdrop-filter:none; -webkit-backdrop-filter:none; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-workspace :is(.map-control,.map-base-select,.map-place-result,.map-place-categories>button,.map-search-field,.map-layer-search) { border-radius:7px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-search-field>button:last-child { background:var(--window-accent); color:var(--window-on-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.map-layer-row.is-active,.map-control[aria-pressed=true],.map-control[aria-expanded=true]) { background:var(--window-accent-soft); border-color:rgb(var(--ws-accent)/.3); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.is-active .map-layer-check,.map-coverage button) { background:var(--window-accent); border-color:var(--window-accent); color:var(--window-on-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .map-zoom-hint { background:var(--window-accent-soft); }
+
+/* Autopilot is a neutral work canvas. Node type icons keep their existing
+   individual colors; execution status has a separate, readable meaning. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-workspace {
+  --ws-dim:var(--window-muted-rgb);
+  --ap-surface:var(--window-surface); --ap-floating:var(--window-surface); --ap-edge-label:var(--window-surface);
+  border-color:var(--window-border); border-radius:12px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ap-toolbar,.ap-flowbar,.ap-node-heading) { background:var(--window-subtle); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-stage { background-color:rgb(var(--ws-canvas)); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-node { background:var(--window-surface); border-color:var(--window-border); border-radius:10px; box-shadow:0 4px 14px #2022250c; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-node-heading { border-radius:9px 9px 0 0; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-node-icon { background:color-mix(in srgb,var(--node-tint) 12%,var(--window-surface)); color:var(--node-tint); border-radius:8px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-node-actions button { background:var(--window-subtle); border-color:var(--window-border); border-radius:6px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-node-running { border-color:var(--window-accent); box-shadow:0 0 0 3px var(--window-accent-soft); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-node-done { border-color:rgb(var(--window-success-rgb)/.5); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-node-done .ap-node-status { color:var(--window-success); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-node-awaiting { border-color:var(--window-warning); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-node-awaiting .ap-node-status { color:var(--window-warning); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-node-error { border-color:var(--window-danger); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-node-error .ap-node-status { color:var(--window-danger); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ap-approval-actions button:first-child,.ap-empty button:first-of-type,.ap-editor-dialog>header button) { background:var(--window-accent); color:var(--window-on-accent); border-color:var(--window-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-approval { background:rgb(var(--window-warning-rgb)/.06); border-color:rgb(var(--window-warning-rgb)/.25); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-approval-heading>svg { color:var(--window-warning); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ap-template-dialog,.ap-toolbar-menu,.ap-editor-dialog,.ap-rail) { background:var(--window-surface); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-template-grid article { background:var(--window-subtle); border-color:var(--window-border); border-radius:10px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ap-template-grid button { background:var(--window-surface); border-color:rgb(var(--ws-accent)/.3); color:var(--window-accent); }
+
+/* Swarm shares the conversation window's theme, including real Markdown
+   replies. Keep the individual dog portraits and their scene images intact. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-swarm {
+  --swarm-ink:var(--window-ink); --swarm-muted:var(--window-muted);
+  color:var(--window-ink); background:var(--window-surface);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-header,.swarm-compose-dock) { background:var(--window-surface); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-board,.swarm-direct-context,.swarm-sections,.swarm-project-overview) { background:var(--window-subtle); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-heading h2,.swarm-participant-copy strong,.swarm-message-meta strong,.swarm-message-copy p,.swarm-empty-thread strong,.swarm-board-heading h3,.swarm-work-counts dd,.swarm-task h4,.swarm-create-heading h2,.swarm-work-empty strong,.swarm-project-overview strong) { color:var(--window-ink); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-heading small,.swarm-participant-copy>span,.swarm-message-meta time,.swarm-empty-thread,.swarm-pending,.swarm-board-heading>span,.swarm-board-context,.swarm-board-context strong,.swarm-work-counts dt,.swarm-brief,.swarm-task-owner,.swarm-task-details summary,.swarm-task-details p,.swarm-board-context-details summary,.swarm-work-empty,.swarm-create-heading p,.swarm-field,.swarm-members legend,.swarm-task-progress,.swarm-task-length) { color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-project-select,.swarm-icon-button,.swarm-composer,.swarm-work-counts>div,.swarm-add-task-form,.swarm-task,.swarm-member,.swarm-project-overview>nav>button) { color:var(--window-ink); background:var(--window-surface); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-thread-picker>button,.swarm-sections>button) { color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-thread-picker>button[aria-pressed=true],.swarm-sections>button[aria-pressed=true]) { color:var(--window-ink); background:var(--window-surface); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-project-overview>nav>button[aria-current=page],.swarm-message[data-speaker=You] .swarm-message-copy) { color:var(--window-ink); background:var(--window-accent-soft); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-icon-button:hover,.swarm-thread-picker>button:hover,.swarm-task-actions>button:hover) { color:var(--window-ink); background:var(--window-accent-soft); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-participant-stack>button { background:var(--window-surface); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-participant-stack .swarm-agent-face { border-color:var(--window-surface); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-participant-stack>button[aria-pressed=true] { box-shadow:0 0 0 2px var(--window-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-direct-context>button,.swarm-track-message,.swarm-task-add,.swarm-message-markdown a) { color:var(--window-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-field>input,.swarm-field>textarea,.swarm-add-task-form>textarea,.swarm-add-task-form select,.swarm-task-owner>select) { color:var(--window-ink); background:var(--window-subtle); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-composer textarea { color:var(--window-ink); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(input,textarea)::placeholder { color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-task-actions>button,.swarm-add-task-form button) { color:var(--window-accent); background:var(--window-accent-soft); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-send,.swarm-create-submit) { color:var(--window-on-accent); background:var(--window-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-send,.swarm-create-submit,.swarm-add-task-form button):disabled { color:var(--window-muted); background:var(--window-subtle); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-board-context-details,.swarm-work-empty) { border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-task-controls .swarm-task-status { color:var(--window-muted); background:var(--window-subtle); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-task[data-status=running] .swarm-task-status { color:var(--window-accent); background:var(--window-accent-soft); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-task[data-status=waiting] { background:var(--window-surface); border-color:rgb(var(--window-warning-rgb)/.3); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-task[data-status=waiting] .swarm-task-status { color:var(--window-warning); background:rgb(var(--window-warning-rgb)/.1); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-task[data-status=done] .swarm-task-status { color:var(--window-success); background:rgb(var(--window-success-rgb)/.1); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-task[data-status=failed] .swarm-task-status { color:var(--window-danger); background:rgb(var(--window-danger-rgb)/.1); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-task[data-status=cancelled] .swarm-task-status { color:var(--window-muted); background:var(--window-subtle); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-work-counts>[data-status=waiting] dd { color:var(--window-warning); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-work-counts>[data-status=done] dd { color:var(--window-success); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(.swarm-error,.swarm-task-error,.swarm-task-length[role=alert]) { color:var(--window-danger); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-task-progress>progress { accent-color:var(--window-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm :is(button,input,select,textarea,summary):focus-visible { outline-color:var(--window-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-composer:focus-within { outline-color:var(--window-accent); border-color:var(--window-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-message-markdown pre { color:var(--window-ink); background:var(--window-subtle); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-swarm .swarm-message-markdown pre button { color:var(--window-ink); background:var(--window-surface); }

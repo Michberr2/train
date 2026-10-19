@@ -36,6 +36,19 @@ function fixture(replies = []) {
 const plan = action => JSON.stringify({ action, deliverable: 'A complete recommendation', ...(action === 'research' ? { query: 'public energy efficiency evidence' } : {}) })
 const review = content => JSON.stringify({ status: 'done', content })
 try {
+  await check('each teammate receives their own identity and instructions against impersonating others', async () => {
+    for (const speaker of ['Nalu', 'Rocky', 'Milo']) {
+      const f = fixture([`${speaker} contribution.`])
+      const result = await executeSwarmWork({ ...base, speaker })
+      assert.equal(result.content, `${speaker} contribution.`)
+      const identity = f.calls[0].messages[0]
+      assert.equal(identity.role, 'system')
+      assert.ok(identity.content.startsWith(`You are ${speaker}, a collaborator in Nalu Swarm.`))
+      assert.match(identity.content, /Respond as yourself, not as the other agents/)
+      assert.match(identity.content, /Do not invent another agent's actions/)
+      assert.equal(f.calls.length, 1)
+    }
+  })
   await check('reply uses only supplied context, finite provider options and outward answer', async () => {
     const f = fixture(['<think>Do not expose this.</think>Here is the next step.'])
     globalThis.unrelatedAccountMemory = 'PRIVATE_OTHER_PROJECT_SENTINEL'

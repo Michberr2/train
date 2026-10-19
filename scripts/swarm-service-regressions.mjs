@@ -24,6 +24,37 @@ const other = empty(); change(other, projectRequest, 1000, 'owner-b')
 assert.notEqual(other.state.projects[0].id, projectId)
 assert.throws(() => change(other, { action: 'send', projectId, thread: 'group', requestId: 'foreign-0001', content: 'no' }), /not found/)
 
+// Ordinary group messages belong to the whole team; explicit handles narrow
+// recipients without making emails/longer handles into accidental mentions.
+for (const [content, speakers] of [
+  ['What should we do next?', ['Nalu', 'Rocky', 'Milo']],
+  ['@rocky, what would you change?', ['Rocky']],
+  ['(@MILO) and @Rocky: compare these. @milo', ['Rocky', 'Milo']],
+  ['@Nalu review team@Rocky.example, @Milo2, @Rocky_note, and @Miloñ.', ['Nalu']],
+]) {
+  const snapshot = empty(); change(snapshot, projectRequest)
+  const action = { action: 'send', projectId, thread: 'group', requestId: 'routing-00001', content }
+  change(snapshot, action)
+  assert.deepEqual(snapshot.jobs.map(job => job.speaker), speakers, content)
+  assert.deepEqual(snapshot.state.turns.map(turn => turn.replySpeaker), speakers)
+  assert.equal(new Set(snapshot.jobs.map(job => job.id)).size, speakers.length)
+  change(snapshot, action)
+  assert.equal(snapshot.jobs.length, speakers.length, 'repeated acceptance creates no extra jobs')
+  assert.equal(snapshot.state.messages.length, 1, 'repeated acceptance creates no extra user message')
+}
+{
+  const snapshot = empty(); change(snapshot, projectRequest)
+  snapshot.state.projects[0].members = ['Rocky', 'Milo']
+  change(snapshot, { action: 'send', projectId, thread: 'group', requestId: 'members-00001', content: 'Discuss the plan.' })
+  assert.deepEqual(snapshot.jobs.map(job => job.speaker), ['Rocky', 'Milo'], 'use this project’s membership')
+}
+for (const thread of ['Nalu', 'Rocky', 'Milo']) {
+  const snapshot = empty(); change(snapshot, projectRequest)
+  change(snapshot, { action: 'send', projectId, thread, requestId: 'private-route-001', content: '@Nalu @Rocky @Milo: keep this in our private branch.' })
+  assert.deepEqual(snapshot.jobs.map(job => job.speaker), [thread], 'mentions cannot share or redirect a private branch')
+  assert.deepEqual(snapshot.state.turns.map(turn => turn.thread), [thread])
+}
+
 const send = (requestId, thread, content, now = 1100) => change(state, { action: 'send', projectId, requestId, thread, content }, now)
 send('group-00001', 'group', '@Nalu @Rocky @Milo discuss the launch')
 assert.equal(state.jobs.length, 3)

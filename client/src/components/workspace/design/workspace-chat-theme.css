@@ -1,0 +1,123 @@
+/* Shared conversation paper and browser chrome. These rules do not reach
+   into generated artifacts, iframe documents, or the surrounding desktop. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-popover,.workspace-chat-inline) {
+  color:var(--window-ink);
+  background:var(--window-surface);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-chat-popover {
+  border-color:var(--window-border);
+  box-shadow:0 24px 72px #18181b26,0 4px 16px #18181b12;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-window-bar,.workspace-chat-quick-tabs,.workspace-chat-history) {
+  background:var(--window-subtle);
+  border-color:var(--window-border);
+  color:var(--window-ink);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-popover-body,.workspace-chat-tools,.ws-chat-thread,.ws-chat-composer-dock) {
+  background:var(--window-surface);
+  border-color:var(--window-border);
+  color:var(--window-ink);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) :is(.ws-chat-welcome,.ws-chat-welcome>h1,.review-welcome-logo,.review-assistant-logo,.ws-assistant-identity) {
+  color:var(--window-ink);
+  text-shadow:none;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) :is(.ws-chat-welcome>p,.ws-chat-welcome>.ws-eyebrow,.ws-assistant-identity small) { color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) .ws-composer {
+  background:var(--window-surface);
+  border:1px solid var(--window-border);
+  border-radius:18px;
+  color:var(--window-ink);
+  box-shadow:0 3px 16px #18181b08;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) .ws-composer:focus-within {
+  outline:2px solid var(--window-accent);
+  outline-offset:2px;
+  border-color:var(--window-accent);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) .ws-composer textarea {
+  color:var(--window-ink);
+  background:transparent;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) .ws-composer textarea::placeholder { color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) .ws-composer button:is([aria-label=Send],[aria-label=Stop]) {
+  color:var(--window-on-accent);
+  background:var(--window-accent);
+  border:0;
+  border-radius:50%;
+  box-shadow:none;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) .ws-composer button[aria-label=Send]:hover:not(:disabled) { color:var(--window-on-accent); background:var(--window-accent); filter:brightness(.9); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) .ws-composer button[aria-label=Send]:disabled { background:var(--window-subtle); color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) .ws-chat-suggestions>button {
+  background:var(--window-subtle);
+  border:1px solid var(--window-border);
+  border-radius:12px;
+  color:var(--window-ink);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) .ws-chat-suggestions>button:hover { background:var(--window-accent-soft); border-color:var(--window-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) .ws-chat-suggestions small { color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) .ws-user-message {
+  color:var(--window-ink);
+  background:var(--window-subtle);
+  border:1px solid var(--window-border);
+  border-radius:16px 16px 5px 16px;
+  box-shadow:none;
+}
+/* Keep long answers comfortable to read, with one transcript scrollbar. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) .ws-chat-thread>div { max-width:860px; margin-inline:auto; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-answer-content .markdown-body { font-size:14px; line-height:1.7; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-answer-content :is(h1,h2,h3,h4) { color:var(--window-ink); letter-spacing:-.02em; text-transform:none; font-weight:550; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-answer-content h1 { font-size:23px; border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-answer-content h2 { font-size:19px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-answer-content h3 { font-size:16px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-answer-content a { color:var(--window-accent); text-decoration-color:currentColor; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-answer-content a:hover { text-decoration-thickness:2px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-answer-content pre {
+  background:var(--window-subtle);
+  color:var(--window-ink);
+  border-color:var(--window-border);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .ws-answer-content pre>button { background:var(--window-surface); color:var(--window-muted); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-window-title h2,.workspace-chat-history-heading h3,.workspace-chat-swarm-history h3) { color:var(--window-ink); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-window-title>span,.workspace-chat-quick-tab-detail,.workspace-chat-history-heading>span,.workspace-chat-history-list>p,.workspace-chat-new-menu span,.workspace-chat-jump span,.workspace-chat-jump p,.workspace-chat-jump>footer,.workspace-chat-agent-threads>small,.workspace-chat-swarm-history>div>button>span) { color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-history-toggle,.workspace-chat-jump-button,.workspace-chat-quick-tab-close,.workspace-chat-new,.workspace-chat-agent-threads>button,.workspace-chat-swarm-history>header button) { color:var(--window-muted); background:transparent; border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-history-toggle,.workspace-chat-jump-button,.workspace-chat-quick-tab-close,.workspace-chat-new,.workspace-chat-agent-threads>button):hover { color:var(--window-ink); background:var(--window-accent-soft); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-new-menu,.workspace-chat-jump) { color:var(--window-ink); background:var(--window-surface); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-new-menu>button,.workspace-chat-jump>div>button,.workspace-chat-swarm-history>div>button) { color:var(--window-ink); background:transparent; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-new-menu>button,.workspace-chat-jump>div>button):hover { background:var(--window-subtle); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-chat-jump :is(header,footer) { border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-chat-jump input { color:var(--window-ink); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-chat-jump input::placeholder { color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-chat-jump>header>button { color:var(--window-muted); background:var(--window-subtle); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-quick-tabs>button,.workspace-chat-quick-tab) { color:var(--window-muted); background:var(--window-subtle); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-quick-tabs>button[aria-pressed=true],.workspace-chat-quick-tab[data-active=true],.workspace-chat-swarm-history button[aria-current=page]) { background:var(--window-surface); color:var(--window-ink); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-quick-tabs>button,.workspace-chat-quick-tab):hover { color:var(--window-ink); background:var(--window-accent-soft); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-chat-quick-tabs { scrollbar-color:var(--window-border) transparent; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-chat-quick-tabs::-webkit-scrollbar-thumb { background:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-sidebar-search>div,.workspace-chat-history-search) { background:var(--window-subtle); border:1px solid var(--window-border); color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-sidebar-search input,.workspace-chat-history-search>input,.workspace-chat-history-list>[data-chat-id]>form>input) { color:var(--window-ink); background:transparent; border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-sidebar-search input,.workspace-chat-history-search>input)::placeholder { color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-sidebar-history,.workspace-chat-history-list) [data-chat-id] { color:var(--window-ink); background:transparent; border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-chat-history-list>[data-chat-id]>:is(div,form) { color:var(--window-ink); background:transparent; border-color:transparent; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.ws-sidebar-history,.workspace-chat-history-list) [data-active=true]>div { color:var(--window-ink); background:var(--window-accent-soft); border-color:var(--window-border); box-shadow:none; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-chat-history-list>[data-chat-id]>div:hover { background:var(--window-accent-soft); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-chat-history-list>[data-chat-id]>:is(div,form)>button:not([data-chat-history-select]) { color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-chat-history-list>[data-chat-id]>:is(div,form)>button:not([data-chat-history-select]):hover { color:var(--window-ink); background:var(--window-accent-soft); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .review-chat-detached { color:var(--window-ink); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .review-chat-detached>svg { color:var(--window-accent); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .review-chat-detached p { color:var(--window-muted); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .review-chat-detached button { color:var(--window-ink); background:var(--window-subtle); border-color:var(--window-border); }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) button:focus-visible { outline:2px solid var(--window-accent); outline-offset:3px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .swarm-pending { display:flex; align-items:center; gap:8px; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) .think-badge {
+  color:var(--window-accent)!important;
+  border-color:var(--window-accent)!important;
+  background:var(--window-accent-soft);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-tools,.ws-topbar,.ws-chat-message) button:is([class~="text-emerald-100"],[class~="text-emerald-200"],[class~="text-emerald-300"],[class~="text-emerald-400"]) { color:var(--window-success); }
+/* Source panes and the authored legacy brand cover retain their own dark
+   backing when an artifact is opened from chat or Swarm. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) pre[class~="text-[#9fd0ff]"] { background:#202329; color:#b8d9fa; border-color:#42474e; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) [class~="from-[#15121f]"] { --ws-ink:248 251 255; --ws-dim:218 232 247; --ws-canvas:26 45 67; }
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-chat-inline,.workspace-chat-popover) p[role=alert][class~="text-red-400"] { color:var(--window-danger); }

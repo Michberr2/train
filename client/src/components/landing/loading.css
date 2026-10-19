@@ -26,12 +26,10 @@
 .nalu-opening .nalu-mark-outline { stroke-dasharray: 1; animation: nalu-logo-arrive 1.35s ease both; }
 .nalu-opening-wordmark { font-size: 31px; letter-spacing: -.06em; line-height: 1; }
 .nalu-opening-caption { margin-top: 24px; font-size: 10px; letter-spacing: .24em; text-transform: uppercase; }
-.nalu-opening-track { width: 112px; height: 1px; margin-top: 30px; background: currentColor; opacity: .35; overflow: hidden; }
-.nalu-opening-track span { display: block; width: 100%; height: 100%; background: var(--opening-ink); animation: nalu-opening-progress 1.7s ease-in-out infinite; }
+.nalu-opening-status { display:flex; align-items:center; gap:16px; margin-top:30px; padding:10px 16px 10px 20px; border:1px solid #ffffffbd; border-radius:999px; color:#30343b; background:#fffffff2; box-shadow:0 6px 24px #152c3521; font-size:13px; font-weight:400; letter-spacing:-.015em; }
 .nalu-opening-skip { position: absolute; bottom: 34px; right: 36px; min-height: 44px; padding: 0 10px; font-size: 12px; opacity: .7; }
 .nalu-opening-skip:hover { opacity: 1; }
 @keyframes nalu-logo-arrive { 0% { stroke-dashoffset: 1; fill-opacity: 0; } 65% { fill-opacity: 0; } 100% { stroke-dashoffset: 0; fill-opacity: 1; } }
-@keyframes nalu-opening-progress { 0% { transform: translateX(-100%); } 60%, 100% { transform: translateX(100%); } }
 @media (prefers-reduced-motion: reduce) {
-  .nalu-opening .nalu-mark-outline, .nalu-opening-track span { animation: none; }
+  .nalu-opening .nalu-mark-outline { animation: none; }
 }

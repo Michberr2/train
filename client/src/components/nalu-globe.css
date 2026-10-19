@@ -1,0 +1,14 @@
+.nalu-globe { display:inline-block; flex:none; vertical-align:middle; color:inherit; }
+.nalu-media-loader {
+  display:flex; align-items:center; gap:14px;
+  width:fit-content; max-width:100%; margin:8px 0; padding:14px 18px;
+  border:1px solid var(--window-border,rgb(var(--ws-glass)/.18)); border-radius:16px;
+  background:var(--window-surface,rgb(var(--ws-panel)));
+  color:var(--window-ink,rgb(var(--ws-ink)));
+  box-shadow:0 3px 12px rgb(20 24 30/.04);
+}
+.nalu-media-loader-copy { display:flex; min-width:0; flex-direction:column; gap:4px; }
+.nalu-media-loader-title { font-size:13px; font-weight:400; line-height:1.4; }
+.nalu-media-loader-elapsed { color:var(--window-muted,rgb(var(--ws-dim))); font-size:11px; font-variant-numeric:tabular-nums; }
+.nalu-answer-wait { display:flex; align-items:center; gap:9px; padding:4px 0; color:var(--window-muted,rgb(var(--ws-dim))); font-size:13px; }
+.ws-assistant-identity>.nalu-globe { margin-left:4px; color:var(--window-muted,rgb(var(--ws-dim))); }

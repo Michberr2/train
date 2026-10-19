@@ -1,0 +1,171 @@
+/* Studio window chrome uses the workspace's neutral surfaces. Keep all color
+   choices inside generated documents, images, canvases and iframes intact. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] {
+  --studio-words-accent:49 99 141;
+  --studio-spaces-accent:39 111 88;
+  --studio-motion-accent:151 83 51;
+  --studio-success-ink:#246b4d;
+  --studio-error-ink:#ab3544;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-workspace-theme=dark] [data-studio-design-preview] {
+  --studio-words-accent:151 190 222;
+  --studio-spaces-accent:135 201 172;
+  --studio-motion-accent:232 177 140;
+  --studio-success-ink:#9bdbb9;
+  --studio-error-ink:#f4a8b0;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .ws-studio-toolbar {
+  border-color:var(--window-border);
+  background:transparent;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .review-studio-toolbox {
+  background:transparent;
+  border-color:var(--window-border);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .review-studio-toolbox section {
+  --studio-tool-accent:var(--ws-accent);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .review-studio-toolbox section:nth-of-type(2) {
+  --studio-tool-accent:var(--studio-words-accent);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .review-studio-toolbox section:nth-of-type(3) {
+  --studio-tool-accent:var(--studio-spaces-accent);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .review-studio-toolbox section:nth-of-type(4) {
+  --studio-tool-accent:var(--studio-motion-accent);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .review-studio-toolbox button {
+  border-radius:7px;
+  color:var(--window-ink);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .review-studio-toolbox button svg {
+  color:rgb(var(--studio-tool-accent));
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .review-studio-toolbox button:hover {
+  color:var(--window-ink);
+  background:var(--window-subtle);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .review-studio-toolbox button[aria-pressed=true] {
+  color:rgb(var(--studio-tool-accent));
+  background:rgb(var(--studio-tool-accent)/.1);
+  border-color:rgb(var(--studio-tool-accent)/.3);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] :is(.ws-studio-preview,.ws-studio-brief) {
+  border:1px solid var(--window-border);
+  border-radius:9px;
+  background:var(--window-surface);
+  box-shadow:0 2px 8px rgb(20 24 30/.035);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .ws-studio-preview>div:first-child {
+  background:linear-gradient(180deg,var(--window-surface),var(--window-subtle));
+  border-color:var(--window-border);
+  color:var(--window-ink);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .ws-studio-preview-body {
+  background-color:var(--window-subtle);
+  background-image:radial-gradient(rgb(var(--ws-glass)/.12) .65px,transparent .65px);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .ws-studio-result {
+  background:var(--window-surface);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] :is(.ws-studio-tools select,.ws-style-select select) {
+  color:var(--window-ink);
+  background:var(--window-surface);
+  border-color:var(--window-border);
+  border-radius:7px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .ws-studio-brief textarea {
+  color:var(--window-ink);
+  background:var(--window-subtle);
+  border:1px solid var(--window-border);
+  border-radius:7px;
+  padding:8px 10px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .ws-studio-brief textarea::placeholder {
+  color:var(--window-muted);
+  opacity:1;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .ws-studio-brief>div:last-child {
+  background:var(--window-surface);
+  border-color:var(--window-border);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] :is(.ws-studio-brief button.bg-gradient-to-r,.website-starter-primary) {
+  background:var(--window-accent);
+  color:var(--window-on-accent);
+  border:1px solid transparent;
+  border-radius:7px;
+  box-shadow:none;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] :is(.ws-idea-pill,.review-studio-recent button,.review-library-filters button,.studio-starter-play) {
+  background:var(--window-surface);
+  color:var(--window-ink);
+  border-color:var(--window-border);
+  border-radius:7px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] :is(.ws-idea-pill,.review-studio-recent button,.review-library-filters button,.studio-starter-play):hover {
+  background:var(--window-accent-soft);
+  border-color:rgb(var(--ws-accent)/.4);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] :is(.review-library-filters button[aria-pressed=true],.website-starter-directions button[aria-pressed=true]) {
+  background:var(--window-accent-soft);
+  color:var(--window-accent);
+  border-color:rgb(var(--ws-accent)/.4);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] :is(.review-studio-recent,.review-library-controls>label,.review-library-grid>button,.review-library-grid>button>div:last-child) {
+  border-color:var(--window-border);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] :is(.review-library-controls>label,.review-library-grid>button>div:last-child) {
+  background:var(--window-surface);
+  color:var(--window-ink);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .review-library-controls>label:focus-within {
+  border-color:var(--window-accent);
+  outline:2px solid rgb(var(--ws-accent)/.22);
+  outline-offset:2px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] :is(.ws-studio-toolbar,.review-studio-toolbox,.ws-studio-brief,.review-library-filters,.review-studio-recent) :is(button,select,textarea):focus-visible,
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .ws-idea-pill:focus-visible {
+  outline:2px solid var(--window-accent);
+  outline-offset:2px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview]>.ws-studio-layout~[role=dialog]>div:first-of-type {
+  background:var(--window-subtle);
+  border-color:var(--window-border);
+}
+
+/* Saved cards keep their own content. Only their top action row adapts to the
+   window; for example, pale export-button labels need darker ink on paper. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .ws-studio-result>div>div:first-child button,
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview]>[role=dialog]>div:last-child>div>div>div:first-child button {
+  color:var(--window-ink);
+}
+
+/* These are existing source-code panes, not the generated page itself. Their
+   light syntax text keeps a dark backing when the surrounding window is light. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] pre[class~="text-[#9fd0ff]"] {
+  background:#202329;
+  color:#b8d9fa;
+  border-color:#42474e;
+}
+/* The legacy structured brand cover was designed on a dark gradient. Preserve
+   its original contrast locally without changing the brand's supplied colors. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] [class~="from-[#15121f]"] {
+  --ws-ink:248 251 255;
+  --ws-dim:218 232 247;
+  --ws-canvas:26 45 67;
+}
+/* These explicit classes belong to the application's save/status controls,
+   rather than arbitrary colors chosen in generated artwork. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] button:is([class~="text-emerald-100"],[class~="text-emerald-200"]) {
+  color:var(--studio-success-ink);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] :is(p,span)[class~="text-red-300"],
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] p[role=alert][class~="text-red-400"] {
+  color:var(--studio-error-ink);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] [data-studio-result-kind=brand] section [class~="text-emerald-300"] {
+  color:var(--studio-success-ink);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] [data-studio-result-kind=brand] section [class~="text-rose-300"] {
+  color:var(--studio-error-ink);
+}

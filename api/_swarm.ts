@@ -126,8 +126,11 @@ function applyAction(snapshot: SwarmSnapshot, owner: string, body: Record<string
       return
     }
     if (state.turns.some(turn => turn.projectId === project.id && turn.thread === thread && turn.status === 'pending')) throw new SwarmError('Wait for this reply or stop it before sending another message.', 409)
-    const mentioned = project.members.filter(agent => new RegExp(`@${agent}\\b`, 'i').test(content))
-    const speakers: SwarmAgentId[] = thread === 'group' ? mentioned.length ? mentioned : ['Nalu'] : [thread]
+    // Group messages invite the whole project team unless explicitly addressed.
+    // Match complete handles, not an email address or a longer name.
+    const members = [...new Set(project.members)]
+    const mentioned = members.filter(agent => new RegExp(`(?:^|[^\\p{L}\\p{N}_@])@${agent}(?![\\p{L}\\p{N}_])`, 'iu').test(content))
+    const speakers: SwarmAgentId[] = thread === 'group' ? mentioned.length ? mentioned : members : [thread]
     capacity(snapshot, speakers.length)
     state.messages.push({ id: messageId, projectId: project.id, thread, speaker: 'You', content, createdAt: now })
     for (const speaker of speakers) {
