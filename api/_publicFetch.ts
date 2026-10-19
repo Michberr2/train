@@ -69,8 +69,10 @@ export async function publicFetch(value: string, options: PublicFetchOptions = {
         const selected = addresses.find(item => item.family === 4) || addresses[0]
         const response = await new Promise<Response>((resolve, reject) => {
           const request = url.protocol === 'https:' ? httpsRequest : httpRequest
+          const requestHeaders: Record<string, string> = {}
+          headers.forEach((value, key) => { requestHeaders[key] = value })
           const req = request(url, {
-            method, headers: Object.fromEntries(headers), signal,
+            method, headers: requestHeaders, signal,
             lookup: (_hostname, lookupOptions: any, done: any) => lookupOptions.all ? done(null, [selected]) : done(null, selected.address, selected.family),
           }, incoming => {
             try {
@@ -85,7 +87,7 @@ export async function publicFetch(value: string, options: PublicFetchOptions = {
             }
             const finish = (body: Uint8Array | null) => {
               try {
-                const result = new Response(body, { status, statusText: incoming.statusMessage || '', headers: responseHeaders })
+                const result = new Response(body ? Buffer.from(body) : null, { status, statusText: incoming.statusMessage || '', headers: responseHeaders })
                 Object.defineProperty(result, 'url', { value: url.href })
                 resolve(result)
               } catch (error) { incoming.destroy(); reject(error) }
@@ -130,7 +132,9 @@ export async function publicFetch(value: string, options: PublicFetchOptions = {
         if (!location) throw new PublicUrlError('The source redirected without a destination.')
         const next = publicHttpUrl(new URL(location, url).href)
         if (next.origin !== url.origin) {
-          for (const key of [...headers.keys()]) if (!['accept', 'accept-language', 'accept-encoding', 'user-agent'].includes(key)) headers.delete(key)
+          const removable: string[] = []
+          headers.forEach((_value, key) => { if (!['accept', 'accept-language', 'accept-encoding', 'user-agent'].includes(key)) removable.push(key) })
+          for (const key of removable) headers.delete(key)
         }
         if (url.protocol === 'https:' && next.protocol !== 'https:') throw new PublicUrlError('An HTTPS source cannot redirect to an insecure connection.')
         url = next

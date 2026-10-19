@@ -24,9 +24,9 @@ function matchesSchema(value: unknown, schema: any, depth = 0): boolean {
     if (schema.items && !value.every(item => matchesSchema(item, schema.items, depth + 1))) return false
   } else if (value && typeof value === 'object') {
     const record = value as Record<string, unknown>
-    if (Array.isArray(schema.required) && !schema.required.every((key: string) => Object.hasOwn(record, key))) return false
+    if (Array.isArray(schema.required) && !schema.required.every((key: string) => Object.prototype.hasOwnProperty.call(record, key))) return false
     for (const [key, item] of Object.entries(record)) {
-      if (Object.hasOwn(schema.properties || {}, key)) { if (!matchesSchema(item, schema.properties[key], depth + 1)) return false }
+      if (Object.prototype.hasOwnProperty.call(schema.properties || {}, key)) { if (!matchesSchema(item, schema.properties[key], depth + 1)) return false }
       else if (schema.additionalProperties === false || typeof schema.additionalProperties === 'object' && !matchesSchema(item, schema.additionalProperties, depth + 1)) return false
     }
   }
