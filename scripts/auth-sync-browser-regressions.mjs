@@ -56,6 +56,24 @@ async function signin(page, account) {
   await form.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.getByLabel('Current user')).toHaveText(account)
 }
+// The redesigned workspace exposes account actions in its header and saved
+// chats in the expandable Nalu window. Exercise those real controls; the old
+// sidebar remains mounted but is intentionally not visible in this layout.
+async function workspaceAccount(page, account) {
+  await page.getByRole('button', { name: 'Account options', exact: true }).click()
+  const panel = page.getByRole('dialog', { name: `User ${account}`, exact: true })
+  await expect(panel.getByRole('heading', { name: `User ${account}`, exact: true })).toBeVisible({ timeout: 30000 })
+  return panel
+}
+async function openSavedChat(page, account) {
+  await page.getByRole('button', { name: 'Open Nalu chat', exact: true }).click()
+  const panel = page.getByRole('dialog', { name: 'Nalu chat', exact: true })
+  await panel.getByRole('button', { name: 'Expand Nalu chat', exact: true }).click()
+  const history = panel.getByRole('navigation', { name: 'Chat history', exact: true })
+  await expect(history).toBeVisible()
+  await history.getByRole('button', { name: account, exact: true }).click()
+  return panel
+}
 try {
   await server.listen(); base = `http://127.0.0.1:${server.httpServer.address().port}`
   browser = await chromium.launch()
@@ -197,17 +215,20 @@ try {
     const s = await setup('A')
     await expect(s.current).toHaveText('A')
     await s.page.goto(base)
-    await expect(s.page.getByText('User A', { exact: true })).toBeVisible({ timeout: 30000 })
-    await s.page.getByText('A', { exact: true }).first().click()
+    await workspaceAccount(s.page, 'A')
+    await s.page.keyboard.press('Escape')
+    const aChat = await openSavedChat(s.page, 'A')
     await expect(s.page.getByText('Private A', { exact: true })).toBeVisible()
-    await s.page.getByRole('button', { name: 'Sign out', exact: true }).click()
+    await aChat.getByRole('button', { name: 'Close Nalu chat', exact: true }).click()
+    await (await workspaceAccount(s.page, 'A')).getByRole('button', { name: 'Sign out', exact: true }).click()
     await s.page.getByRole('button', { name: 'Sign in', exact: true }).click()
     const form = s.page.locator('form')
     await form.getByPlaceholder('Email or username').fill('B')
     await form.getByPlaceholder('Password', { exact: true }).fill('fixture-password')
     await form.getByRole('button', { name: 'Sign in', exact: true }).click()
-    await expect(s.page.getByText('User B', { exact: true })).toBeVisible()
-    await s.page.getByText('B', { exact: true }).first().click()
+    await workspaceAccount(s.page, 'B')
+    await s.page.keyboard.press('Escape')
+    await openSavedChat(s.page, 'B')
     await expect(s.page.getByText('Private B', { exact: true })).toBeVisible()
     await expect(s.page.getByText('Private A', { exact: true })).toHaveCount(0)
     await s.page.waitForTimeout(1200)
@@ -216,6 +237,9 @@ try {
     assert.ok(bWrites.every(c => JSON.parse(c.entries['nalu-chats']).every(chat => chat.id === 'B')), 'Old unmount/debounce must not write A’s chat as B')
     await s.page.screenshot({ path: `${output}/workspace-account-b.png` })
     await s.page.reload()
+    // Popover visibility is transient; reopening must restore the selected B
+    // conversation without choosing it from history or restoring fixture data.
+    await s.page.getByRole('button', { name: 'Open Nalu chat', exact: true }).click()
     await expect(s.page.getByText('Private B', { exact: true })).toBeVisible({ timeout: 30000 })
     await expect(s.page.getByText('Private A', { exact: true })).toHaveCount(0)
     assert.deepEqual(s.errors, [])

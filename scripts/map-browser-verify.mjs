@@ -190,7 +190,7 @@ try {
   if (comparisonCheck) {
     const input = page.getByRole('textbox', { name: 'Map search', exact: true })
     await input.fill('compare Orlando and Tampa'); await input.press('Enter')
-    const table = page.locator('.map-comparison')
+    const table = page.getByRole('table').filter({ has: page.getByRole('columnheader', { name: 'Median rent', exact: true }) })
     await expect(table.getByText('$1,700 per month', { exact: true })).toBeVisible()
     await expect(table.getByText('Not available', { exact: true })).toHaveCount(3)
     await expect(table.getByRole('link', { name: 'Source', exact: true })).toHaveAttribute('href', 'https://example.org/survey')

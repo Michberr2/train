@@ -65,7 +65,7 @@ try {
       if (options.missingRoute && url.pathname === '/api/design') return response('<html>Not found</html>', 404, 'text/html')
       if (options.spaFallback && url.pathname === '/api/design') return response('<html>App fallback</html>', 200, 'text/html')
       if (options.route500 && url.pathname === '/api/design') return response({ error: 'failed' }, 500)
-      return response({ error: 'Expected fixture response' }, ['artifacts', 'task-attachments', 'studio-image'].includes(url.pathname.split('/').pop()) ? 401 : 405)
+      return response({ error: 'Expected fixture response' }, ['artifacts', 'task-attachments', 'studio-image', 'swarm-cron'].includes(url.pathname.split('/').pop()) ? 401 : 405)
     }
     return { calls, logs, aliases, run, fetchImpl, readToken: async () => 'synthetic-token-never-sent' }
   }

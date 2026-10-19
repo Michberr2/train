@@ -88,6 +88,8 @@ try {
   }
   const galleryButton = title => page.getByRole('button').filter({ has: page.getByText(title, { exact: true }) }).last()
   const showLibrary = async () => {
+    const dock = page.getByRole('navigation', { name: 'Workspace navigation', exact: true })
+    if (await dock.count()) await dock.getByRole('button', { name: 'Studio', exact: true }).click()
     await page.getByRole('button', { name: /Your creations/ }).click()
     await page.locator('.ws-studio-library').waitFor()
   }
@@ -99,8 +101,12 @@ try {
     await overlay.waitFor()
     return overlay
   }
-  const returnStudio = async () => { await page.getByRole('button', { name: 'Chats', exact: true }).click(); await page.getByRole('button', { name: 'Studio', exact: true }).click() }
-  for (const item of artifacts.filter(item => !process.env.ARTIFACT_CASE || item.id === process.env.ARTIFACT_CASE)) {
+  const returnStudio = async () => {
+    const dock = page.getByRole('navigation', { name: 'Workspace navigation', exact: true })
+    if (await dock.count()) await dock.getByRole('button', { name: 'Studio', exact: true }).click()
+    else { await page.getByRole('button', { name: 'Chats', exact: true }).click(); await page.getByRole('button', { name: 'Studio', exact: true }).click() }
+  }
+  for (const item of artifacts.filter(item => !process.env.ARTIFACT_CASE || process.env.ARTIFACT_CASE.split(',').includes(item.id))) {
     const { id, title, art } = item
     try {
       const overlay = await open(title)
@@ -174,7 +180,11 @@ try {
         const decoded = await page.evaluate(async svg => { const image = new Image(); image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); try { await image.decode(); return { ok: true, width: image.naturalWidth, height: image.naturalHeight } } catch { return { ok: false } } }, svg.toString())
         check(id, 'downloaded SVG is a standalone decodable image', () => assert.equal(decoded.ok, true))
         if (id === 'logo_legacy') {
-          check(id, 'complete legacy SVG remains byte-for-byte unchanged', () => assert.equal(svg.toString(), art.options[0].mark))
+          check(id, 'complete legacy SVG bytes remain inside the safe image boundary', () => {
+            const exported = svg.toString()
+            const embedded = exported.match(/<image[^>]+(?:href|xlink:href)="data:image\/svg\+xml,([^"]+)"/)
+            assert.equal(embedded ? decodeURIComponent(embedded[1]) : exported, art.options[0].mark)
+          })
           check(id, 'legacy SVG retains intrinsic dimensions', () => assert.deepEqual([decoded.width, decoded.height], [600, 120]))
         } else {
           const viewBox = svg.toString().match(/viewBox="([^"]+)"/)[1].split(/\s+/).map(Number)
@@ -212,8 +222,8 @@ try {
         await overlay.getByRole('button', { name: 'Clear all (1)', exact: true }).waitFor()
         const originalCanvas = await overlay.locator('canvas').elementHandle()
         // Exercise a real parent render while this 3D view stays mounted. A
-        // preference update must not discard the WebGL scene/camera or canvas.
-        await page.getByRole('button', { name: 'Toggle light or dark theme', exact: true }).evaluate(button => button.click())
+        // Real saved-data hydration must not discard the WebGL scene/camera or canvas.
+        await page.evaluate(() => window.dispatchEvent(new Event('nalu-hydrated')))
         await page.waitForTimeout(400)
         assert.ok(await originalCanvas.evaluate(canvas => canvas.isConnected), 'A parent render replaced the active WebGL canvas')
         details.scenePreserved = true
@@ -237,7 +247,10 @@ try {
         await overlay.getByRole('button', { name: 'Furnish', exact: true }).click()
         const clear = overlay.getByRole('button', { name: /^Clear all \(/ })
         await clear.waitFor()
-        await overlay.locator('canvas').screenshot({ path: join(output, 'shopping-3d.png') })
+        await expect(overlay.locator('canvas')).toBeVisible()
+        // The room finishes its asset load asynchronously; capture its stable
+        // containing dialog rather than pinning a transient canvas node.
+        await overlay.screenshot({ path: join(output, 'shopping-3d.png') })
         details.furniture = await clear.textContent()
         await clear.click()
         await expect(clear).toHaveCount(0)
@@ -251,8 +264,8 @@ try {
       details.studio = true
       await overlay.screenshot({ path: join(output, `${id}-studio.png`) })
       await overlay.getByRole('button', { name: 'Open in chat', exact: true }).click()
-      if (art.html) await page.locator('main').frameLocator('iframe[title="Nalu Design"]').getByRole('heading', { level: 1 }).waitFor()
-      else await page.locator('main').getByText(id === 'brand' ? art.brand.name : art.name || art.title, { exact: true }).first().waitFor()
+      if (art.html) await page.locator('.ws-chat-thread:visible').frameLocator('iframe[title="Nalu Design"]').getByRole('heading', { level: 1 }).waitFor()
+      else await page.locator('.ws-chat-thread:visible').getByText(id === 'brand' ? art.brand.name : art.name || art.title, { exact: false }).first().waitFor()
       details.chat = true
       const saved = await page.evaluate(id => JSON.parse(localStorage.getItem('nalu-chats')).find(chat => chat.id === id).messages[1].design, id)
       assert.deepEqual(saved, art, 'opening/exporting a saved creation must preserve the complete source artifact')

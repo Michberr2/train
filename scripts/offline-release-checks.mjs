@@ -38,15 +38,43 @@ const scripts = [
   'chrome-action-regressions.mjs',
   'chrome-content-regressions.mjs',
   'studio-cancellation-regressions.mjs',
+  'video-cancellation-regressions.mjs',
   'studio-runtime-regressions.mjs',
+  'swarm-store-regressions.mjs',
+  'swarm-service-regressions.mjs',
+  'swarm-route-regressions.mjs',
+  'swarm-scheduler-regressions.mjs',
+  'swarm-cloudflare-contract-regressions.mjs',
+  'swarm-execution-regressions.mjs',
+  'swarm-generation-regressions.mjs',
+  'swarm-studio-regressions.mjs',
+  'swarm-studio-hooks-regressions.mjs',
+  'swarm-studio-route-regressions.mjs',
+  'swarm-studio-worker-regressions.mjs',
+  'swarm-studio-media-regressions.mjs',
+  'workspace-swarm-controller.test.mjs',
+  'workspace-swarm-studio-client.test.mjs',
+  'workspace-swarm-presentation.test.mjs',
+  'workspace-swarm-studio-browser.mjs',
   'artifact-isolation-browser-regressions.mjs',
   'auth-sync-browser-regressions.mjs',
   'account-project-browser-regressions.mjs',
+  'studio-artifact-regressions.mjs',
+  'autopilot-output-browser-regressions.mjs',
+  'map-browser-verify.mjs',
+  ['map-browser-verify.mjs', '--camera'],
+  ['map-browser-verify.mjs', '--layers'],
+  ['map-browser-verify.mjs', '--comparisons'],
+  'workspace-shell-browser-regressions.mjs',
 ]
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(?:API_KEY|SECRET|TOKEN|DATABASE_URL|CLOUDFLARE_DATA_URL)$/.test(key)))
-for (const script of scripts) {
-  console.log(`Checking ${script}`)
-  const result = spawnSync(process.execPath, ['--experimental-strip-types', `scripts/${script}`], { cwd, env, stdio: 'inherit', timeout: script === 'cloudflare-store-regressions.mjs' ? 300000 : 180000 })
+// A release always exercises every fixture, even if the parent shell was used
+// for an audit-only or single-artifact diagnosis earlier.
+for (const key of ['BASE_URL', 'AUDIT_ONLY', 'ARTIFACT_CASE', 'OUTPUT_DIR']) delete env[key]
+for (const check of scripts) {
+  const [script, ...args] = Array.isArray(check) ? check : [check]
+  console.log(`Checking ${[script, ...args].join(' ')}`)
+  const result = spawnSync(process.execPath, ['--experimental-strip-types', `scripts/${script}`, ...args], { cwd, env, stdio: 'inherit', timeout: ['cloudflare-store-regressions.mjs', 'studio-artifact-regressions.mjs'].includes(script) ? 300000 : 180000 })
   if (result.error || result.status !== 0) { console.error(`FAIL ${script}: ${result.error?.message || `exit ${result.status}`}`); process.exit(result.status || 1) }
 }
 const build = spawnSync('npm', ['run', 'build'], { cwd, env, stdio: 'inherit', timeout: 180000 })
