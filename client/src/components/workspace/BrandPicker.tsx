@@ -55,9 +55,10 @@ export default function BrandPicker({ label, value, kind, onChange }: { label: s
   }, [open])
   useEffect(() => {
     if (!open) return
-    const outside = (event: PointerEvent) => { if (!anchor.current?.contains(event.target as Node) && !popup.current?.contains(event.target as Node)) setOpen(false) }
+    const outside = (event: PointerEvent | FocusEvent) => { if (!anchor.current?.contains(event.target as Node) && !popup.current?.contains(event.target as Node)) setOpen(false) }
     document.addEventListener('pointerdown', outside)
-    return () => document.removeEventListener('pointerdown', outside)
+    document.addEventListener('focusin', outside)
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('focusin', outside) }
   }, [open])
   return <div className="flex min-w-0 flex-col gap-1">
     <span className="text-[10px] uppercase tracking-wide text-dim">{label}</span>

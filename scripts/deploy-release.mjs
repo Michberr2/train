@@ -42,8 +42,17 @@ export async function verifyDeploymentMetadata(deploymentId, project, { fetchImp
   assert.equal(metadata.projectId || metadata.project?.id, project.projectId, `${deploymentId}: wrong Vercel project`)
   assert.equal(metadata.readyState, 'READY', `${deploymentId}: authenticated deployment state is not READY`)
   assert.equal(metadata.target, 'production', `${deploymentId}: deployment was not built with production environment settings`)
+  const customSource = metadata.meta?.naluSourceCommit
+  const gitSource = metadata.meta?.gitCommitSha
+  // Vercel's Git integration supplies gitCommitSha when the release was not
+  // created by this helper. Accept its authenticated identity with the same
+  // strict revision validation, and never hide conflicting source claims.
+  for (const [field, source] of [['naluSourceCommit', customSource], ['gitCommitSha', gitSource]]) {
+    if (source != null) assert.match(source, /^[a-f0-9]{40}$/i, `${deploymentId}: no valid ${field} in authenticated deployment metadata. Reconcile the source identity before releasing.`)
+  }
+  if (customSource != null && gitSource != null) assert.equal(customSource.toLowerCase(), gitSource.toLowerCase(), `${deploymentId}: naluSourceCommit and gitCommitSha identify different sources. Reconcile the deployment metadata before releasing.`)
   // Retain only nonsecret identity fields; never persist raw deployment/env data.
-  return { sourceCommit: metadata.meta?.naluSourceCommit }
+  return { sourceCommit: (customSource ?? gitSource)?.toLowerCase() }
 }
 
 export function verifyReleaseAncestry({ currentSource, candidateSource, domain, operation, git }) {

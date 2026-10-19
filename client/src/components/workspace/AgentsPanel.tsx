@@ -2101,7 +2101,7 @@ export default function AgentsPanel() {
       )}
 
       {/* ---- main column ---- */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="ap-main flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* Main actions stay visible; configuration and secondary actions have their own menus. */}
         <div className="ap-toolbar">
           <button onClick={() => setRailOpen((v) => !v)} aria-label="Your workflows" aria-expanded={railOpen} title="Your saved pipelines" className="flex h-8 shrink-0 items-center justify-center gap-2 rounded-lg text-dim hover:bg-glass/10 hover:text-ink"><PanelLeft size={15} /><span>Pipelines</span></button>
@@ -2345,7 +2345,7 @@ export default function AgentsPanel() {
           </div>
         </div>
         {/* canvas */}
-        <div className="relative flex-1 overflow-hidden">
+        <div className="ap-stage relative flex-1 overflow-hidden">
         <div ref={canvasRef} onPointerMove={flowView === 'canvas' ? onCanvasMove : undefined} onPointerDown={flowView === 'canvas' ? onCanvasPanStart : undefined}
           onPointerUp={onCanvasPointerUp} onPointerCancel={onCanvasPointerUp}
           onClick={() => { if (addMenu) setAddMenu(false); setSelectedEdge(null) }}

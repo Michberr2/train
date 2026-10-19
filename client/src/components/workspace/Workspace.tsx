@@ -57,6 +57,8 @@ import {
 import { streamChat, recoverToolCalls, type WireMessage } from './agentApi'
 import { getModelSettings } from '../../lib/naluSettings'
 import { generateVideo } from '../../lib/videoEngine'
+import H3MoviePlayer from './H3MoviePlayer'
+import { movieIdFromUrl } from '../../lib/h3Movie'
 import { lazy, Suspense } from 'react'
 import type { WorkspaceCarouselView } from '../workspace-preview/real/WorkspaceCarousel'
 import Markdown from './Markdown'
@@ -731,6 +733,8 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   // Restore the last view on refresh (Studio/Map/AutoPilot/Chats) — back to your
   // last touch point. Skip 'settings' so a refresh never dumps you into settings.
   const [view, setView] = useState<View>(() => {
+    const billingReturn = new URLSearchParams(window.location.search).get('billing')
+    if (window.location.hash === '#settings' || billingReturn === 'success' || billingReturn === 'cancel') return 'settings'
     const v = localStorage.getItem('nalu-view')
     return v && v !== 'settings' && (v === 'chat' || Object.prototype.hasOwnProperty.call(VIEW_TITLES, v)) ? v as View : 'chat'
   })
@@ -1026,7 +1030,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       if (m.sheet) out.push({ kind: 'sheet', label: m.sheet.title || 'Spreadsheet', mi: i })
       if (m.design) out.push({ kind: 'design', label: m.design.kind === 'brand' ? 'Brand book' : m.design.kind, mi: i })
       if (m.cad) out.push({ kind: 'cad', label: 'CAD model', mi: i })
-      if (m.video) out.push({ kind: 'video', label: 'Video', mi: i })
+      if (m.video) out.push({ kind: 'video', label: movieIdFromUrl(m.video) ? 'Movie' : 'Video', mi: i })
       // Generated IMAGES aren't a structured field — Nalu embeds them as markdown
       // data-URL images in the assistant's text (![alt](data:image/…); api/image always
       // returns a base64 data URL). List EACH one (data-URL only, so a linked web image
@@ -1052,7 +1056,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         } else if (m.deck) out.push({ ...base, kind: 'deck', title: m.deck.title || c.title || 'Presentation' })
         else if (m.sheet) out.push({ ...base, kind: 'sheet', title: m.sheet.title || c.title || 'Spreadsheet' })
         else if (m.doc) out.push({ ...base, kind: 'doc', title: m.doc.title || c.title || 'Document' })
-        else if (m.video) out.push({ ...base, kind: 'video', title: c.title || 'Video' })
+        else if (m.video) out.push({ ...base, kind: movieIdFromUrl(m.video) ? 'movie' : 'video', title: c.title || 'Video' })
         else if (m.cad) out.push({ ...base, kind: 'cad', title: c.title || 'CAD model' })
         else if (m.role === 'assistant' && typeof m.content === 'string') {
           // Generated images live as markdown in the message text.
@@ -1220,7 +1224,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   )
 
   const send = useCallback(
-    async (text: string, opts?: { keepView?: boolean; userMessageId?: string; assistantMessageId?: string; studioKind?: string; studioTarget?: Creation; attachments?: Attachment[] }) => {
+    async (text: string, opts?: { keepView?: boolean; userMessageId?: string; assistantMessageId?: string; studioKind?: string; studioTarget?: Creation; movieSeconds?: number; attachments?: Attachment[] }) => {
       const content = text.trim()
       if (!content || streaming) return
       // A floating conversation keeps its original space, including after async attachment work.
@@ -1403,7 +1407,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         artifacts: [m.doc && 'document', m.sheet && 'spreadsheet', m.deck && 'slides', m.cad && 'cad', m.video && 'video', m.email && 'email', m.design?.kind].map(normalizeStudioKind).filter(Boolean),
       }))
       const recentKind = intentContext.slice().reverse().find(m => m.artifacts.length)?.artifacts[0]
-      const selectedKind = normalizeStudioKind(opts?.studioKind)
+      const selectedKind = normalizeStudioKind(opts?.studioKind === 'movie' || /^\/movie\b/i.test(content) ? 'video' : opts?.studioKind)
       let intent: StudioIntent = plain
         ? { kind: 'chat', mode: 'chat', additionalKinds: [] }
         : selectedKind
@@ -2139,9 +2143,11 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           // → free cloud pool. Each rung reports progress into the loading pill.
           const out = await generateVideo({
             prompt: vidPrompt,
+            seconds: opts?.movieSeconds,
             ...(vImage ? { image: vImage } : {}),
             signal: ctrl.signal,
             onProgress: (_f, phase) => { setRouteName(`Nalu Video · ${phase}`) },
+            onPreview: (url) => { accVideo = url; flush() },
           })
           accLoading = undefined
           accVideo = out.url
@@ -2625,19 +2631,18 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
                       </CardErrorBoundary>
                     )}
                     {m.video && (
-                      <span className="block">
-                        <video
-                          src={m.video}
-                          controls
+                      <div className="block">
+                        <H3MoviePlayer
+                          url={m.video}
                           className="my-2 max-h-[28rem] w-auto max-w-full rounded-xl border border-glass/[0.14]"
                         />
-                        <button
+                        {!movieIdFromUrl(m.video) && <button
                           onClick={() => void downloadMedia(m.video as string, 'nalu-video.mp4')}
                           className="mb-2 text-xs font-medium text-gold underline-offset-4 hover:underline"
                         >
                           Download video
-                        </button>
-                      </span>
+                        </button>}
+                      </div>
                     )}
                     </div>
                   </>
@@ -2992,17 +2997,17 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
                     <Suspense fallback={<MediaLoader kind="cad" />}><CADCard code={m.cad} /></Suspense>
                   </CardErrorBoundary>
                 )
-              if (m.video) return <video src={m.video} controls className="mx-auto max-h-[70vh] w-auto max-w-full rounded-xl" />
+              if (m.video) return <H3MoviePlayer url={m.video} className="mx-auto max-h-[70vh] w-auto max-w-full rounded-xl" />
               if (typeof m.content === 'string') {
                 const im = m.content.match(/^!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/)
                 if (im) return <img src={im[1]} alt={m.content.slice(2, 80)} className="mx-auto max-h-[70vh] w-auto max-w-full rounded-xl" />
               }
               return null
             }}
-            onGenerate={(prompt, toolKey, target) => {
+            onGenerate={(prompt, toolKey, target, movieSeconds) => {
               // Stay in the Studio so the design renders here first; it also lands in chat.
               closeSidebarOnMobile()
-              void send(prompt, { keepView: true, studioKind: toolKey, studioTarget: target })
+              void send(prompt, { keepView: true, studioKind: toolKey, studioTarget: target, movieSeconds })
             }}
           />
         )}

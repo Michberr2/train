@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { release, RELEASE_DOMAINS, verifyReleaseAncestry } from './deploy-release.mjs'
+import { release, RELEASE_DOMAINS, verifyReleaseAncestry, verifyDeploymentMetadata } from './deploy-release.mjs'
 import { checkPreview } from './preview-release-checks.mjs'
 
 const directory = await mkdtemp(join(tmpdir(), 'nalu-release-regression-'))
@@ -72,7 +72,8 @@ try {
         const source = isCandidate
           ? Object.hasOwn(options, 'candidateSource') ? options.candidateSource : options.wrongCommit ? '2'.repeat(40) : commit
           : Object.hasOwn(options, 'liveSource') ? options.liveSource : 'a'.repeat(40)
-        return response({ id: options.wrongMetadataId ? 'dpl_unexpected' : url.pathname.split('/').pop(), readyState: options.metadataNotReady ? 'ERROR' : 'READY', target: isCandidate && Object.hasOwn(options, 'candidateTarget') ? options.candidateTarget : 'production', projectId: options.wrongProject ? 'prj_other' : 'prj_fixture', meta: { naluSourceCommit: source } }, options.metadataUnauthorized ? 401 : 200)
+        const gitSource = isCandidate ? options.candidateGitSource : options.liveGitSource
+        return response({ id: options.wrongMetadataId ? 'dpl_unexpected' : url.pathname.split('/').pop(), readyState: options.metadataNotReady ? 'ERROR' : 'READY', target: isCandidate && Object.hasOwn(options, 'candidateTarget') ? options.candidateTarget : 'production', projectId: options.wrongProject ? 'prj_other' : 'prj_fixture', meta: { naluSourceCommit: source, gitCommitSha: gitSource } }, options.metadataUnauthorized ? 401 : 200)
       }
       if (url.pathname === '/api/health') return response({ ok: options.badHealth !== hostname, checks: { db: { ok: true } }, config: { llmPrimary: true, llmModel: 'fixture' } })
       if (url.pathname === '/') return response('<!doctype html><script type="module" src="/assets/app.js"></script>', 200, 'text/html')
@@ -101,6 +102,12 @@ try {
   assert.ok(success.calls.findIndex(call => call.args[0] === 'merge-base') < success.calls.findIndex(call => call.command === process.execPath), 'live source ancestry is checked before builds and compatibility gates')
   assert.ok(success.calls.findIndex(call => call.args.includes('scripts/flow-cross-client-integration.mjs')) < success.calls.findIndex(call => call.command === 'vercel' && call.args[0] === 'deploy'), 'all compatibility gates run before candidate creation')
   report.push('successful release verifies all four aliases, exact deployment IDs, health and app bytes')
+  const gitMetadata = fixture({ liveSource: null, liveGitSource: 'a'.repeat(40), candidateSource: null, candidateGitSource: commit })
+  const gitReceipt = await release({ cwd: directory, ...gitMetadata, log: () => {}, writeReceipt: false })
+  assert.equal(gitReceipt.complete, true)
+  assert.equal(gitReceipt.sourceCommit, commit)
+  assert.ok(gitMetadata.calls.some(call => call.command === 'git' && call.args[0] === 'merge-base' && call.args[2] === 'a'.repeat(40) && call.args[3] === commit))
+  report.push('authenticated Vercel gitCommitSha fallback passes the same source ancestry and four-domain checks')
   const failures = [
     ['dirty source', { dirty: true }, /clean, reviewed checkout/, false],
     ['offline gate', { gateFailure: true }, /offline check failed/, false],
@@ -113,6 +120,10 @@ try {
     ['malformed live source metadata', { liveSource: '--untrusted-revision' }, /no valid naluSourceCommit/, false],
     ['unavailable live history', { missingHistory: true }, /Fetch the source history/, false],
     ['stale or unrelated release source', { divergentHistory: true }, /does not include live source/, false],
+    ['malformed Git source fallback', { liveSource: null, liveGitSource: 'main' }, /no valid gitCommitSha/, false],
+    ['conflicting source metadata', { liveGitSource: 'b'.repeat(40) }, /identify different sources/, false],
+    ['unavailable Git source history', { liveSource: null, liveGitSource: 'a'.repeat(40), missingHistory: true }, /Fetch the source history/, false],
+    ['divergent Git source history', { liveSource: null, liveGitSource: 'a'.repeat(40), divergentHistory: true }, /does not include live source/, false],
     ['build failure', { deployFailure: true }, /build failed/, false],
     ['ambiguous deploy URL', { ambiguous: true }, /unambiguous/, false],
     ['wrong project', { wrongProject: true }, /wrong Vercel project/, false],
@@ -211,6 +222,18 @@ try {
   assert.throws(() => verify(live, divergent, 'rollback'), /unrelated releases cannot be used as rollbacks/)
   assert.throws(() => verify(live, 'e'.repeat(40)), /candidate source .* is unavailable/)
   report.push('real Git history permits descendants and explicit ancestor rollbacks, and blocks stale, divergent and unavailable source')
+
+  const readMetadata = meta => verifyDeploymentMetadata(deploymentId, { projectId: 'prj_fixture', orgId: 'team_fixture' }, {
+    readToken: async () => 'synthetic-token-never-sent',
+    fetchImpl: async () => new Response(JSON.stringify({ id: deploymentId, projectId: 'prj_fixture', readyState: 'READY', target: 'production', meta }), { status: 200 }),
+  })
+  assert.deepEqual(await readMetadata({ gitCommitSha: 'a'.repeat(40).toUpperCase() }), { sourceCommit: 'a'.repeat(40) })
+  assert.deepEqual(await readMetadata({ naluSourceCommit: commit, gitCommitSha: commit }), { sourceCommit: commit })
+  assert.deepEqual(await readMetadata({}), { sourceCommit: undefined })
+  await assert.rejects(readMetadata({ naluSourceCommit: 'bad', gitCommitSha: commit }), /no valid naluSourceCommit/)
+  await assert.rejects(readMetadata({ naluSourceCommit: commit, gitCommitSha: 'bad' }), /no valid gitCommitSha/)
+  await assert.rejects(readMetadata({ naluSourceCommit: commit, gitCommitSha: 'a'.repeat(40) }), /identify different sources/)
+  report.push('source metadata accepts matching identities, normalizes hexadecimal case, and rejects malformed or contradictory fields without a fallback bypass')
 
   // Exercise deploy.sh itself with a local node stub: exec must preserve failures.
   const bin = join(directory, 'bin'); await mkdir(bin)

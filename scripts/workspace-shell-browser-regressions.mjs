@@ -72,10 +72,16 @@ try{
   if(viewport.width>950){
    const frame=await page.evaluate(()=>{const scene=document.querySelector('.review-desktop-scene'),dock=document.querySelector('.workspace-app-dock'),brand=document.querySelector('.review-header-brand');return{sceneTop:scene.getBoundingClientRect().top,shoulderTop:dock.getBoundingClientRect().top+parseFloat(getComputedStyle(dock,'::before').top),brandBottom:brand.getBoundingClientRect().bottom}})
    assert.ok(Math.abs(frame.sceneTop-frame.shoulderTop)<=1,'The scenic top edge aligns with the dock shoulders')
+   assert.equal(frame.sceneTop,40,'Production keeps the approved 40px white top frame without a preview banner')
    assert.ok(frame.brandBottom<=frame.sceneTop+1,'The Nalu wordmark fits inside the top white frame')
    report.checks.push(`${viewport.width}: top white frame aligns with dock shoulders and contains the wordmark`)
   }
   await page.screenshot({path:`${out}/${viewport.width}-carousel.png`})
+  const assertNaturalScene = async () => {
+   const overlay=await page.locator('.review-desktop-scene').evaluate(element=>({content:getComputedStyle(element,'::after').content,background:getComputedStyle(element,'::after').backgroundImage}))
+   assert.ok(overlay.content==='none'||overlay.content==='normal'||overlay.background==='none','The pastel scene has no blue gradient overlay in either theme')
+  }
+  await assertNaturalScene()
   await carousel.getByRole('button',{name:'Open Studio',exact:true}).click()
   await expect(carousel).toHaveCount(0)
   await expect(page.getByLabel('Studio tool',{exact:true})).toBeVisible()
@@ -111,6 +117,7 @@ try{
   await page.getByRole('button',{name:'Account options',exact:true}).click();const account=page.locator('.workspace-account-panel');await expect(account.getByRole('status',{name:'Chat save status'})).toBeVisible()
   await expect(account.getByRole('link',{name:'Download Nalu Desktop'})).toHaveAttribute('href','/download.html');await account.getByRole('button',{name:'Settings',exact:true}).click()
   await expect(page.getByRole('navigation',{name:'Settings categories'})).toBeVisible();await page.getByRole('button',{name:/Theme.*tap to switch/}).click();await expect(page.getByText(/tap to switch to/).first()).toBeVisible()
+  await assertNaturalScene()
   await page.screenshot({path:`${out}/${viewport.width}-settings.png`});report.checks.push(`${viewport.width}: account save status/download and Settings theme control`)
   await page.getByRole('button',{name:'Open Nalu chat',exact:true}).click();const chat=page.locator('.workspace-chat-popover');await expect(chat).toBeVisible()
   let composer=chat.locator('.ws-composer textarea');await expect(composer).toBeVisible();await composer.fill('Keep this ordinary draft')

@@ -19,7 +19,7 @@ const ReviewArtifactPreview = lazy(() => import('../workspace-preview/real/Artif
 const KIND_ICON: Record<string, LucideIcon> = {
   webpage: Globe, poster: LayoutTemplate, motion: Film, brand: BookOpen, canvas: PenTool,
   palette: Palette, blueprint: Ruler, logo: Sparkles, shopping: ShoppingBag,
-  deck: BarChart3, sheet: Table2, doc: FileText, video: Video, cad: Footprints,
+  deck: BarChart3, sheet: Table2, doc: FileText, video: Video, movie: Film, cad: Footprints,
   game: Gamepad2, board: LayoutTemplate, image: ImageIcon, carousel: GalleryHorizontal,
 }
 
@@ -48,13 +48,14 @@ export const TOOLS: Tool[] = [
   { key: 'spreadsheet', name: 'Spreadsheet', desc: 'A real Excel workbook with formulas, on brand.', icon: Table2, ph: 'a monthly household budget with formulas', tmpl: (b) => `Build a spreadsheet for ${b}` },
   { key: 'image', name: 'Image', desc: 'Generate a photoreal image of anything.', icon: ImageIcon, ph: 'a misty pine forest at sunrise', tmpl: (b) => `Generate an image of ${b}` },
   { key: 'video', name: 'Video', desc: 'Cinematic clips — incl. blueprint→3D grow reveals & walkthroughs.', icon: Video, ph: 'a blueprint growing into a photoreal 3D home walkthrough', tmpl: (b) => `Create a video of ${b}` },
+  { key: 'movie', name: 'Movie', desc: 'A complete story, rendered in five-second H3 shots with sound. Watch progress, resume, and download the finished film.', icon: Film, ph: 'A lighthouse keeper follows a mysterious signal to rescue a lost sailor.', tmpl: (b) => `Create a movie: ${b}` },
 ]
 const SYSTEMS = ['none', 'minimal', 'luxury', 'swiss', 'brutalist', 'editorial', 'glassmorphism', 'bauhaus', 'memphis', 'y2k', 'corporate', 'organic', 'dark neon']
 const TOOL_GROUPS = [
   { name: 'Design & identity', keys: ['website', 'logo', 'palette', 'brand', 'poster', 'carousel', 'canvas'] },
   { name: 'Words & numbers', keys: ['document', 'presentation', 'spreadsheet'] },
   { name: 'Spaces & experiences', keys: ['blueprint', 'walkthrough', 'game', 'shopping'] },
-  { name: 'Image & motion', keys: ['image', 'motion', 'video'] },
+  { name: 'Image & motion', keys: ['image', 'motion', 'video', 'movie'] },
 ]
 // Gallery frames are static and cannot run generated scripts. The full preview
 // uses the artifact's actual card, with its editor, downloads and playback.
@@ -72,7 +73,7 @@ export default function StudioPanel({
   designPreview = false,
   designEnabled = false,
 }: {
-  onGenerate: (prompt: string, toolKey: string, target?: Creation) => void
+  onGenerate: (prompt: string, toolKey: string, target?: Creation, movieSeconds?: number) => void
   creations?: Creation[]
   onOpen?: (chatId: string, mi: number) => void
   streaming?: boolean
@@ -92,6 +93,7 @@ export default function StudioPanel({
   const [showIdeas, setShowIdeas] = useState(false)
   const [mobilePreview, setMobilePreview] = useState(false)
   const [brief, setBrief] = useState('')
+  const [movieSeconds, setMovieSeconds] = useState(10)
   const [preview, setPreview] = useState<Creation | null>(null)
   const [working, setWorking] = useState(false) // a generation kicked off here is in flight
   const [inline, setInline] = useState<Creation | null>(null) // the result shown in-Studio
@@ -161,13 +163,16 @@ export default function StudioPanel({
   const ToolIcon = tool.icon
   const libraryKinds = [...new Set(creations.map(creation => creation.kind))]
   const visibleCreations = reviewLayout ? creations.filter(creation => (libraryKind === 'all' || creation.kind === libraryKind) && `${creation.title} ${creation.kind}`.toLowerCase().includes(libraryQuery.toLowerCase().trim())) : creations
+  const liveMovie = working ? creations.find(c => c.key === resultKey && c.kind === 'movie') : undefined
+  const liveMovieCard = liveMovie ? renderCreation?.(liveMovie) : null
   const inlineCard = inline ? renderCreation?.(inline) : null
   const previewCard = preview ? renderCreation?.(preview) : null
   const run = () => {
     if (working || streaming || (inline && !brief.trim())) return
     setMobilePreview(true)
     setDismissFeedback(false)
-    onGenerate(inline ? brief.trim() : tool.tmpl(brief.trim() || tool.ph, tool.styled ? style : 'none'), tool.key, inline || undefined)
+    const moviePrompt = `Create a ${movieSeconds}-second movie in five-second shots: ${brief.trim() || tool.ph}`
+    onGenerate(tool.key === 'movie' ? moviePrompt : inline ? brief.trim() : tool.tmpl(brief.trim() || tool.ph, tool.styled ? style : 'none'), tool.key, tool.key === 'movie' ? undefined : inline || undefined, tool.key === 'movie' ? movieSeconds : undefined)
     sawStreaming.current = false
     setWorking(true)
   }
@@ -209,6 +214,9 @@ export default function StudioPanel({
           </nav>
           <div role="group" aria-label="Studio tools" className="ws-studio-tools" hidden={studioView !== 'create'}>
             <label>Make <select aria-label="Studio tool" value={toolKey} onChange={e => { pick(e.target.value); setShowIdeas(false) }} disabled={working}>{TOOLS.map(t => <option key={t.key} value={t.key}>{t.name}</option>)}</select></label>
+            {toolKey === 'movie' && <label>Runtime <select aria-label="Movie runtime" value={movieSeconds} onChange={event => setMovieSeconds(Number(event.target.value))} disabled={working}>
+              <option value={10}>10 seconds</option><option value={30}>30 seconds</option><option value={60}>1 minute</option><option value={180}>3 minutes</option><option value={600}>10 minutes</option><option value={1800}>30 minutes</option><option value={5400}>90 minutes</option>
+            </select></label>}
           </div>
         </div>
         <div className="ws-studio-workbench" data-preview={mobilePreview} hidden={studioView !== 'create'}>
@@ -229,7 +237,7 @@ export default function StudioPanel({
             <button className="ws-mobile-preview-toggle" onClick={() => setMobilePreview(false)}>Edit brief</button>
             <span className="flex min-w-0 items-center gap-2 text-[13px] text-ink">
               {working && <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-glass/20 border-t-accent" />}
-              <span className="truncate">{working ? `Designing your ${tool.name.toLowerCase()}…` : inline ? inline.title : toolKey === 'website' ? 'Website canvas' : `${tool.name} preview`}</span>
+              <span className="truncate">{working ? `${toolKey === 'movie' ? 'Rendering' : 'Designing'} your ${tool.name.toLowerCase()}…` : inline ? inline.title : toolKey === 'website' ? 'Website canvas' : `${tool.name} preview`}</span>
             </span>
             {inline && !working && (
               <div className="flex shrink-0 items-center gap-2">
@@ -240,7 +248,7 @@ export default function StudioPanel({
             )}
           </div>
           <div className="ws-studio-preview-body">
-            {working ? (
+            {liveMovieCard ? <div className="ws-studio-result p-4">{liveMovieCard}{onStop && <button onClick={onStop} className="ws-idea-pill">Pause generation</button>}</div> : working ? (
               <div className="ws-studio-wait flex flex-col items-center justify-center gap-2 text-[12px] text-dim">
                 <span className="h-7 w-7 animate-spin rounded-full border-2 border-glass/15 border-t-accent" />
                 <span>Nalu is composing it — it’ll appear here and in your chat.</span>
@@ -260,6 +268,7 @@ export default function StudioPanel({
                 {reviewLayout ? <NaluMark className="review-empty-logo"/> : <NaluAvatar size={210} />}
                 <h2>{reviewLayout ? <>Your next <em>{tool.name.toLowerCase()}.</em></> : 'A little space for your idea.'}</h2>
                 <p>{tool.desc}</p>
+                {toolKey === 'movie' && <p>Requires H3 running on this computer. On a Mac, a few seconds of footage can take hours to render. Start with a 10-second test; feature-length movies may take days or months.</p>}
                 <button className="ws-idea-pill" onClick={() => setShowIdeas(true)}>Explore starting points <ArrowRight size={13}/></button>
                 {reviewLayout && creations.length > 0 && <div className="review-studio-recent"><span>Or pick up where you left off</span><div>{creations.slice(0, 3).map(creation => {
                   return <button key={creation.key} onClick={event => openPreview(creation, event.currentTarget)}>{ReviewArtifactPreview && <div className="review-recent-preview"><Suspense fallback={<span>Loading saved preview…</span>}><ReviewArtifactPreview source={creation.previewData} title={creation.title} kind={creation.kind} html={creation.html} img={creation.img} compact/></Suspense></div>}<span>{creation.title}</span><ArrowRight size={13}/></button>
@@ -277,7 +286,7 @@ export default function StudioPanel({
         <div className="ws-studio-brief">
           <div className="mb-3 flex items-baseline justify-between gap-3">
             <div className="ws-brief-title">{inline ? 'Keep creating.' : tool.name}</div>
-            <div className="ws-brief-description text-[11px] text-dim">{inline ? `Editing ${inline.title}. Describe what to change; the current version stays saved.` : tool.desc}</div>
+            <div className="ws-brief-description text-[11px] text-dim">{inline && toolKey !== 'movie' ? `Editing ${inline.title}. Describe what to change; the current version stays saved.` : tool.desc}</div>
             {inline && <button className="ws-start-new" onClick={startNew} disabled={working}>Start a new creation</button>}
           </div>
 
@@ -291,7 +300,7 @@ export default function StudioPanel({
             onChange={(e) => setBrief(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run() } }}
             rows={reviewLayout ? 2 : 5}
-            placeholder={inline ? 'What would you like to change or add?' : `Describe your ${tool.name.toLowerCase()} — e.g. “${tool.ph}”`}
+            placeholder={inline && toolKey !== 'movie' ? 'What would you like to change or add?' : `Describe your ${tool.name.toLowerCase()} — e.g. “${tool.ph}”`}
             className="max-h-44 w-full resize-none bg-transparent py-1 text-[15px] leading-relaxed text-ink outline-none placeholder:text-dim"
           />
           <div className="mt-2 flex items-center justify-between border-t border-glass/[0.07] pt-3">
@@ -299,7 +308,7 @@ export default function StudioPanel({
             <button className="ws-mobile-preview-toggle" onClick={() => setMobilePreview(true)}>Preview <Eye size={13}/></button>
             <button onClick={run} disabled={working || streaming || (!!inline && !brief.trim())}
               className="group flex items-center gap-2 rounded-full bg-gradient-to-r from-[#c9a86a] to-accent px-5 py-2 text-[13px] font-semibold tracking-wide text-[#15170f] shadow-md transition-[filter,transform] hover:brightness-110 active:scale-[0.98]">
-              {inline ? 'Update creation' : 'Generate'} <ArrowRight size={14} className="transition-transform group-hover:translate-x-0.5" />
+              {inline && toolKey !== 'movie' ? 'Update creation' : 'Generate'} <ArrowRight size={14} className="transition-transform group-hover:translate-x-0.5" />
             </button>
           </div>
         </div>
@@ -360,7 +369,7 @@ export default function StudioPanel({
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
             <h2 id={previewTitleId} className="min-w-0 flex-1 basis-full truncate text-sm text-ink sm:basis-auto">{preview.title || 'Creation preview'}</h2>
             <div className="flex shrink-0 items-center gap-2">
-              <button onClick={() => continueEditing(preview)} className="rounded-md bg-glass/10 px-2.5 py-1 text-[12px] text-ink hover:bg-glass/20">Continue editing</button>
+              <button onClick={() => continueEditing(preview)} className="rounded-md bg-glass/10 px-2.5 py-1 text-[12px] text-ink hover:bg-glass/20">{preview.kind === 'movie' ? 'Open movie' : 'Continue editing'}</button>
               {onOpen && (
                 <button onClick={() => { onOpen(preview.chatId, preview.mi); setPreview(null) }}
                   className="rounded-md bg-glass/10 px-2.5 py-1 text-[12px] text-ink hover:bg-glass/20">Open in chat</button>

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Payment information and refunds — Nalu</title>
+    <meta name="description" content="How optional Nalu tips work, payment details, and how to request a refund." />
+    <style>
+      :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #ece9e2; background: #0b0e16; }
+      * { box-sizing: border-box; }
+      body { margin: 0; line-height: 1.7; }
+      main { max-width: 780px; margin: auto; padding: 40px 22px 72px; }
+      nav { display: flex; flex-wrap: wrap; gap: 12px 24px; }
+      a { color: #dfbc83; text-underline-offset: 3px; overflow-wrap: anywhere; }
+      a:focus-visible { outline: 2px solid #dfbc83; outline-offset: 5px; border-radius: 2px; }
+      header { border-bottom: 1px solid #343943; padding: 30px 0 20px; margin-bottom: 26px; }
+      .brand { color: #b9b6ae; font-size: 15px; letter-spacing: .04em; }
+      h1 { color: #fff; font-size: clamp(28px, 6vw, 40px); line-height: 1.2; letter-spacing: -.025em; margin: 10px 0 16px; }
+      h2 { color: #fff; font-size: 21px; line-height: 1.35; margin: 30px 0 10px; }
+      p { margin: 10px 0; }
+      .summary { border: 1px solid #4f4636; background: #171921; border-radius: 14px; padding: 18px 20px; }
+      .summary p { margin: 0; }
+      footer { border-top: 1px solid #343943; margin-top: 36px; padding-top: 20px; color: #b9b6ae; font-size: 14px; }
+      @media print { :root { color: #111; background: #fff; } h1, h2 { color: #111; } .summary { background: none; } a { color: #111; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <nav aria-label="Nalu links">
+        <a href="/">Open Nalu</a>
+        <a href="/privacy.html">Privacy policy</a>
+      </nav>
+      <header>
+        <div class="brand">Nalu</div>
+        <h1>Payment information and refunds</h1>
+        <p>Information about optional, one-time tips for Nalu assistance you have already received.</p>
+      </header>
+
+      <div class="summary">
+        <p>A tip is optional and helps cover Nalu’s operating costs. It adds no AI usage credits, extra features, or guaranteed future access.</p>
+      </div>
+
+      <h2>What your payment is for</h2>
+      <p>You can leave a tip for the Nalu AI service you have already used. This is a tip for a software service, not a charitable donation. Payment goes to Nalu’s operator; it does not create a wallet owned by an AI.</p>
+      <p>Each payment is a single tip. It does not start a subscription, recurring payment, or automatic top-up. Your payment history records past tips and refunds, not a spendable account balance.</p>
+
+      <h2>Amounts and checkout</h2>
+      <p>The available amounts are $10, $25, and $50 in United States dollars (USD). Review the amount shown in Stripe Checkout before paying.</p>
+      <p>Stripe hosts the payment page and processes your payment details. Nalu does not receive your full card number. You can leave checkout before completing payment.</p>
+      <p>After checkout, Nalu confirms the payment with Stripe before showing it as paid. Some payments may take time to confirm. Check your payment history before making another payment if the status is still processing.</p>
+
+      <h2 id="refunds">Refund requests</h2>
+      <p>To ask about a payment or request a refund, email <a href="mailto:mberry@n4lu.com?subject=Nalu%20payment%20help">mberry@n4lu.com</a>. Include your Nalu account email, the payment date and amount, and the receipt or payment reference if available. Do not send your password or full card details.</p>
+      <p>Refund requests are reviewed case by case. We may ask for information needed to identify the payment and understand your request. If a refund is approved, it is submitted through Stripe to the original payment method; your bank or payment provider determines when it appears.</p>
+
+      <h2>Payment records and privacy</h2>
+      <p>Nalu keeps payment references, amounts, status, and refund history associated with your account so you can review payments and receive support. Stripe processes payment information to complete transactions. See the <a href="/privacy.html">Nalu privacy policy</a> and <a href="https://stripe.com/privacy">Stripe privacy policy</a> for more information.</p>
+
+      <footer>
+        <p>Nalu payment support: <a href="mailto:mberry@n4lu.com">mberry@n4lu.com</a></p>
+      </footer>
+    </main>
+  </body>
+</html>

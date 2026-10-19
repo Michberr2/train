@@ -1537,17 +1537,17 @@ export default function MapPanel() {
   const dataLayerCount = LAYERS.filter(l => active[l.key] && !isMapBackground(l)).length
 
   return (
-    <div ref={workspaceRef} className={`map-workspace flex flex-1 overflow-hidden${compactPanels ? ' map-compact' : ''}`} style={expandedMap ? { position: 'fixed', inset: 0, zIndex: 100, background: 'rgb(var(--ws-canvas))' } : undefined}>
+    <div ref={workspaceRef} data-map-expanded={expandedMap} className={`map-workspace flex flex-1 overflow-hidden${compactPanels ? ' map-compact' : ''}`} style={expandedMap ? { position: 'fixed', inset: 0, zIndex: 100, background: 'rgb(var(--ws-canvas))' } : undefined}>
       {/* Left: search + results (overlay on mobile, in-flow on desktop) */}
-      <div className={`map-search-panel ${panelOpen ? 'flex' : 'hidden'} w-80 min-h-0 shrink-0 flex-col border-r border-glass/[0.12] bg-panel md:relative md:z-auto`}>
-        <div className="border-b border-glass/[0.08] p-3">
-          <div className="mb-1 flex items-center gap-2">
+      <div role="region" aria-label="Map search and results" className={`map-search-panel ${panelOpen ? 'flex' : 'hidden'} w-80 min-h-0 shrink-0 flex-col border-r border-glass/[0.12] bg-panel md:relative md:z-auto`}>
+        <div className="map-search-header border-b border-glass/[0.08] p-3">
+          <div className="map-search-heading mb-1 flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-md bg-accent/15 text-gold"><MapPin size={13} /></span>
             <span className="text-sm font-medium text-ink">Map search</span>
             <button onClick={() => setPanelOpen(false)} aria-label="Hide search panel" className="ml-auto flex h-8 w-8 items-center justify-center rounded-md text-dim hover:bg-glass/10 hover:text-ink"><X size={16} /></button>
           </div>
           <p className="map-search-intro mb-3 text-xs leading-relaxed text-dim">Find places, compare areas, or ask Nalu to map what matters to you.</p>
-          <div className="flex items-center gap-1.5 rounded-xl border border-glass/[0.12] bg-glass/[0.04] px-2.5 py-2 focus-within:border-glass/25">
+          <div className="map-search-field flex items-center gap-1.5 rounded-xl border border-glass/[0.12] bg-glass/[0.04] px-2.5 py-2 focus-within:border-glass/25">
             <Search size={14} className="text-dim" />
             <input aria-label="Map search" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void search() }}
               placeholder="Ask any map question…" className="w-full bg-transparent text-sm text-ink outline-none placeholder:text-dim" />
@@ -1561,7 +1561,7 @@ export default function MapPanel() {
               {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
             </button>
           </div>
-          <div className="mt-2 flex flex-wrap gap-1">
+          <div role="group" aria-label="Nearby place categories" className="map-place-categories mt-2 flex flex-wrap gap-1">
             {CATEGORY_CHIPS.map((c) => (
               <button key={c.term} onClick={() => searchCategory(c.term)} disabled={!ready || authErr}
                 className="rounded-full border border-glass/10 bg-glass/[0.05] px-2 py-0.5 text-[10px] text-ink hover:border-accent/50 hover:bg-accent/15 hover:text-[#e0c489] disabled:opacity-50">
@@ -1572,9 +1572,9 @@ export default function MapPanel() {
           {loading && <div role="status" className="mt-2 text-[11px] text-dim">Searching the map…</div>}
           {err && <div role="status" className="mt-2 text-[11px] text-amber-300/90">{err}</div>}
         </div>
-        <div className="flex-1 overflow-y-auto p-2">
+        <div className="map-search-results flex-1 overflow-y-auto p-2">
           {comparison && (
-            <div className="mb-2 overflow-hidden rounded-xl border border-accent/30 bg-accent/[0.06]">
+            <div className="map-comparison mb-2 overflow-hidden rounded-xl border border-accent/30 bg-accent/[0.06]">
               <div className="flex items-center justify-between border-b border-glass/10 px-2.5 py-2">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gold">{comparison.title}</span>
                 {comparison.criteria.length > 3 && <span className="shrink-0 text-[9px] text-dim">swipe →</span>}
@@ -1615,14 +1615,14 @@ export default function MapPanel() {
             </div>
           )}
           {answer && (
-            <div className="mb-2 rounded-xl border border-accent/30 bg-accent/[0.07] p-2.5">
+            <div className="map-search-answer mb-2 rounded-xl border border-accent/30 bg-accent/[0.07] p-2.5">
               <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-gold"><Sparkles size={11} /> Nalu</div>
               <p className="text-[12px] leading-relaxed text-ink">{answer}</p>
             </div>
           )}
           {results.map((p, i) => (
             <div key={p.id}
-              className={`mb-1.5 flex w-full gap-2.5 rounded-xl border p-2 text-left transition-colors ${sel === p.id ? 'border-accent/50 bg-accent/[0.08]' : 'border-glass/[0.07] hover:bg-glass/[0.04]'}`}>
+              className={`map-place-result mb-1.5 flex w-full gap-2.5 rounded-xl border p-2 text-left transition-colors ${sel === p.id ? 'border-accent/50 bg-accent/[0.08]' : 'border-glass/[0.07] hover:bg-glass/[0.04]'}`}>
               <button onClick={() => focus(p)} aria-pressed={sel === p.id} aria-label={`Show ${p.name} on map`} className="flex min-w-0 flex-1 gap-2.5 text-left">
               <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-[#15170f]" style={{ background: typeColor(p.types) }}>{i + 1}</span>
               <span className="min-w-0 flex-1">
@@ -1638,7 +1638,7 @@ export default function MapPanel() {
               <a aria-label={`Open ${p.name} in Google Maps`} href={mapPlaceUrl(p)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="mt-0.5 shrink-0 text-dim hover:text-ink"><ExternalLink size={12} /></a>
             </div>
           ))}
-          {!results.length && !answer && !loading && !err && <div className="px-2 py-6 text-center text-[11px] text-dim">Ask a question to see the answer on the map.</div>}
+          {!results.length && !answer && !loading && !err && <div className="map-search-empty px-2 py-6 text-center text-[11px] text-dim">Ask a question to see the answer on the map.</div>}
         </div>
       </div>
 
@@ -1702,7 +1702,7 @@ export default function MapPanel() {
               // Only show real status (parcel/permit/feature/layers). No idle "ask a
               // question" hint, and lifted above the 3D control cluster so they don't overlap.
               return msg ? (
-                <div className="pointer-events-none absolute bottom-14 right-3 max-w-[60vw] rounded-md bg-black/55 px-2 py-1 text-right text-[10px] text-dim backdrop-blur">{msg}</div>
+                <div className="map-data-status pointer-events-none absolute bottom-14 right-3 max-w-[60vw] rounded-md bg-black/55 px-2 py-1 text-right text-[10px] text-dim backdrop-blur">{msg}</div>
               ) : null
             })()}
           </div>

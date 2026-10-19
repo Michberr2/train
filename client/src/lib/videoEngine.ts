@@ -12,6 +12,7 @@
 import { h3Available, generateWithH3 } from './localH3'
 import { generateOnDeviceVideo, canRecordOnDevice, type VideoAspect } from './onDeviceVideo'
 import { checkVideoAbort, durableVideoUrl, videoAttempt } from './videoLifecycle'
+import { isH3MovieRequest } from './h3Movie'
 
 export type VideoEngine = 'minimax-h3' | 'on-device' | 'cloud'
 
@@ -30,6 +31,8 @@ export interface VideoJob {
   /** Skip the in-browser engine (e.g. caller only wants a hosted URL). */
   skipOnDevice?: boolean
   onProgress?: (fraction: number, phase: string) => void
+  /** Saved local movie URL, available while its shots are being rendered. */
+  onPreview?: (url: string) => void
   signal?: AbortSignal
 }
 
@@ -62,10 +65,10 @@ function inferFast(job: VideoJob): boolean {
 }
 
 // Decide 16:9 / 9:16 / 1:1 from the prompt when the caller didn't say.
-function inferAspect(job: VideoJob): VideoAspect {
+function inferAspect(job: VideoJob, movie = false): VideoAspect {
   if (job.aspect) return job.aspect
   const p = job.prompt.toLowerCase()
-  if (/\b(reels?|tiktok|shorts?|vertical|story|stories|9:16|portrait)\b/.test(p)) return '9:16'
+  if (/\b(reels?|tiktok|shorts?|vertical|9:16|portrait)\b/.test(p) || (!movie && /\b(story|stories)\b/.test(p))) return '9:16'
   if (/\b(square|1:1|instagram post)\b/.test(p)) return '1:1'
   return '16:9'
 }
@@ -77,7 +80,17 @@ function inferAspect(job: VideoJob): VideoAspect {
  */
 export async function generateVideo(job: VideoJob): Promise<VideoOutput> {
   checkVideoAbort(job.signal)
-  const aspect = inferAspect(job)
+  const movie = isH3MovieRequest(job.prompt, job.seconds)
+  const aspect = inferAspect(job, movie)
+  // Movies require actual H3 shots and continuity. Never substitute the
+  // browser animation or a different hosted model when local H3 is offline.
+  if (movie) {
+    if (job.skipH3) throw new Error('Multi-shot movies require the local H3 runner.')
+    const { generateH3Movie } = await import('./h3Movie')
+    // Story action ("a fast boat on rough water") is not a quality setting.
+    const result = await generateH3Movie({ ...job, aspect, fast: job.fast === true })
+    return { ...result, engine: 'minimax-h3', onDevice: true }
+  }
   const progress = (fraction: number, phase: string) => { if (!job.signal?.aborted) job.onProgress?.(fraction, phase) }
   // Resolve length + speed ONCE so every rung (local H3, on-device, cloud) agrees.
   // An explicit job.seconds wins; otherwise honor a length named in the prompt.
