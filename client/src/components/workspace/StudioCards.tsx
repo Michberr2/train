@@ -6,6 +6,7 @@ const Blueprint3D = lazy(() => import('./Blueprint3D'))
 import { setBrand, deriveBrand, fromColors, savePalette, getBrand, DEFAULT_BRAND, svgToLogoUrl } from './brandKit'
 import { planRoomFromItems } from './furnishPlan'
 import { generateVideo } from '../../lib/videoEngine'
+import { getToken } from '../../lib/localAuth'
 import { prepareLogoSvg, logoImageUrl, isolatedLogoSvg } from './logoSvg'
 import type { DesignArtifact } from './types'
 
@@ -913,42 +914,27 @@ function logoCachePut(url: string, dataUrl: string) {
     }
   } catch { /* in-memory cache still holds it this session */ }
 }
-// Fetch one logo image through the SERVER proxy (cache-first). The proxy
-// retries with backoff and returns the bytes, so it resolves reliably.
-async function fetchLogoImage(url: string, allowFallback = true): Promise<string> {
+// Generation is called only by explicit Generate/Retry/Regenerate controls.
+// Viewing saved artifacts and changing style never launch provider work.
+async function fetchLogoImage(url: string, signal: AbortSignal): Promise<string> {
   const cached = logoCacheGet(url)
   if (cached) return cached
-  // 1) Pollinations via the server proxy (fast + free when it's up).
-  for (let t = 0; t < 2; t++) {
-    try {
-      const r = await fetch('/api/web', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'proxyimg', url: t === 0 ? url : `${url}&r=${t}` }),
-      })
-      const d = (await r.json()) as { dataUrl?: string }
-      if (d.dataUrl) { logoCachePut(url, d.dataUrl); return d.dataUrl }
-    } catch { /* retry */ }
-  }
-  // 2) FALLBACK to /api/image (ZAI / Gemini / fal) so logos STILL render when
-  //    pollinations is down — for the VISIBLE marks only (not the bulk pre-fetch,
-  //    to avoid hammering the paid providers with 24 requests).
-  if (allowFallback) {
-    try {
-      const prompt = decodeURIComponent((url.match(/\/prompt\/([^?]+)/) || [])[1] || '')
-      if (prompt) {
-        const r = await fetch('/api/image', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt, size: '768x768' }),
-        })
-        const d = (await r.json()) as { url?: string }
-        if (d.url) { logoCachePut(url, d.url); return d.url }
-      }
-    } catch { /* give up gracefully */ }
-  }
-  return ''
+  const token = getToken()
+  const prompt = decodeURIComponent((url.match(/\/prompt\/([^?]+)/) || [])[1] || '')
+  if (!prompt) throw new Error('The logo prompt is missing.')
+  const response = await fetch('/api/image', {
+    method: 'POST', signal,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ prompt, size: '768x768' }),
+  })
+  const data = await response.json() as { url?: string; error?: string }
+  signal.throwIfAborted()
+  if (!response.ok || !data.url) throw new Error(data.error || 'The logo image could not be generated.')
+  logoCachePut(url, data.url)
+  return data.url
 }
 
-type LogoSlot = { st: 'loading' | 'done' | 'error'; data: string }
+type LogoSlot = { st: 'idle' | 'loading' | 'done' | 'error'; data: string; error?: string }
 const downloadDataUrl = (data: string, filename: string) => {
   const a = document.createElement('a')
   a.href = data; a.download = filename
@@ -1039,19 +1025,18 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, c
       ? `two-color palette: ${primaryName} as the dominant color with ${accentName} accents`
       : `monochrome ${primaryName}`
   })()
-  // ONE seed-key builder used by BOTH the visible grid AND the background preload,
-  // so a preset's prefetched URL is byte-identical to what the grid later requests
-  // (a mismatch silently defeats the "switching styles is instant" cache-warm).
+  // Stable keys let saved images survive revisiting the same style.
   const seedKey = (styleSeg: string, r: number, n: number) => `${name}|${styleSeg}|${userStyle || ''}|${r}|${n}`
-  const urls = useMemo(
-    () => [0, 1, 2].map((n) => logoImgUrl({
+  const urlsForRound = (variant: number) => [0, 1, 2].map((n) => logoImgUrl({
       symbol: concept, colorDesc,
-      seed: seedFor(seedKey(faithful ? 'faithful' : presetKey, round, n)),
+      seed: seedFor(seedKey(faithful ? 'faithful' : presetKey, variant, n)),
       literal: faithful, // faithful (described mark OR a named style) → faithful template, no house-style/award-bait
       userStyle: faithful ? (userStyle || '') : '', // the symbol always stays the user's
       background: background || 'white',
       presetKey: faithful ? undefined : presetKey,
-    })),
+    }))
+  const urls = useMemo(
+    () => urlsForRound(round),
     [name, concept, colorDesc, round, faithful, presetKey, userStyle, background, literal], // eslint-disable-line react-hooks/exhaustive-deps
   )
   const urlKey = urls.join('|')
@@ -1059,61 +1044,49 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, c
   // local cache) so finished logos show INSTANTLY on (hard) refresh — never reloaded.
   const seedSlot = (u: string): LogoSlot => {
     const c = (saved && saved[u]) || logoCacheGet(u)
-    return c ? { st: 'done', data: c } : { st: 'loading', data: '' }
+    return c ? { st: 'done', data: c } : { st: 'idle', data: '' }
   }
   const [slots, setSlots] = useState<LogoSlot[]>(() => urls.map(seedSlot))
-  const [revealed, setRevealed] = useState(false)
-
-  // Show cached logos immediately; only network-fetch the genuine cache MISSES.
+  const activeKey = useRef(urlKey)
+  activeKey.current = urlKey
+  const pending = useRef(new Map<string, AbortController>())
   useEffect(() => {
-    let alive = true
-    const initial = urls.map(seedSlot)
-    setSlots(initial)
-    setRevealed(initial.every((s) => s.st === 'done')) // all cached → reveal at once, no spinner
-    urls.forEach((u, i) => {
-      if (initial[i].st === 'done') { if (saved && saved[u]) logoMemCache.set(u, saved[u]); return } // already have it — don't reload
-      fetchLogoImage(u).then((d) => {
-        if (!alive) return
-        if (d && onCache) onCache(u, d) // persist into the artifact → saved in the DB
-        setSlots((prev) => {
-          const next = prev.slice()
-          next[i] = d ? { st: 'done', data: d } : { st: 'error', data: '' }
-          return next
-        })
-      })
-    })
-    return () => { alive = false }
-  }, [urlKey]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Pre-load EVERY style's logos in the background (round 0) so switching styles is
-  // instant. FAITHFUL logos have no style presets to switch to — nothing to prefetch.
-  useEffect(() => {
-    if (faithful) return // one faithful look; no presets to warm up
-    let alive = true
-    const all = LOGO_STYLES.flatMap((s) => [0, 1, 2].map((n) => logoImgUrl({ symbol: concept, colorDesc, seed: seedFor(seedKey(s.key, 0, n)), literal: false, userStyle: '', background: background || 'white', presetKey: s.key })))
-    const queue = all.filter((u) => !logoCacheGet(u)) // skip already-cached
-    let running = 0, idx = 0
-    const pump = () => {
-      while (alive && running < 3 && idx < queue.length) { // low concurrency: don't starve the VISIBLE logos
-        const u = queue[idx++]; running++
-        fetchLogoImage(u, false).then((d) => { if (d && onCache) onCache(u, d) }).finally(() => { running--; if (alive) pump() })
+    setSlots(urls.map((url, i) => pending.current.has(urlKey + '#' + i) ? { st: 'loading', data: '' } : seedSlot(url)))
+    return () => {
+      for (const [key, controller] of pending.current) {
+        if (key.startsWith(urlKey + '#')) { controller.abort(); pending.current.delete(key) }
       }
     }
-    const t = setTimeout(pump, 4000) // wait for the visible style to finish first
-    return () => { alive = false; clearTimeout(t) }
-  }, [name, concept, colorDesc, faithful, background]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [urlKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const allSettled = slots.length > 0 && slots.every((s) => s.st !== 'loading')
-  const doneCount = slots.filter((s) => s.st === 'done').length
-  // Reveal the whole batch at once the first time every slot has settled.
-  useEffect(() => { if (allSettled) setRevealed(true) }, [allSettled])
-
-  const retry = (i: number) => {
-    setSlots((prev) => { const n = prev.slice(); n[i] = { st: 'loading', data: '' }; return n })
-    fetchLogoImage(urls[i]).then((d) =>
-      setSlots((prev) => { const n = prev.slice(); n[i] = d ? { st: 'done', data: d } : { st: 'error', data: '' }; return n }),
-    )
+  const generate = (targets: string[], indices: number[]) => {
+    const key = targets.join('|')
+    for (const i of indices) {
+      const requestKey = key + '#' + i
+      if (pending.current.has(requestKey)) continue
+      const controller = new AbortController()
+      pending.current.set(requestKey, controller)
+      setSlots(prev => { const next = prev.slice(); next[i] = { st: 'loading', data: '' }; return next })
+      fetchLogoImage(targets[i], controller.signal).then(data => {
+        if (controller.signal.aborted) return
+        onCache?.(targets[i], data)
+        if (activeKey.current === key) setSlots(prev => { const next = prev.slice(); next[i] = { st: 'done', data }; return next })
+      }).catch(error => {
+        if (!controller.signal.aborted && activeKey.current === key) setSlots(prev => {
+          const next = prev.slice(); next[i] = { st: 'error', data: '', error: error instanceof Error ? error.message : 'Generation failed.' }; return next
+        })
+      }).finally(() => { if (pending.current.get(requestKey) === controller) pending.current.delete(requestKey) })
+    }
   }
+  const regenerate = () => {
+    const nextRound = round + 1, targets = urlsForRound(nextRound)
+    activeKey.current = targets.join('|')
+    setRound(nextRound)
+    generate(targets, [0, 1, 2])
+  }
+  const loading = slots.some(slot => slot.st === 'loading') || [...pending.current.keys()].some(key => key.startsWith(urlKey + '#'))
+  const doneCount = slots.filter(slot => slot.st === 'done').length
+  const generationError = slots.find(slot => slot.error)?.error
 
   return (
     <div className="border-t border-glass/[0.08] px-4 py-3">
@@ -1144,7 +1117,8 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, c
             ))}
           </>
         )}
-        <button onClick={() => setRound((r) => r + 1)} className="ml-auto rounded px-1.5 py-0.5 text-[10px] text-dim hover:bg-glass/10 hover:text-ink">
+        <button disabled={loading} onClick={() => generate(urls, slots.flatMap((s, i) => s.st !== 'done' ? [i] : []))} className="ml-auto rounded px-1.5 py-0.5 text-[10px] text-dim hover:bg-glass/10 hover:text-ink disabled:opacity-50">Generate images</button>
+        <button disabled={loading} onClick={regenerate} className="disabled:opacity-50 rounded px-1.5 py-0.5 text-[10px] text-dim hover:bg-glass/10 hover:text-ink">
           Regenerate
         </button>
       </div>
@@ -1173,8 +1147,8 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, c
                     <span className="h-6 w-6 animate-spin rounded-full border-2 border-black/15 border-t-accent" />
                   </div>
                 ) : (
-                  <button onClick={() => retry(i)} className="absolute inset-0 flex items-center justify-center bg-white text-[10px] text-black/50 hover:bg-black/[0.03]">
-                    <span className="rounded-md bg-black/5 px-2 py-1">Retry</span>
+                  <button onClick={() => generate(urls, [i])} className="absolute inset-0 flex items-center justify-center bg-white text-[10px] text-black/50 hover:bg-black/[0.03]">
+                    <span className="rounded-md bg-black/5 px-2 py-1">{s.st === 'idle' ? 'Generate' : 'Retry'}</span>
                   </button>
                 )}
               </div>
@@ -1182,11 +1156,10 @@ function LogoImages({ name, brand, accent, symbol, colorNames, serif, literal, c
       </div>
       <div className="mt-1.5 text-[10px] text-dim">
         {saveError && <p role="status">{saveError}</p>}
-        {revealed
-          ? (faithful
-              ? 'Built to your description — Regenerate for fresh takes, or “Try other styles” to explore.'
-              : 'Designed logos rendered by Nalu — pick a style or Regenerate for new options; uses your brand color.')
-          : `Designing your logos… ${doneCount}/3 ready`}
+        {generationError && <p role="status">{generationError}</p>}
+        {loading ? `Designing your logos… ${doneCount}/3 ready` : doneCount
+          ? 'Saved images are ready. Generate missing images or Regenerate for new options.'
+          : 'Choose a style, then Generate images. Generation uses your daily image allowance.'}
       </div>
     </div>
   )

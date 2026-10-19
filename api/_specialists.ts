@@ -1,6 +1,9 @@
 // Nalu specialist FLEET — the routed registry of hyper-specialized experts.
-// Self-contained (imports nothing) so it can power both the chat handler and the
-// offline routing-eval harness.
+// Shared by the chat handler and the offline routing-eval harness.
+// Kept here for compatibility with callers that import the specialist
+// registry directly. The capability implementation is also exported from
+// _modelCapabilities for handlers that need model-specific checks.
+export const VISION_CAPABLE = true
 //
 // EVERY specialist is its own proprietary NALU MODEL — a small model fine-tuned in
 // Tinker (from an open-source base) and owned by Nalu, trained SEPARATELY per domain
@@ -417,7 +420,7 @@ export const VISION: Specialist = {
   name: 'Nalu Vision',
   model: VISION_MODEL,
   prompt:
-    'Mode: Nalu Vision — you CAN see the attached image(s); analyze them with expert precision. Identify what is actually shown (objects, people, text, materials, colors, brands, style, condition, setting) and answer exactly what was asked. When asked to break something down or analyze it, be exhaustive and specific: name every significant element, estimate dimensions/quantities where inferable, read any visible text verbatim, and organize the analysis cleanly. Never hedge with "I cannot see images" — you can. If an image is genuinely unreadable, say what is unclear specifically.',
+    'Mode: Nalu Vision — inspect the image inputs actually supplied with this request and answer exactly what was asked. Identify visible objects, text, materials, colors, layout and condition with specific evidence. Distinguish direct observations from uncertain inference; do not invent obscured text, identity, dimensions or details. For measurements, state the scale or reference needed. If an image is missing, inaccessible or unreadable, say what could not be inspected and continue with the usable evidence. Never claim to see an image that was not available.',
 }
 export const GENERAL: Specialist = {
   kind: 'general',
@@ -451,9 +454,6 @@ for (const s of SPECIALISTS) {
   if (s.weight == null) s.weight = 2
 }
 
-/** Models that accept image_url content parts. */
-export const VISION_CAPABLE = /\bvl\b|-vl-|vision|gemma-3|gemini|llama-?4|pixtral|internvl|phi-4-multimodal|inkling/i
-
 export function hasImage(messages: RouteMsg[]): boolean {
   return messages.some(
     (m) =>
@@ -481,7 +481,7 @@ export function scoreSpecialistEx(text: string): { spec: Specialist | null; hits
   for (const s of SPECIALISTS) {
     if (!s.match) continue
     const m = text.match(new RegExp(s.match.source, 'gi'))
-    const hits = m ? m.length : 0
+    const hits = m ? new Set(m.map(hit => hit.toLocaleLowerCase())).size : 0
     if (hits === 0) continue
     const w = s.weight ?? 2
     if (hits > bestHits || (hits === bestHits && w > bestWeight)) { bestHits = hits; bestWeight = w; best = s }
@@ -496,10 +496,13 @@ export function scoreSpecialist(text: string): Specialist | null {
  *  so a follow-up like "now make it faster" keeps the thread's specialty instead
  *  of silently dropping to General. */
 export function pickSpecialist(messages: RouteMsg[]): Specialist {
-  if (hasImage(messages)) return VISION
+  // An unrelated old attachment must not force every later task into vision.
+  // Provider capability checks still retain every image in the actual context.
+  const latest = [...messages].reverse().find(message => message.role === 'user')
+  if (latest && hasImage([latest])) return VISION
   const userTexts = messages
     .filter((m) => m.role === 'user')
-    .map((m) => (typeof m.content === 'string' ? m.content : ''))
+    .map((m) => typeof m.content === 'string' ? m.content : Array.isArray(m.content) ? m.content.filter(part => part?.type === 'text').map(part => part.text || '').join('\n') : '')
     .filter(Boolean)
   const direct = scoreSpecialist(userTexts[userTexts.length - 1] || '')
   if (direct) return direct
@@ -527,7 +530,8 @@ export function pickSpecialistsMulti(messages: RouteMsg[]): Specialist[] {
   for (const s of SPECIALISTS) {
     if (!s.match) continue
     const hits = text.match(new RegExp(s.match.source, 'gi'))
-    if (hits && hits.length >= 2) scored.push({ s, score: hits.length })
+    const distinct = new Set(hits?.map(hit => hit.toLocaleLowerCase()) || []).size
+    if (distinct >= 2) scored.push({ s, score: distinct })
   }
   scored.sort((a, b) => b.score - a.score)
   return scored.slice(0, 3).map((x) => x.s)

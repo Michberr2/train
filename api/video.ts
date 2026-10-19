@@ -516,12 +516,12 @@ export default async function handler(req: any, res: any) {
   }
 
   // Daily cap (per signed-in user, else per IP) so a traffic spike can't run up
-  // a surprise GPU bill. Fails open if metering is unavailable; refunds the slot
+  // a surprise GPU bill. Requires working metering and refunds the slot
   // if generation fails. Tune with NALU_FREE_VIDEO_PER_DAY / NALU_USER_VIDEO_PER_DAY.
   const quota = await reserveDailyQuota(req, 'video')
   if (!quota.ok) {
-    res.status(429).json({
-      error: quota.signedIn
+    res.status(quota.status || 429).json({
+      error: quota.reason === 'unavailable' ? 'Usage checks are temporarily unavailable. Please retry in a moment.' : quota.signedIn
         ? `You've hit today's video limit (${quota.limit}/day). It resets tomorrow.`
         : `Free video limit reached (${quota.limit}/day). Sign in for more, or try again tomorrow.`,
     })

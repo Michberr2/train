@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Nalu for Chrome",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "minimum_chrome_version": "116",
   "description": "Nalu, in your browser. Give it a goal and it reads the current page and acts on it for you — click, type, navigate — with your approval on anything consequential.",
-  "permissions": ["activeTab", "scripting", "tabs", "storage", "sidePanel", "debugger", "alarms", "notifications"],
+  "permissions": ["activeTab", "scripting", "tabs", "storage", "sidePanel", "alarms", "notifications"],
   "host_permissions": ["https://n4lu.ai/*", "http://*/*", "https://*/*"],
   "background": { "service_worker": "background.js" },
   "side_panel": { "default_path": "sidepanel.html" },

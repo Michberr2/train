@@ -10,6 +10,12 @@ export function cancellationSignal(explicit?: AbortSignal | null): AbortSignal |
   return explicit && parent && explicit !== parent ? AbortSignal.any([explicit, parent]) : explicit || parent
 }
 
+/** Propagate a worker deadline through nested provider/artifact calls without
+ * treating deadline expiry as a disconnected HTTP response. */
+export async function withCancellationSignal<T>(signal: AbortSignal, task: () => Promise<T>): Promise<T> {
+  return requestSignal.run(cancellationSignal(signal)!, task)
+}
+
 export function throwIfCancelled(signal = cancellationSignal()): void {
   if (signal?.aborted) throw new DOMException('The request was cancelled.', 'AbortError')
 }

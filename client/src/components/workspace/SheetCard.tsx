@@ -41,9 +41,7 @@ export async function buildWorkbookBlob(doc: SheetDoc, brand: BrandKit | null): 
   const headFont = brand?.headingFont || 'Georgia'
   const bodyFont = brand?.bodyFont || 'Calibri'
   const sheets = doc.sheets && doc.sheets.length ? doc.sheets : [{ name: 'Sheet1', columns: [], rows: [] }]
-  // Never let a bad formula crash the export — fall back to the raw cell value.
-  const ev = (() => { try { return buildEvaluator(sheets) } catch { return { value: (): Cell => '' } } })()
-  const evVal = (si: number, ri: number, ci: number): Cell => { try { return ev.value(si, ri, ci) as Cell } catch { return '' } }
+  const ev = buildEvaluator(sheets)
   sheets.forEach((s, si) => {
     const ws = wb.addWorksheet(s.name || `Sheet${si + 1}`)
     const cols = s.columns || []
@@ -61,8 +59,10 @@ export async function buildWorkbookBlob(doc: SheetDoc, brand: BrandKit | null): 
       const row = ws.addRow(
         r.map((c, ci) => {
           if (typeof c === 'string' && c.startsWith('=')) {
-            const result = evVal(si, ri, ci)
-            return (typeof result === 'number' || typeof result === 'string') && result !== c ? { formula: c.slice(1), result } : { formula: c.slice(1) }
+            const result = ev.result(si, ri, ci)
+            if (result.status === 'unsupported') return { formula: c.slice(1) }
+            if (result.status === 'error') return { formula: c.slice(1), result: { error: result.error } }
+            return { formula: c.slice(1), result: result.value ?? 0 }
           }
           return c
         }),
@@ -71,6 +71,12 @@ export async function buildWorkbookBlob(doc: SheetDoc, brand: BrandKit | null): 
         cell.font = { name: bodyFont, size: 10 }
         const nf = fmts[cn - 1]?.numFmt
         if (nf && (typeof cell.value === 'number' || (cell.value && typeof cell.value === 'object'))) cell.numFmt = nf
+        if (typeof r[cn - 1] === 'string' && String(r[cn - 1]).startsWith('=')) {
+          const result = ev.result(si, ri, cn - 1)
+          if (result.status !== 'value') cell.note = result.status === 'unsupported'
+            ? `Nalu could not calculate this formula: ${result.message} No cached numeric answer was supplied.`
+            : `Calculation error ${result.error}: ${result.message}`
+        }
       })
     })
     cols.forEach((_, c) => {
@@ -119,16 +125,13 @@ export default function SheetCard({ data }: { data: SheetDoc }) {
   const brand = useBrand()
   const headBg = '#' + (brand?.primary || '0F1B2D')
 
-  // Evaluate formulas so the preview + PDF show real values, not "=SUM(...)".
-  // NEVER let a bad/recursive formula crash the whole card — fall back to the raw
-  // cell so the spreadsheet ALWAYS renders.
-  const ev = useMemo(() => {
-    try { return buildEvaluator(sheets) }
-    catch { return { value: (si: number, ri: number, ci: number): Cell => (sheets[si]?.rows?.[ri]?.[ci] ?? '') as Cell } }
-  }, [sheets])
-  const cellValue = (si: number, ri: number, ci: number): Cell => {
-    try { return ev.value(si, ri, ci) as Cell } catch { return (sheets[si]?.rows?.[ri]?.[ci] ?? '') as Cell }
-  }
+  const ev = useMemo(() => buildEvaluator(sheets), [sheets])
+  const cellValue = (si: number, ri: number, ci: number): Cell => ev.value(si, ri, ci)
+  const calculationIssues = useMemo(() => sheets.flatMap((s, si) => (s.rows || []).flatMap((row, ri) => row.flatMap((value, ci) => {
+    if (typeof value !== 'string' || !value.startsWith('=')) return []
+    const result = ev.result(si, ri, ci)
+    return result.status === 'value' ? [] : [{ sheet: s.name, row: ri + 2, column: ci + 1, ...result }]
+  }))), [sheets, ev])
   const fmts = useMemo(() => (sheet?.columns || []).map((c) => colFormat(c)), [sheet])
 
   const runExport = async (kind: 'xlsx' | 'pdf', work: () => Promise<void>) => {
@@ -210,6 +213,9 @@ export default function SheetCard({ data }: { data: SheetDoc }) {
         </div>
       )}
 
+      {calculationIssues.length > 0 && <p role="status" className="px-4 py-2 text-xs text-amber-300">
+        {calculationIssues.length} calculation{calculationIssues.length === 1 ? '' : 's'} need review. Errors are shown in the cells; unsupported formulas remain in the Excel file for recalculation.
+      </p>}
       {sheet && (
         <div className="max-h-[70vh] overflow-auto">
           <table className="w-full border-collapse text-xs">
@@ -236,7 +242,7 @@ export default function SheetCard({ data }: { data: SheetDoc }) {
                       <td
                         key={ci}
                         className="border-b border-glass/[0.06] px-3 py-1.5 text-ink"
-                        title={isFormula ? String(r[ci]) : undefined}
+                        title={isFormula ? (() => { const result = ev.result(Math.min(active, sheets.length - 1), ri, ci); return String(r[ci]) + (result.status === 'value' ? '' : `\n${result.message}`) })() : undefined}
                       >
                         {fmts[ci] ? fmts[ci].display(v) : String(v ?? '')}
                       </td>

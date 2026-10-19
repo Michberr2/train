@@ -184,6 +184,15 @@ try {
     assert.deepEqual(listed.find(item => item.id === flow.id), { id: flow.id, name })
     const runs = []
     for (const [command, mode] of [[`run pipeline ${name}`, 'run'], [`resume flow ${flow.id}`, 'resume']]) {
+      if (mode === 'resume') {
+        // Resume is valid only for a flow with a persisted continuation. Seed
+        // the isolated fixture with one so this check exercises the real
+        // resume dispatch path instead of asserting an invalid request.
+        const resumable = flows.map(item => item.id === flow.id
+          ? { ...item, run: { status: 'running', startedAt: Date.now(), revision: 1 } }
+          : item)
+        await expectAPI({ action: 'set', key: 'nalu-agent-flows', value: resumable })
+      }
       const before = db.prepare('SELECT COUNT(*) AS count FROM nalu_task_jobs WHERE user_id=?').get(owner).count
       const errors = [], deltas = []
       const reply = await mobile.assistantTurn([{ role: 'user', content: command }], { onError: error => errors.push(error), onDelta: delta => deltas.push(delta) }, token)
