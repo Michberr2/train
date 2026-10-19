@@ -707,7 +707,7 @@ function AssistantThink({
         aria-expanded={open}
         className="mb-2 inline-flex items-center gap-1.5 rounded-lg border border-glass/[0.14] bg-glass/[0.05] px-2.5 py-1 text-xs text-dim transition-colors hover:bg-glass/10 hover:text-ink"
       >
-        <NaluGlobe size={18} active={isLive} />
+        {isLive ? <NaluGlobe size={18} /> : <Brain size={14} />}
         {isLive ? 'Thinking…' : 'View thinking'}
         {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
       </button>
@@ -3016,11 +3016,11 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
               onOpenChat={id => { setActiveId(id); openSpace('chat') }}
               onOpenSpace={openSpace} onOpenSwarm={openSwarmActivity}
               onNewChat={() => { newChat(); openSpace('chat') }}
-              savedMemory={<MemoryPanel designEnabled onOpenChat={id => { setActiveId(id); openSpace('chat') }} />}/>
+              savedMemory={<MemoryPanel chats={chats} designEnabled onOpenChat={id => { setActiveId(id); openSpace('chat') }} />}/>
           </Suspense>
-        ) : <MemoryPanel onOpenChat={selectChat} />)}
+        ) : <MemoryPanel chats={chats} onOpenChat={selectChat} />)}
         {view === 'agents' && (
-          <Suspense fallback={<div role="status" className="flex flex-1 items-center justify-center gap-2 text-sm text-dim"><NaluGlobe size={24} /> Opening AutoPilot…</div>}>
+          <Suspense fallback={<div role="status" className="flex flex-1 items-center justify-center gap-2 text-sm text-dim">Opening AutoPilot…</div>}>
             <div className="ws-feature-shell"><WorkspaceIntro compact label="AutoPilot" title="Leave it with me." description="Plan the steps, connect your tools, and follow your work as it happens."/><AgentsPanel /></div>
           </Suspense>
         )}

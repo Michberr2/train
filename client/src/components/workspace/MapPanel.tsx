@@ -1494,12 +1494,11 @@ export default function MapPanel() {
       const compareMarkers: AIShape[] = (d.comparison?.places || []).map((pl) => ({ type: 'marker', category: 'area', label: pl.name, point: { lat: pl.lat, lng: pl.lng } }))
       const allShapes = [...(d.shapes || []), ...compareMarkers.filter((m) => !(d.shapes || []).some((sh) => sh.type === 'marker' && sh.label === m.label))]
       const shapeBounds = allShapes.length ? drawAIShapes(allShapes) : null
-      if (d.search) await runPlaces(d.search, !hasView && !shapeBounds, request, d.center)
-      else setResults([])
-      searchRequests.current.check(request)
       // ALWAYS frame the view on where they're asking about: AI's explicit
-      // center wins, then the drawn shapes, then a live geocode of the place —
-      // so the map never just sits on the old view.
+      // center wins, then the drawn shapes, then actual Places/geocoding.
+      // Apply the useful plan before waiting on an optional venue provider.
+      // A pin-service outage must not discard the answer or leave the camera
+      // on the previous location.
       let framed = false
       if (d.center && mapRef.current) {
         mapRef.current.panTo(d.center)
@@ -1516,10 +1515,23 @@ export default function MapPanel() {
         fitGlobe(shapeBounds, 70)
         framed = true
       }
+      let placesWarning = ''
+      if (d.search) {
+        try {
+          const places = await runPlaces(d.search, !framed, request, d.center)
+          if (!framed && places.length) framed = true
+          if (!places.length) placesWarning = 'No matching live places found. Try a more specific place or nearby area.'
+        } catch (error) {
+          searchRequests.current.check(request)
+          placesWarning = `Live place pins are unavailable. ${error instanceof Error ? error.message : 'Please try again.'}`
+        }
+      } else setResults([])
+      searchRequests.current.check(request)
       // Fallback: geocode the place so we ALWAYS zoom to the asked-about location.
       if (!framed) framed = await geocodeTo(d.search || q, request)
       searchRequests.current.check(request)
       const notes: string[] = []
+      if (placesWarning) notes.push(placesWarning)
       if (enabled.length) notes.push(`Enabled ${enabled.join(' + ')}`)
       if (d.shapes?.length) notes.push(`drew ${d.shapes.length} shape${d.shapes.length > 1 ? 's' : ''}`)
       setErr(notes.join(' · '))

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import NaluGlobe from '../NaluGlobe'
+import { Loader2 } from 'lucide-react'
+import '../nalu-globe.css'
 
 const LABELS: Record<string, string> = {
   image:'image', sheet:'spreadsheet', doc:'document', video:'video',
@@ -27,7 +28,7 @@ export default function MediaLoader({ kind, action = 'creating' }: { kind: strin
   }, [kind, action])
   const time = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
   return <div className="nalu-media-loader" role="status">
-    <NaluGlobe size={34} />
+    <Loader2 size={22} className="shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" />
     <div className="nalu-media-loader-copy">
       <span className="nalu-media-loader-title">{action === 'opening' ? 'Opening' : 'Creating'} your {LABELS[kind] || 'creation'}</span>
       <span className="nalu-media-loader-elapsed" aria-hidden="true">{time} elapsed</span>

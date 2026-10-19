@@ -1,0 +1,88 @@
+/* Frosted tool windows over the approved desktop scene. Keep blur on a
+   decorative layer: filtering or isolating a content ancestor traps dialogs.
+   Chat retains its existing appearance, in both inline and pop-out modes. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat])>.ws-main {
+  position:relative;
+  background:transparent;
+  border:1px solid rgb(255 255 255/.68);
+  box-shadow:0 24px 64px -28px rgb(26 40 48/.27),0 2px 8px rgb(26 40 48/.06),inset 0 1px 0 rgb(255 255 255/.8);
+  --window-card:rgb(var(--window-panel-rgb)/.76);
+  --window-chrome:rgb(var(--window-subtle-rgb)/.62);
+  --window-border:rgb(var(--window-line-rgb)/.14);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat])>.ws-main::before {
+  content:'';
+  position:absolute;
+  inset:0;
+  z-index:-1;
+  pointer-events:none;
+  border-radius:inherit;
+  background:linear-gradient(145deg,rgb(var(--window-panel-rgb)/.9),rgb(var(--window-panel-rgb)/.73) 48%,rgb(var(--window-subtle-rgb)/.78));
+  -webkit-backdrop-filter:blur(28px) saturate(125%);
+  backdrop-filter:blur(28px) saturate(125%);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat])[data-workspace-theme=dark]>.ws-main {
+  border-color:rgb(255 255 255/.16);
+  box-shadow:0 24px 64px -24px rgb(0 0 0/.48),inset 0 1px 0 rgb(255 255 255/.08);
+}
+
+/* One glass frame with quieter inset cards, rather than many opaque boxes. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main :is(.ws-studio-preview,.ws-studio-brief,.live-hub-card,.live-hub-saved-card,.memory-review-library,.memory-review-network,.memory-review-details,.ws-settings-group>section,.ws-plugins-grid>section,.ws-projects-grid>div) {
+  background:var(--window-card);
+  border-color:var(--window-border);
+  border-radius:14px;
+  box-shadow:0 2px 8px rgb(20 30 40/.025),inset 0 1px 0 rgb(var(--window-panel-rgb)/.65);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main :is(.ws-studio-preview>div:first-child,.ws-studio-brief>div:last-child,.live-hub-card-heading,.live-hub-thumbnail-chrome,.memory-review-library-footer,.map-search-header,.map-layer-panel footer,.ap-toolbar,.ap-flowbar,.ws-projects-header,.ws-plugins-header) {
+  background:var(--window-chrome);
+  border-color:var(--window-border);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main :is(.ws-projects,.ws-plugins,.workspace-live-hub,.ws-studio-layout) {
+  background:transparent;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main .map-workspace {
+  --map-surface:var(--window-card);
+  --map-floating:rgb(var(--window-panel-rgb)/.94);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main .map-workspace .map-search-panel {
+  background:var(--window-card);
+  border-color:var(--window-border);
+  border-radius:14px;
+  box-shadow:0 2px 8px rgb(20 30 40/.03);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main .ap-workspace {
+  --ap-surface:var(--window-card);
+  background:var(--window-card);
+  border-radius:14px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main .ap-stage {
+  background-color:rgb(var(--window-canvas-rgb)/.45);
+}
+
+/* Interface controls use black/white ink. Keep this scoped to the product
+   controls, outside generated artwork, map layers and conversation windows. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main :is(.map-workspace,.ws-settings,.ws-skills,.ws-plugins,.ws-projects,.ap-workspace) :is([class*="text-red-"],[class*="text-rose-"],[class*="text-amber-"],[class*="text-yellow-"],[class*="text-emerald-"],[class*="text-green-"],[class*="text-blue-"],[class*="text-sky-"],[class*="text-violet-"],[class*="text-purple-"]) {
+  color:var(--window-ink);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main :is(.map-workspace,.ws-settings,.ws-skills,.ws-plugins,.ws-projects,.ap-workspace,.ws-studio-toolbar,.review-studio-toolbox,.ws-studio-brief) :is([class*="hover:text-gold"],[class*="hover:text-amber-"],[class~="hover:text-[#e0c489]"]):hover {
+  color:var(--window-ink);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main :is(.ap-toolbar-menu,.ap-template-grid,.ap-node-icon) svg {
+  color:var(--window-ink)!important; /* Existing node types set inline colors. */
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main .live-hub-error {
+  color:var(--window-ink);
+  background:var(--window-card);
+  border-color:var(--window-border);
+  border-radius:10px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat]) .ws-main .live-hub-error button { border-color:var(--window-border); }
+
+/* Readable fallback for platforms without backdrop filtering or when the
+   person requests less transparency. No layout, animation or behavior changes. */
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat])>.ws-main::before { background:rgb(var(--window-panel-rgb)); }
+}
+@media(prefers-reduced-transparency:reduce) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace:not([data-workspace-view=chat])>.ws-main::before { background:rgb(var(--window-panel-rgb)); backdrop-filter:none; -webkit-backdrop-filter:none; }
+}

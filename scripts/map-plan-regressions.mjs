@@ -80,6 +80,9 @@ try {
     assert.deepEqual(await invoke('coffee near downtown Orlando', noSearch), { ...noSearch, search: null, comparison: normalizeMapComparison(plan.comparison, []) }, 'only plans with a Places lookup are narrowed')
   }
   assert.equal(JSON.stringify(plan), original, 'neither classification nor handler mutates the model response fixture')
+  const malformedShapes = await invoke('Outline downtown Orlando', { ...plan, shapes: [null, 3, 'invalid', [], ...plan.shapes] })
+  assert.deepEqual(malformedShapes.shapes, plan.shapes, 'one malformed AI shape does not discard an otherwise usable answer and plan')
+  assert.equal(malformedShapes.answer, plan.answer)
   console.log(`PASS: ${plain.length} plain lookup and ${advanced.length} advanced/ambiguous query cases through the actual Map handler; no-search preservation, exact center/query/answer preservation, and no provider calls.`)
 } finally {
   globalThis.fetch = oldFetch

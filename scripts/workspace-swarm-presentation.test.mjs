@@ -32,3 +32,21 @@ test('user messages stay plain text and fixture labels remain explicit', () => {
   assert.ok(user.includes('<p>## My literal request</p>'))
   assert.ok(render(controller('A sample reply', 'sample')).includes('Local sample'))
 })
+
+test('the globe belongs to agent replies, never workspace loading or message submission', () => {
+  const ready = controller('A saved reply')
+  const loading = { ...ready, loading: true, state: { ...ready.state, projects: [], messages: [] }, messages: [] }
+  const loadingHtml = render(loading)
+  assert.match(loadingHtml, /Loading your Swarm workspaces/)
+  assert.doesNotMatch(loadingHtml, /class="nalu-globe/)
+  const sendingHtml = render({ ...ready, sending: true })
+  assert.match(sendingHtml, /Sending your message/)
+  assert.doesNotMatch(sendingHtml, /class="nalu-globe/)
+  assert.doesNotMatch(render(ready), /class="nalu-globe/)
+  for (const speaker of ['Nalu', 'Rocky', 'Milo']) {
+    const turn = { id: `turn-${speaker}`, projectId: 'launch', thread: 'group', status: 'pending', replySpeaker: speaker, userMessageId: 'request', replyId: `reply-${speaker}`, createdAt: 3, updatedAt: 3 }
+    const replying = render({ ...ready, pending: true, pendingCount: 1, state: { ...ready.state, turns: [turn] } })
+    assert.match(replying, /class="nalu-globe/)
+    assert.ok(replying.includes(`${speaker} is replying`), speaker)
+  }
+})

@@ -163,6 +163,7 @@ async function mapAI(body: Record<string, unknown>, req?: { headers: Record<stri
       return la != null && ln != null && Math.abs(la) <= 90 && Math.abs(ln) <= 180 ? { lat: la, lng: ln } : null
     }
     const shapes = (Array.isArray(plan.shapes) ? plan.shapes : [])
+      .filter((shape): shape is Record<string, unknown> => !!shape && typeof shape === 'object' && !Array.isArray(shape))
       .map((s) => {
         const o = s as Record<string, unknown>
         const type = String(o.type || '')

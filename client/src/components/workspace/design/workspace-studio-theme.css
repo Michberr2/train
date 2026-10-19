@@ -1,18 +1,18 @@
 /* Studio window chrome uses the workspace's neutral surfaces. Keep all color
    choices inside generated documents, images, canvases and iframes intact. */
 .nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] {
-  --studio-words-accent:49 99 141;
-  --studio-spaces-accent:39 111 88;
-  --studio-motion-accent:151 83 51;
-  --studio-success-ink:#246b4d;
-  --studio-error-ink:#ab3544;
+  --studio-words-accent:var(--ws-ink);
+  --studio-spaces-accent:var(--ws-ink);
+  --studio-motion-accent:var(--ws-ink);
+  --studio-success-ink:var(--window-ink);
+  --studio-error-ink:var(--window-ink);
 }
 .nalu-design-review.workspace-design-surface[data-workspace-design] [data-workspace-theme=dark] [data-studio-design-preview] {
-  --studio-words-accent:151 190 222;
-  --studio-spaces-accent:135 201 172;
-  --studio-motion-accent:232 177 140;
-  --studio-success-ink:#9bdbb9;
-  --studio-error-ink:#f4a8b0;
+  --studio-words-accent:var(--ws-ink);
+  --studio-spaces-accent:var(--ws-ink);
+  --studio-motion-accent:var(--ws-ink);
+  --studio-success-ink:var(--window-ink);
+  --studio-error-ink:var(--window-ink);
 }
 .nalu-design-review.workspace-design-surface[data-workspace-design] [data-studio-design-preview] .ws-studio-toolbar {
   border-color:var(--window-border);

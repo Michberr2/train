@@ -56,7 +56,7 @@
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-empty-thread { margin:auto 0; padding:20px 7px; color:#657284; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-empty-thread strong { display:block; margin-bottom:7px; color:#344358; font-size:16px; font-weight:600; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-empty-thread p { margin:0; max-width:370px; font-size:13px; }
-.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-pending { padding-left:40px; color:#657284; font-size:11px; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-pending { display:flex; align-items:center; gap:9px; padding-left:40px; color:#657284; font-size:11px; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-compose-dock { flex:0 0 auto; padding:12px 20px 18px; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-composer { display:flex; align-items:flex-end; gap:10px; padding:10px 11px 10px 15px; border:1px solid #dfe5ed; border-radius:22px; background:#fff; box-shadow:0 4px 18px #23334b05; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-composer:focus-within { outline:2px solid #5b83a6; outline-offset:2px; border-color:#b9cddd; }

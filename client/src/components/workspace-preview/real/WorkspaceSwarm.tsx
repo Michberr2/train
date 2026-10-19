@@ -203,7 +203,7 @@ export default function WorkspaceSwarm({ swarm, startingAgent, navigationKey, on
   }
 
   return <section ref={root} className="workspace-swarm" data-wide={wide} aria-label="Swarm project workspace">
-    {swarm.loading && !project ? <p className="swarm-pending" role="status"><NaluGlobe size={22}/><span>Loading your Swarm workspaces…</span></p> : swarm.creating || !project ? <NewSwarm key={startingAgent || 'group'} swarm={swarm} startingAgent={startingAgent}/> : <>
+    {swarm.loading && !project ? <p className="swarm-pending" role="status">Loading your Swarm workspaces…</p> : swarm.creating || !project ? <NewSwarm key={startingAgent || 'group'} swarm={swarm} startingAgent={startingAgent}/> : <>
       <header className="swarm-header">
         <div className="swarm-heading"><div><small>Swarm</small>{sample && <span className="swarm-sample-label">Local sample</span>}</div><h2 title={project.title}>{project.title}</h2></div>
         <div className="swarm-project-controls">
@@ -238,7 +238,7 @@ export default function WorkspaceSwarm({ swarm, startingAgent, navigationKey, on
               {message.speaker !== 'You' && <button type="button" className="swarm-message-agent" aria-label={`Open ${message.speaker} direct conversation`} onClick={() => openThread(message.speaker as AgentName)}><Face name={message.speaker}/></button>}
               <div className="swarm-message-copy"><div className="swarm-message-meta"><strong>{message.speaker}</strong><time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div>{!sample && message.speaker !== 'You' ? <div className="swarm-message-markdown"><Markdown>{message.content}</Markdown></div> : <p>{message.content}</p>}<button type="button" className="swarm-track-message" aria-label={message.speaker === 'You' ? 'Track work from your message' : `Track work from ${message.speaker}'s message`} onClick={() => trackMessage(message.content, message.speaker)}>Track work</button></div>
             </article>)}
-            {swarm.sending && !swarm.pending && <p className="swarm-pending" role="status"><NaluGlobe size={22}/><span>Sending your message…</span></p>}
+            {swarm.sending && !swarm.pending && <p className="swarm-pending" role="status">Sending your message…</p>}
             {swarm.pending && <p className="swarm-pending" role="status"><NaluGlobe size={22}/><span>{sample ? swarm.recipient === 'group' ? 'A sample team reply is on its way…' : `${swarm.recipient} is replying in this sample…` : pendingReplyLabel}</span></p>}
           </div>
           <div className="swarm-compose-dock"><form className="swarm-composer" onSubmit={send}>

@@ -6,7 +6,7 @@ import WorkspaceIntro from './WorkspaceIntro'
 // memory clustered under the lobe it belongs to. Click any node for a breakdown of
 // what's inside. As you keep asking questions the lobes fill in and the brain grows —
 // the substrate the Inkling model learns you from. Web-only (ships only in the web client).
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Brain, MessageSquare, Palette, MapPin, Bot, ArrowDownToLine, ArrowUpFromLine, X, ExternalLink, Search, ChevronRight, Network, Minus, Plus, Maximize2 } from 'lucide-react'
 
 // ---- brain regions -------------------------------------------------------------
@@ -55,6 +55,7 @@ function tintedWolf(color: string): HTMLCanvasElement | null {
 type Kind = 'doc' | 'sheet' | 'deck' | 'design' | 'email' | 'video' | 'cad' | 'image'
 const KIND_LOBE: Record<Kind, LobeId> = { doc: 'limbic', sheet: 'parietal', deck: 'occipital', design: 'occipital', email: 'temporal', video: 'occipital', cad: 'occipital', image: 'occipital' }
 const KIND_LABEL: Record<Kind, string> = { doc: 'Document', sheet: 'Sheet', deck: 'Deck', design: 'Design', email: 'Email', video: 'Video', cad: 'CAD', image: 'Image' }
+const ARTIFACT_KINDS = Object.keys(KIND_LABEL) as Kind[]
 
 // topic -> lobe, so conversations cluster into the right region
 const TOPICS: { id: string; label: string; lobe: LobeId; re: RegExp }[] = [
@@ -114,7 +115,7 @@ const nonempty = (v: unknown): v is string => typeof v === 'string' && !!v.trim(
 const attachments = (value: unknown): Att[] => arr(value).filter((v): v is Record<string, unknown> & { name: string } => record(v) && nonempty(v.name))
 const namedRecord = (v: unknown): v is Record<string, unknown> & { id: string } => record(v) && nonempty(v.id)
 const recordLabel = (value: Record<string, unknown>, fallback: string) => [value.name, value.title, value.label].find(nonempty) || fallback
-const MEMORY_KEYS = new Set(['nalu-chats', 'nalu-agent-flows', 'nalu-automations', 'nalu-map-active-layers', 'nalu-map-shapes'])
+const MEMORY_KEYS = new Set(['nalu-chats', 'nalu-deleted-chats', 'nalu-agent-flows', 'nalu-automations', 'nalu-map-active-layers', 'nalu-map-shapes'])
 
 // Saved data can come from older clients or a partially recovered browser store.
 // Normalize only the read model; never rewrite or delete the original records.
@@ -133,6 +134,12 @@ function memoryChats(value: unknown): Chat[] {
         // CAD source and video URLs are strings in the persisted message model.
         for (const kind of ['cad', 'video'] as const) if (nonempty(m[kind])) message[kind] = m[kind]
         if (record(m.image) || nonempty(m.image)) message.image = m.image
+        // Generated images are saved as Markdown by the live chat, rather than
+        // in an image field. Include the same format used by Studio's gallery.
+        if (m.role === 'assistant' && !message.image && typeof m.content === 'string') {
+          const image = m.content.match(/^!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/)
+          if (image) message.image = image[1]
+        }
         return message
       }),
     }]
@@ -140,12 +147,17 @@ function memoryChats(value: unknown): Chat[] {
 }
 
 // Build the whole brain from local knowledge.
-function buildBrain(): { nodes: GNode[]; links: GLink[]; summary: Summary } {
-  const chats = memoryChats(readJSON<unknown>('nalu-chats'))
-  const flows = arr(readJSON<unknown[]>('nalu-agent-flows')).filter(namedRecord)
-  const autos = arr(readJSON<unknown[]>('nalu-automations')).filter(namedRecord)
-  const mapLayers = [...new Set(arr(readJSON<unknown[]>('nalu-map-active-layers')).filter(nonempty))]
-  const mapShapes = arr(readJSON<unknown[]>('nalu-map-shapes')).filter(record)
+export function buildMemoryGraph(chatSource: unknown = readJSON<unknown>('nalu-chats'), { cleared = false }: { cleared?: boolean } = {}): { nodes: GNode[]; links: GLink[]; summary: Summary } {
+  const deleted = new Set(arr(readJSON<unknown>('nalu-deleted-chats')).flatMap(value => nonempty(value) ? [value] : record(value) && nonempty(value.id) ? [value.id] : []))
+  // The Workspace's hydrated state is authoritative. localStorage can be only
+  // a quota-limited skeleton, so it must not replace full saved artifacts.
+  const chats = cleared ? [] : memoryChats(chatSource).filter(chat => !deleted.has(chat.id))
+  // A failed durable archive deliberately retains storage on sign-out. Hide
+  // every collection after session clearing, even while that data is retained.
+  const flows = cleared ? [] : arr(readJSON<unknown[]>('nalu-agent-flows')).filter(namedRecord)
+  const autos = cleared ? [] : arr(readJSON<unknown[]>('nalu-automations')).filter(namedRecord)
+  const mapLayers = cleared ? [] : [...new Set(arr(readJSON<unknown[]>('nalu-map-active-layers')).filter(nonempty))]
+  const mapShapes = cleared ? [] : arr(readJSON<unknown[]>('nalu-map-shapes')).filter(record)
 
   const nodes: GNode[] = []
   const links: GLink[] = []
@@ -191,8 +203,10 @@ function buildBrain(): { nodes: GNode[]; links: GLink[]; summary: Summary } {
       if (!m) continue
       if (m.role === 'user') { summary.attIn += arr(m.attachments).length; if (typeof m.content === 'string' && m.content.trim()) qa++ }
       else summary.attOut += arr(m.attachments).length
-      for (const k of ['doc', 'sheet', 'deck', 'design', 'email', 'cad'] as Kind[]) if ((m as unknown as Record<string, unknown>)[k]) { summary.studio++; artifactKinds.push(k) }
-      for (const k of ['image', 'video'] as Kind[]) if ((m as unknown as Record<string, unknown>)[k]) { summary.attOut++; artifactKinds.push(k) }
+      for (const kind of ARTIFACT_KINDS) if (m[kind]) {
+        summary.studio++; artifactKinds.push(kind)
+        if (kind === 'image' || kind === 'video') summary.attOut++
+      }
     }
     summary.qa += qa
     // which lobe does this chat belong to? dominant topic, else the first artifact, else temporal
@@ -206,14 +220,14 @@ function buildBrain(): { nodes: GNode[]; links: GLink[]; summary: Summary } {
     for (const k of artifactKinds) kindCounts[k] = (kindCounts[k] || 0) + 1
     add({ id: cid, label: c.title || 'Untitled chat', type: 'chat', color: LOBE_BY[lobe].color, r: 5.5, meta: { chatId: c.id, lobe, counts: kindCounts, sub: `${msgs.length} messages` } }, lobePos[lobe])
     links.push({ a: 'lobe:' + lobe, b: cid, k: 0.5 })
-    // a few artifact nodes hanging off the chat (cap to keep it readable)
+    // Keep every creation searchable in the library. Only the canvas preview
+    // is bounded; truncating here made saved files disappear from Memory.
     let made = 0
     for (const m of msgs) {
-      if (made >= 4) break
-      for (const k of ['deck', 'design', 'sheet', 'doc'] as Kind[]) {
+      for (const k of ARTIFACT_KINDS) {
         const v = (m as unknown as Record<string, unknown>)[k]
-        if (v && made < 4) {
-          const title = v && typeof v === 'object' && typeof (v as { title?: unknown }).title === 'string' ? (v as { title: string }).title : KIND_LABEL[k]
+        if (v) {
+          const title = record(v) ? [v.title, v.subject, v.name].find(nonempty) || KIND_LABEL[k] : KIND_LABEL[k]
           const aid = `${cid}:${k}:${made}`
           add({ id: aid, label: title || KIND_LABEL[k], type: k, color: LOBE_BY[KIND_LOBE[k]].color, r: 4, meta: { chatId: c.id, sub: KIND_LABEL[k] } }, lobePos[lobe])
           links.push({ a: cid, b: aid, k: 0.8 })
@@ -233,7 +247,7 @@ function buildBrain(): { nodes: GNode[]; links: GLink[]; summary: Summary } {
 
   // map items -> parietal
   summary.map = mapLayers.length + mapShapes.length
-  ;[...mapLayers, ...mapShapes].slice(0, 24).forEach((m, i) => {
+  ;[...mapLayers, ...mapShapes].forEach((m, i) => {
     const label = typeof m === 'string' ? m : recordLabel(m, `Layer ${i + 1}`)
     const id = 'map:' + i
     add({ id, label: label.slice(0, 30), type: 'map', color: LOBE_BY.parietal.color, r: 4.5, meta: { lobe: 'parietal', sub: 'Map layer' } }, lobePos.parietal)
@@ -242,7 +256,7 @@ function buildBrain(): { nodes: GNode[]; links: GLink[]; summary: Summary } {
 
   // autopilot items -> frontal
   summary.autopilot = flows.length + autos.length
-  ;[...flows, ...autos].slice(0, 24).forEach((f, i) => {
+  ;[...flows, ...autos].forEach((f, i) => {
     const label = recordLabel(f, `Pipeline ${i + 1}`)
     const id = 'flow:' + i
     add({ id, label: label.slice(0, 30), type: 'flow', color: LOBE_BY.frontal.color, r: 5, meta: { lobe: 'frontal', sub: 'AutoPilot pipeline' } }, lobePos.frontal)
@@ -274,12 +288,27 @@ function brainProgress(s: Summary): { pct: number; activeLobes: number } {
   return { pct, activeLobes: active }
 }
 
-export default function MemoryPanel({ onOpenChat, designPreview = false, designEnabled = false }: { onOpenChat?: (chatId: string) => void; designPreview?: boolean; designEnabled?: boolean }) {
+// The force layout is quadratic. Keep its preview responsive for large account
+// histories without removing any items from the searchable saved-work library.
+export function memoryGraphPreview(nodes: GNode[]): GNode[] {
+  const anchors = nodes.filter(node => node.type === 'core' || node.type === 'lobe' || node.type === 'topic')
+  return [...anchors, ...nodes.filter(node => isSavedNode(node)).slice(0, Math.max(0, 128 - anchors.length))]
+}
+
+export function memoryGraphPalette(dark: boolean) {
+  return dark
+    ? { label: '#fafafa', shadow: '#222222', link: 'rgba(230,230,230,0.24)', activeLink: 'rgba(230,230,230,0.72)', outline: '#e5e5e5' }
+    : { label: '#181818', shadow: '#ffffff', link: 'rgba(80,80,80,0.25)', activeLink: 'rgba(55,55,55,0.72)', outline: '#737373' }
+}
+
+export default function MemoryPanel({ chats, onOpenChat, designPreview = false, designEnabled = false }: { chats?: readonly unknown[]; onOpenChat?: (chatId: string) => void; designPreview?: boolean; designEnabled?: boolean }) {
   const reviewLayout = designEnabled || import.meta.env.DEV && designPreview
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const detailRef = useRef<HTMLElement>(null)
-  const [brain, setBrain] = useState(buildBrain)
+  const [revision, setRevision] = useState(0)
+  const [cleared, setCleared] = useState(false)
+  const brain = useMemo(() => buildMemoryGraph(chats, { cleared }), [chats, revision, cleared])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [memoryQuery, setMemoryQuery] = useState('')
   const [memoryFilter, setMemoryFilter] = useState<MemoryFilter>('all')
@@ -292,6 +321,10 @@ export default function MemoryPanel({ onOpenChat, designPreview = false, designE
   const hoverRef = useRef<GNode | null>(null)
   const selRef = useRef<string | null>(null)
   useEffect(() => { selRef.current = selected?.id ?? null }, [selected])
+  useEffect(() => {
+    hoverRef.current = null
+    setSelectedId(id => id && brain.nodes.some(node => node.id === id) ? id : null)
+  }, [brain])
   const selectMemory = (id: string) => {
     setSelectedId(id)
     if (reviewLayout && window.matchMedia('(max-width:760px)').matches) requestAnimationFrame(() => {
@@ -303,22 +336,21 @@ export default function MemoryPanel({ onOpenChat, designPreview = false, designE
 
   useEffect(() => {
     const refresh = () => {
-      const next = buildBrain()
-      hoverRef.current = null
-      setSelectedId((id) => id && next.nodes.some((node) => node.id === id) ? id : null)
-      setBrain(next)
+      setRevision(value => value + 1)
     }
+    const onHydrated = () => { setCleared(false); refresh() }
+    const onCleared = () => { setCleared(true); refresh() }
     const onStorage = (event: StorageEvent) => {
       if ((!event.storageArea || event.storageArea === localStorage) && (event.key === null || MEMORY_KEYS.has(event.key))) refresh()
     }
-    window.addEventListener('nalu-hydrated', refresh)
-    window.addEventListener('nalu-session-cleared', refresh)
+    window.addEventListener('nalu-hydrated', onHydrated)
+    window.addEventListener('nalu-session-cleared', onCleared)
     window.addEventListener('storage', onStorage)
     // Cover a hydration that completed between the initial render and subscription.
     refresh()
     return () => {
-      window.removeEventListener('nalu-hydrated', refresh)
-      window.removeEventListener('nalu-session-cleared', refresh)
+      window.removeEventListener('nalu-hydrated', onHydrated)
+      window.removeEventListener('nalu-session-cleared', onCleared)
       window.removeEventListener('storage', onStorage)
     }
   }, [])
@@ -326,14 +358,17 @@ export default function MemoryPanel({ onOpenChat, designPreview = false, designE
   useEffect(() => {
     const canvas = canvasRef.current, wrap = wrapRef.current
     if (!canvas || !wrap) return
-    const ctx = canvas.getContext('2d')!
-    const nodes = brain.nodes
-    const links = brain.links
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return // Saved work remains usable if canvas is unavailable.
+    const nodes = memoryGraphPreview(brain.nodes)
+    const visibleIds = new Set(nodes.map(node => node.id))
+    const links = brain.links.filter(link => visibleIds.has(link.a) && visibleIds.has(link.b))
     const byId = new Map(nodes.map((n) => [n.id, n]))
     const adj = new Map<string, Set<string>>()
     for (const l of links) { (adj.get(l.a) || adj.set(l.a, new Set()).get(l.a)!).add(l.b); (adj.get(l.b) || adj.set(l.b, new Set()).get(l.b)!).add(l.a) }
 
     let W = 0, H = 0, dpr = Math.min(2, window.devicePixelRatio || 1)
+    let resume = () => {}
     let fitted = false
     const fit = () => {
       if (!W || !H) return
@@ -348,6 +383,7 @@ export default function MemoryPanel({ onOpenChat, designPreview = false, designE
       W = wrap.clientWidth; H = wrap.clientHeight; dpr = Math.min(2, window.devicePixelRatio || 1)
       canvas.width = W * dpr; canvas.height = H * dpr; canvas.style.width = W + 'px'; canvas.style.height = H + 'px'
       if (reviewLayout && !fitted && W && H) { fit(); fitted = true }
+      resume()
     }
     resize()
     const ro = new ResizeObserver(resize); ro.observe(wrap)
@@ -383,7 +419,9 @@ export default function MemoryPanel({ onOpenChat, designPreview = false, designE
 
     const draw = () => {
       t += 0.016
-      const isDark = reviewLayout || document.documentElement.classList.contains('dark')
+      const theme = wrap.closest('[data-workspace-theme]')?.getAttribute('data-workspace-theme')
+      const isDark = theme ? theme === 'dark' : document.documentElement.classList.contains('dark')
+      const palette = memoryGraphPalette(isDark)
       const hov = hoverRef.current, sel = selRef.current
       const active = hov ? adj.get(hov.id) : sel ? adj.get(sel) : null
       const focusId = hov?.id || sel
@@ -398,7 +436,7 @@ export default function MemoryPanel({ onOpenChat, designPreview = false, designE
         const a = byId.get(l.a), b = byId.get(l.b); if (!a || !b) continue
         const lit = focusId && (l.a === focusId || l.b === focusId)
         ctx.strokeStyle = reviewLayout
-          ? lit ? 'rgba(222,236,226,0.62)' : 'rgba(222,236,226,0.17)'
+          ? lit ? palette.activeLink : palette.link
           : lit ? 'rgba(150,195,255,0.5)' : 'rgba(110,160,235,0.11)'
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke()
       }
@@ -413,7 +451,7 @@ export default function MemoryPanel({ onOpenChat, designPreview = false, designE
           ctx.globalAlpha = dim ? 0.27 : 1
           ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2)
           ctx.fillStyle = n.type === 'core' ? '#233e5b' : col
-          ctx.fill(); ctx.strokeStyle = '#e4effb'; ctx.lineWidth = 0.8 / cam.current.z; ctx.stroke()
+          ctx.fill(); ctx.strokeStyle = palette.outline; ctx.lineWidth = 0.8 / cam.current.z; ctx.stroke()
           if (n.id === sel || n.id === hov?.id) {
             ctx.beginPath(); ctx.arc(n.x, n.y, r + 6 / cam.current.z, 0, Math.PI * 2)
             ctx.strokeStyle = col; ctx.lineWidth = 1 / cam.current.z; ctx.stroke()
@@ -426,7 +464,7 @@ export default function MemoryPanel({ onOpenChat, designPreview = false, designE
             ctx.globalAlpha = 1
             const fontSize = 10 / cam.current.z, gap = 7 / cam.current.z
             ctx.font = `${fontSize}px Inter, sans-serif`
-            ctx.textAlign = 'center'; ctx.fillStyle = '#e4effb'
+            ctx.textAlign = 'center'; ctx.fillStyle = palette.label
             const label = reviewNodeLabel(n).slice(0, 26), width = ctx.measureText(label).width
             const above = { x: n.x, y: n.y - r - gap }, below = { x: n.x, y: n.y + r + gap + fontSize }
             const side = { x: n.x + (n.x < 0 ? -1 : 1) * (r + gap + width / 2), y: n.y + fontSize / 3 }
@@ -435,7 +473,7 @@ export default function MemoryPanel({ onOpenChat, designPreview = false, designE
               const box = { left: position.x - width / 2 - gap / 2, right: position.x + width / 2 + gap / 2, top: position.y - fontSize, bottom: position.y + gap / 2 }
               if (labelBoxes.some(other => box.left < other.right && box.right > other.left && box.top < other.bottom && box.bottom > other.top)) continue
               labelBoxes.push(box)
-              ctx.shadowColor = '#193552'; ctx.shadowBlur = 5
+              ctx.shadowColor = palette.shadow; ctx.shadowBlur = 5
               ctx.fillText(label, position.x, position.y)
               ctx.shadowBlur = 0; ctx.shadowColor = 'transparent'
               break
@@ -485,8 +523,18 @@ export default function MemoryPanel({ onOpenChat, designPreview = false, designE
     }
 
     let raf = 0
-    const loop = () => { step(); draw(); raf = requestAnimationFrame(loop) }
-    raf = requestAnimationFrame(loop)
+    const loop = () => {
+      raf = 0
+      if (!W || !H || document.visibilityState === 'hidden') return
+      step(); draw(); raf = requestAnimationFrame(loop)
+    }
+    resume = () => { if (!raf && W && H && document.visibilityState !== 'hidden') raf = requestAnimationFrame(loop) }
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') { cancelAnimationFrame(raf); raf = 0 }
+      else resume()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    resume()
 
     const toWorld = (cx: number, cy: number) => ({ x: (cx - W / 2 - cam.current.x) / cam.current.z, y: (cy - H / 2 - cam.current.y) / cam.current.z })
     const pick = (cx: number, cy: number): GNode | null => {
@@ -520,7 +568,7 @@ export default function MemoryPanel({ onOpenChat, designPreview = false, designE
     }
     canvas.addEventListener('pointerdown', onDown); canvas.addEventListener('pointermove', onMove)
     canvas.addEventListener('pointerup', onUp); canvas.addEventListener('wheel', onWheel, { passive: false })
-    return () => { cancelAnimationFrame(raf); ro.disconnect(); canvas.removeEventListener('pointerdown', onDown); canvas.removeEventListener('pointermove', onMove); canvas.removeEventListener('pointerup', onUp); canvas.removeEventListener('wheel', onWheel) }
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); document.removeEventListener('visibilitychange', onVisibility); canvas.removeEventListener('pointerdown', onDown); canvas.removeEventListener('pointermove', onMove); canvas.removeEventListener('pointerup', onUp); canvas.removeEventListener('wheel', onWheel) }
   }, [brain, reviewLayout])
 
   const s = brain.summary
@@ -558,7 +606,7 @@ export default function MemoryPanel({ onOpenChat, designPreview = false, designE
                 const region = reviewRegion(node)
                 const context = node.type === 'chat' ? node.meta.sub : source && source.id !== node.id ? source.label : node.type === 'lobe' ? `${node.meta.counts?.members || 0} connected items` : node.type === 'core' ? 'Workspace overview' : node.meta.sub || (region ? REVIEW_REGIONS[region].label : 'Workspace memory')
                 return <li key={node.id}><button className="memory-review-item" aria-pressed={selectedId === node.id} aria-controls="memory-review-details" onClick={() => selectNode(node)}>
-                  <span className="memory-review-item-icon" style={{ color: reviewNodeColor(node) }}><MemoryNodeIcon node={node}/></span>
+                  <span className="memory-review-item-icon"><MemoryNodeIcon node={node}/></span>
                   <span className="memory-review-item-copy"><strong>{reviewNodeLabel(node)}</strong><span>{reviewNodeType(node)}<i aria-hidden="true">·</i>{context}</span></span><ChevronRight size={16}/>
                 </button></li>
               })}
@@ -568,12 +616,12 @@ export default function MemoryPanel({ onOpenChat, designPreview = false, designE
           </section>
           <aside className="memory-review-inspector" aria-label="Memory context and connections">
             <section className="memory-review-network" aria-labelledby="memory-network-title">
-              <header><div><span className="memory-review-eyebrow">Connected context</span><h2 id="memory-network-title">The bigger picture.</h2></div><span>{brain.nodes.length} nodes</span></header>
+              <header><div><span className="memory-review-eyebrow">Connected context</span><h2 id="memory-network-title">The bigger picture.</h2></div><span>{brain.nodes.length > 128 ? `128 of ${brain.nodes.length} nodes` : `${brain.nodes.length} nodes`}</span></header>
               <div ref={wrapRef} className="memory-review-canvas"><canvas ref={canvasRef} aria-label="Interactive workspace memory graph. Drag to pan, scroll to zoom, or use the saved work list to select a node." className="touch-none"/></div>
               <div className="memory-review-graph-tools"><span>Drag to explore · Scroll to zoom</span><div><button aria-label="Zoom memory graph out" onClick={() => { cam.current.z = Math.max(0.25, cam.current.z / 1.25) }}><Minus size={15}/></button><button aria-label="Zoom memory graph in" onClick={() => { cam.current.z = Math.min(4, cam.current.z * 1.25) }}><Plus size={15}/></button><button aria-label="Fit all memory connections" onClick={() => fitGraph.current()}><Maximize2 size={14}/></button></div></div>
             </section>
             <section ref={detailRef} id="memory-review-details" className="memory-review-details" tabIndex={-1} aria-labelledby="memory-detail-title">
-              <header><span className="memory-review-detail-icon" style={{ color: reviewNodeColor(detail) }}><MemoryNodeIcon node={detail} size={19}/></span><div><span className="memory-review-eyebrow">{reviewNodeType(detail)}</span><h2 id="memory-detail-title">{reviewNodeLabel(detail)}</h2></div>{selected && <button aria-label="Close memory details" onClick={() => setSelectedId(null)}><X size={16}/></button>}</header>
+              <header><span className="memory-review-detail-icon"><MemoryNodeIcon node={detail} size={19}/></span><div><span className="memory-review-eyebrow">{reviewNodeType(detail)}</span><h2 id="memory-detail-title">{reviewNodeLabel(detail)}</h2></div>{selected && <button aria-label="Close memory details" onClick={() => setSelectedId(null)}><X size={16}/></button>}</header>
               <MemoryReviewDetail node={detail} summary={s} source={sourceFor(detail)} onOpenChat={onOpenChat}/>
               {!!related.length && <div className="memory-review-related"><h3>Connected here <span>{related.length}</span></h3><ul>{related.map(node => <li key={node.id}><button onClick={() => selectNode(node)}><span style={{ backgroundColor: reviewNodeColor(node) }}/><span>{reviewNodeLabel(node)}<small>{reviewNodeType(node)}</small></span><ChevronRight size={14}/></button></li>)}</ul></div>}
             </section>

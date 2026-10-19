@@ -5,7 +5,9 @@ const PLACES_BUDGET_MS = 22_000
 const GOOGLE_BUDGET_MS = 4_000
 const GEOCODER_BUDGET_MS = 5_000
 const OVERPASS_BUDGET_MS = 12_000
-const MIRROR_BUDGET_MS = 10_000
+// A slow first pair must not consume the entire 12s group deadline before the
+// remaining mirrors get a useful turn.
+const MIRROR_BUDGET_MS = 3_500
 const MIRROR_HEDGE_MS = 1_500
 
 /** Bounds transport and body parsing, even if a provider ignores cancellation. */
@@ -85,11 +87,27 @@ const OSM_TAGS: Array<{ re: RegExp; tag: string }> = [
   { re: /\b(parking|garages?)\b/i, tag: 'amenity=parking' },
   { re: /\b(stores?|shops?|retail|shopping)\b/i, tag: 'shop=*' },
 ]
-async function nominatim(q: string, signal: AbortSignal): Promise<Array<{ lat: string; lon: string; display_name: string; boundingbox?: string[]; type?: string; class?: string }>> {
-  const u = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=0&limit=20&q=${encodeURIComponent(q)}`
+type GeoPlace = { lat: string; lon: string; name?: string; display_name: string; boundingbox?: string[]; type?: string; class?: string; category?: string }
+async function nominatim(q: string, signal: AbortSignal, bounds?: [string, string, string, string]): Promise<GeoPlace[]> {
+  const params = new URLSearchParams({ format: 'jsonv2', addressdetails: '0', limit: '20', q })
+  if (bounds) {
+    const [south, north, west, east] = bounds
+    params.set('viewbox', `${west},${south},${east},${north}`)
+    params.set('bounded', '1')
+  }
+  const u = `https://nominatim.openstreetmap.org/search?${params}`
   const result = await providerJson(u, { headers: { 'User-Agent': UA, 'Accept-Language': 'en' } }, signal, GEOCODER_BUDGET_MS)
   if (!Array.isArray(result)) throw new Error('Invalid geocoder response')
   return result
+}
+function geoPins(places: GeoPlace[]): Pin[] {
+  const coordinate = (value: unknown, limit: number) =>
+    (typeof value === 'number' || (typeof value === 'string' && value.trim().length > 0)) && Number.isFinite(Number(value)) && Math.abs(Number(value)) <= limit
+  return places.filter(g => g && typeof g === 'object' && typeof g.display_name === 'string' && g.display_name.trim() && coordinate(g.lat, 90) && coordinate(g.lon, 180))
+    .slice(0, 20).map(g => pin({
+      name: typeof g.name === 'string' && g.name.trim() ? g.name : g.display_name.split(',')[0], address: g.display_name,
+      lat: Number(g.lat), lng: Number(g.lon), types: [g.category || g.class || g.type || ''].filter(Boolean),
+    }))
 }
 // Run an Overpass category query inside a [south, north, west, east] bbox,
 // trying a delayed second mirror only if the first is slow. Returns named POIs.
@@ -164,16 +182,26 @@ async function osmFallback(query: string, near: string, lat: number | undefined,
     }
   }
   if (cat && bb) {
-    const pins = await overpassInBbox(cat.tag, bb, signal)
-    if (pins.length) return pins
-    return [] // category query — don't fall through to junky name matches
+    try {
+      // A successful empty category response is authoritative; only a provider
+      // failure needs recovery, not a broad unrelated name search.
+      return await overpassInBbox(cat.tag, bb, signal)
+    } catch (error) {
+      if (signal.aborted) throw error
+      // Nominatim supports an amenity phrase inside a bounded viewbox. This
+      // returns real venues of the requested type when Overpass is unavailable,
+      // rather than guessing pins or leaving every category search broken.
+      // https://nominatim.org/release-docs/latest/api/Search/#other
+      const [category, kind] = cat.tag.split('=')
+      const phrase = kind === '*' ? category : kind.replace(/_/g, ' ')
+      const places = await nominatim(`[${phrase}]`, signal, bb)
+      return geoPins(places.filter(place => place && typeof place === 'object' && (place.category || place.class) === category && (kind === '*' || place.type === kind)))
+    }
   }
   // name/address search (only for non-category queries, to avoid garbage results)
   if (cat) return []
   const geo = await nominatim(near ? `${query} ${near}` : query, signal)
-  return geo.slice(0, 20).map((g) =>
-    pin({ name: g.display_name.split(',')[0], address: g.display_name, lat: Number(g.lat), lng: Number(g.lon), types: [g.class || g.type || ''].filter(Boolean) }),
-  )
+  return geoPins(geo)
 }
 
 export async function placesSearch(query: string, near: string, lat?: number, lng?: number): Promise<unknown> {

@@ -68,9 +68,7 @@ export default function WorkspaceLiveHub({ chats, activity, onOpenChat, onOpenSw
   const working = activity.items.filter(isWorking)
   const attention = activity.items.filter(needsAttention)
   const finished = activity.items.filter(isRecent)
-  const currentWork = activity.items.filter(item => isWorking(item) || needsAttention(item))
-  const visibleWork = filter === 'working' ? working : filter === 'attention' ? attention : filter === 'finished' ? finished : currentWork
-  const savedWork = finished.filter(item => item.chatId && byChat.has(item.chatId)).slice(0, 6)
+  const visibleWork = filter === 'working' ? working : filter === 'attention' ? attention : filter === 'finished' ? finished : activity.items
   const filters: { key: WorkFilter; label: string; count: number }[] = [
     { key: 'all', label: 'All work', count: activity.items.length },
     { key: 'working', label: 'In progress', count: working.length },
@@ -93,10 +91,9 @@ export default function WorkspaceLiveHub({ chats, activity, onOpenChat, onOpenSw
       {activity.isSample && demo && <div className="live-hub-demo"><div><span className="live-hub-demo-dot" aria-hidden="true"/><p><strong>Sample activity</strong><span> · simulated updates</span></p></div><div><button aria-pressed={demo.playing} onClick={() => demo.setPlaying(!demo.playing)}>{demo.playing ? 'Pause updates' : 'Play updates'}</button><button onClick={demo.reset}>Reset</button></div></div>}
       {activity.error && <div className="live-hub-error" role="status"><p>{activity.error}</p><button onClick={activity.refresh}>Refresh</button></div>}
       <div className="live-hub-filters" aria-label="Filter work">{filters.map(option => <button key={option.key} aria-pressed={filter === option.key} onClick={() => setFilter(option.key)}>{option.label}<span>{option.count}</span></button>)}</div>
-      <div className="live-hub-section-heading"><h2>{filter === 'all' ? 'Happening now' : filters.find(option => option.key === filter)?.label}</h2><span>{visibleWork.length} {visibleWork.length === 1 ? 'thread' : 'threads'}</span></div>
+      <div className="live-hub-section-heading"><h2>{filter === 'all' ? 'All work' : filters.find(option => option.key === filter)?.label}</h2><span>{visibleWork.length} {visibleWork.length === 1 ? 'thread' : 'threads'}</span></div>
       {visibleWork.length ? <div className="live-hub-work-grid">{visibleWork.map(item => <WorkCard key={item.id} item={item} chat={item.chatId ? byChat.get(item.chatId) : undefined} onOpenChat={onOpenChat} onOpenSwarm={onOpenSwarm} onOpenSpace={onOpenSpace}/>)}</div>
         : <div className="live-hub-empty"><h3>{filter === 'attention' ? 'Nothing waiting on you.' : filter === 'finished' ? 'Room for what comes next.' : 'A quiet moment.'}</h3><p>{filter === 'attention' ? 'When a task needs your input, you’ll find it here.' : 'Start a conversation. Your work will have a place here as it takes shape.'}</p><button onClick={onNewChat}>Start a conversation<span aria-hidden="true">↗</span></button></div>}
-      {filter === 'all' && savedWork.length > 0 && <section className="live-hub-saved-work" aria-label="Recent saved work"><div className="live-hub-section-heading"><h2>Ready to return to</h2><button onClick={() => setFilter('finished')}>See recent work <span aria-hidden="true">↗</span></button></div><div className="live-hub-saved-grid">{savedWork.map(item => { const chat = byChat.get(item.chatId!)!; return <button key={item.id} className="live-hub-saved-card" onClick={() => onOpenChat(chat.id)}><ArtifactThumbnail chat={chat} compact/><div><span>{item.status === 'saved' ? 'Saved conversation' : statusLabel(item)}</span><strong>{item.title}</strong><span className="live-hub-saved-open">Open chat <span aria-hidden="true">↗</span></span></div></button> })}</div></section>}
     </div>
     <div id={`${tabId}-saved`} role="tabpanel" aria-labelledby={`${tabId}-saved-tab`} hidden={tab !== 'saved'} className="live-hub-saved-context">{savedMemory}</div>
   </section>
