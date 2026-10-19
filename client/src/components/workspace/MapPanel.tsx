@@ -1486,8 +1486,8 @@ export default function MapPanel() {
       d.comparison = normalizeMapComparison(d.comparison)
       const hasView = !!d.center
       // enable AI-chosen + keyword layers (without yanking the view when the AI framed it)
-      const enabled = [...new Set([...(d.layers || []), ...kwKeys])]
-        .map((k) => enableLayer(k, hasView ? 'none' : 'auto')).filter(Boolean)
+      const layerKeys = new Set([...(d.layers || []), ...kwKeys])
+      layerKeys.forEach((k) => enableLayer(k, hasView ? 'none' : 'auto'))
       if (typeof d.answer === 'string') setAnswer(d.answer)
       setComparison(d.comparison || null)
       // every compared place gets a pin even if the model drew none
@@ -1515,26 +1515,25 @@ export default function MapPanel() {
         fitGlobe(shapeBounds, 70)
         framed = true
       }
-      let placesWarning = ''
       if (d.search) {
         try {
           const places = await runPlaces(d.search, !framed, request, d.center)
           if (!framed && places.length) framed = true
-          if (!places.length) placesWarning = 'No matching live places found. Try a more specific place or nearby area.'
-        } catch (error) {
+        } catch {
           searchRequests.current.check(request)
-          placesWarning = `Live place pins are unavailable. ${error instanceof Error ? error.message : 'Please try again.'}`
+          // Live place pins are optional. The AI answer, layers, drawings and
+          // camera may already be useful, so a provider outage is not a map
+          // search failure and must not mask the completed map.
         }
       } else setResults([])
       searchRequests.current.check(request)
       // Fallback: geocode the place so we ALWAYS zoom to the asked-about location.
       if (!framed) framed = await geocodeTo(d.search || q, request)
       searchRequests.current.check(request)
-      const notes: string[] = []
-      if (placesWarning) notes.push(placesWarning)
-      if (enabled.length) notes.push(`Enabled ${enabled.join(' + ')}`)
-      if (d.shapes?.length) notes.push(`drew ${d.shapes.length} shape${d.shapes.length > 1 ? 's' : ''}`)
-      setErr(notes.join(' · '))
+      // A valid map plan is success. The visible layers, shapes, answer and
+      // viewport already show what happened; do not put routine actions or
+      // optional Places warnings in the failure status line.
+      setErr('')
     } catch (e) {
       if (searchRequests.current.owns(request)) setErr(request.signal.aborted ? 'Map search took too long. Please try again.' : e instanceof Error ? e.message : 'Search failed')
     } finally {

@@ -61,8 +61,8 @@ try {
     return { state, requests, search: createSearch(context) }
   }
 
-  // Production failure: AI succeeds, but the optional Places request times out.
-  // The camera and answer must be usable before that provider resolves.
+  // Partial success: AI renders the camera and answer, while optional Places
+  // times out. The completed map must not keep an error status for pin lookup.
   const pins = deferred()
   let fixture = make({ places: () => pins.promise })
   let pending = fixture.search('Find Orlando coffee')
@@ -75,7 +75,7 @@ try {
   await pending
   assert.equal(fixture.state.loading, false)
   assert.equal(fixture.state.answer, plan.answer)
-  assert.match(fixture.state.error, /Live place pins are unavailable.*timed out/)
+  assert.equal(fixture.state.error, '')
   assert.equal(fixture.state.events.some(event => event[0] === 'geocode'), false)
 
   // A later query owns its own camera, answer and pending state. A late failed
@@ -103,12 +103,12 @@ try {
 
   fixture = make({ plan: () => ({ ...plan, center: null }), places: () => [] })
   await fixture.search('coffee')
-  assert.match(fixture.state.error, /No matching live places/)
+  assert.equal(fixture.state.error, '')
   assert.deepEqual(fixture.state.events.at(-1), ['geocode', plan.search])
 
   fixture = make({ plan: () => ({ error: 'Map AI unavailable' }) })
   await fixture.search('coffee')
   assert.deepEqual(fixture.state.events, [['legacy']])
   assert.equal(fixture.state.loading, false)
-  console.log('PASS: actual MapPanel search handler applies AI camera/answer before optional pins, retains partial success, discards stale failures, keeps newest loading state, preserves real pin bounds, and reports empty results honestly.')
+  console.log('PASS: actual MapPanel search handler applies AI camera/answer before optional pins, treats pin outages and empty optional pins as nonfatal, discards stale failures, keeps newest loading state, and preserves real pin bounds.')
 } finally { await rm(temp, { recursive: true, force: true }) }
