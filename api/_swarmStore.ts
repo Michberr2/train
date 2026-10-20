@@ -24,7 +24,13 @@ export class SwarmStoreLimitError extends Error {
   constructor() { super('Swarm history has reached its supported size. Existing work is preserved; no new content was saved.') }
 }
 const INTERRUPTED = 'Work was interrupted after its worker lease expired. Retry explicitly to start a new run.'
-const AGENTS = new Set(['Nalu', 'Rocky', 'Milo'])
+const BUILT_IN_AGENTS = new Set(['Nalu', 'Rocky', 'Milo'])
+function validAgent(project: SwarmState['projects'][number], member: string): boolean {
+  if (BUILT_IN_AGENTS.has(member)) return true
+  const profile = project.agentProfiles?.[member]
+  return !!profile && profile.name === member && typeof profile.personality === 'string' && profile.personality.length <= 800
+    && !!profile.appearance && [profile.appearance.coat, profile.appearance.ears, profile.appearance.markings, profile.appearance.eyes].every((value, index) => Number.isInteger(value) && value >= 0 && value < [8, 4, 6, 4][index])
+}
 const STATUSES = new Set(['queued', 'running', 'waiting', 'done', 'failed', 'cancelled'])
 const TABLES = ['projects', 'rooms', 'messages', 'tasks', 'task_threads', 'turns', 'jobs'] as const
 type Table = typeof TABLES[number]
@@ -77,7 +83,7 @@ function assertSnapshot(value: SwarmSnapshot, previous?: SwarmSnapshot): void {
     }
   }
   for (const project of state.projects) {
-    if (!Array.isArray(project.members) || !project.members.length || new Set(project.members).size !== project.members.length || project.members.some(member => !AGENTS.has(member))) throw new Error('Invalid Swarm membership.')
+    if (!Array.isArray(project.members) || !project.members.length || project.members.length > 1000 || new Set(project.members).size !== project.members.length || project.members.some(member => !validAgent(project, member))) throw new Error('Invalid Swarm membership.')
     if (typeof project.title !== 'string' || typeof project.brief !== 'string' || !timestamp(project.createdAt) || !timestamp(project.updatedAt)) throw new Error('Invalid Swarm project.')
   }
   for (const task of state.tasks) {

@@ -58,6 +58,7 @@ export const OFFLINE_RELEASE_CHECKS = [
   'swarm-store-regressions.mjs',
   'swarm-service-regressions.mjs',
   'swarm-route-regressions.mjs',
+  'community-route-regressions.mjs',
   'swarm-scheduler-regressions.mjs',
   'swarm-cloudflare-contract-regressions.mjs',
   'swarm-execution-regressions.mjs',

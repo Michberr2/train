@@ -53,6 +53,7 @@
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-message[data-speaker=You] { justify-content:flex-end; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-message[data-speaker=You] .swarm-message-copy { max-width:88%; padding:11px 14px; border:1px solid #e1e9f2; border-radius:18px 18px 5px 18px; background:#eaf1f9; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-message[data-speaker=You] .swarm-message-meta { display:none; }
+.nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-message-human { order:2; margin-top:2px; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-empty-thread { margin:auto 0; padding:20px 7px; color:#657284; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-empty-thread strong { display:block; margin-bottom:7px; color:#344358; font-size:16px; font-weight:600; }
 .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-empty-thread p { margin:0; max-width:370px; font-size:13px; }
@@ -188,3 +189,5 @@
 @media(max-width:767px) {
   .nalu-design-review:is([data-workspace-preview],[data-workspace-design]) .swarm-add-task-form>textarea { font-size:16px; }
 }
+
+.swarm-add-dog{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--swarm-line);border-radius:999px;background:transparent;color:inherit;padding:6px 10px;font:inherit;font-size:12px;white-space:nowrap}.swarm-add-dog:disabled{opacity:.45}.swarm-add-dog-form{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px;border:1px solid var(--swarm-line);border-radius:12px;background:var(--swarm-surface)}.swarm-add-dog-form input,.swarm-add-dog-form select{max-width:190px;min-width:90px;border:1px solid var(--swarm-line);border-radius:8px;padding:6px 8px;background:transparent;color:inherit;font:inherit;font-size:12px}.swarm-add-dog-form label{display:flex;align-items:center;gap:5px;font-size:11px}.swarm-add-dog-form button{border:0;border-radius:8px;padding:7px 9px;background:var(--swarm-accent);color:white;font:inherit;font-size:12px}.swarm-add-dog-form button[type=button]{background:transparent;color:inherit}.swarm-add-dog-form [role=alert]{width:100%;font-size:12px;color:var(--swarm-danger,#a33)}

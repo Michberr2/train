@@ -95,6 +95,7 @@ export default function useSwarm({ accountId, enabled = true, active = false }: 
     send: text => client ? mutate(() => client.send(text)) : false,
     stop: () => { client?.stop(); wake.current() },
     createProject: (title, brief) => client ? mutate(() => client.createProject(title, brief)) : null,
+    addAgent: (name, personality, appearance) => client ? mutate(() => client.addAgent(name, personality, appearance)) : undefined,
     addTask: (title, assignee) => client ? mutate(() => client.addTask(title, assignee)) : undefined,
     updateTask: () => { /* Server execution alone owns live task status. */ },
     assignTask: (id, assignee) => { client?.assignTask(id, assignee); wake.current() },

@@ -99,7 +99,8 @@ export async function executeLeasedSwarmJob(store: WorkerStore, owner: string, j
       return // The Studio adapter saved its artifact under the same lease fence.
     }
     const scope = swarmContext(snapshot, job)
-    const result = await execute({ speaker: job.speaker, kind: job.kind, input: job.input, ...scope, signal: controller.signal,
+    const profile = snapshot.state.projects.find(project => project.id === job.projectId)?.agentProfiles?.[job.speaker]
+    const result = await execute({ speaker: job.speaker, personality: profile?.personality, allowCustomSpeaker: !!profile, kind: job.kind, input: job.input, ...scope, signal: controller.signal,
       onProgress: progress => onProgress(progress.message) })
     if (controller.signal.aborted) throw controller.signal.reason
     await store.mutateLeased(owner, job.id, token, draft => finishSwarmJob(draft, job.id, result, now()))

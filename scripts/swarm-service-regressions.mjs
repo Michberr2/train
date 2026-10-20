@@ -19,6 +19,16 @@ const projectId = state.state.projects[0].id
 assert.equal(createdProjectId('owner-a', projectRequest), projectId)
 change(state, projectRequest)
 assert.equal(state.state.projects.length, 1)
+{
+  const snapshot = empty(); change(snapshot, projectRequest)
+  change(snapshot, { action: 'add-agent', projectId, requestId: 'agent-poppy-0001', name: 'Poppy', personality: 'Careful trip planner', appearance: JSON.stringify({ coat: 2, ears: 1, markings: 0, eyes: 0 }) })
+  assert.ok(snapshot.state.projects[0].members.includes('Poppy'))
+  assert.equal(snapshot.state.projects[0].agentProfiles.Poppy.personality, 'Careful trip planner')
+  change(snapshot, { action: 'send', projectId, thread: 'group', requestId: 'agent-message-001', content: '@Poppy help plan this.' })
+  assert.deepEqual(snapshot.jobs.map(job => job.speaker), ['Poppy'])
+  assert.throws(() => change(snapshot, { action: 'add-agent', projectId, requestId: 'agent-poppy-0002', name: 'Poppy', personality: '', appearance: JSON.stringify({ coat: 2, ears: 1, markings: 0, eyes: 0 }) }), /already exists/)
+  assert.throws(() => change(snapshot, { action: 'add-agent', projectId, requestId: 'agent-badlook-01', name: 'Bad', personality: '', appearance: JSON.stringify({ coat: 90, ears: 1, markings: 0, eyes: 0 }) }), /appearance/)
+}
 assert.throws(() => change(state, { ...projectRequest, title: 'Different' }), /different project/)
 const other = empty(); change(other, projectRequest, 1000, 'owner-b')
 assert.notEqual(other.state.projects[0].id, projectId)

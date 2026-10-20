@@ -775,7 +775,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   const liveSwarm = useSwarm({ accountId: user?.id, enabled: reviewLayout && !previewLayout, active: reviewChatOpen || agentScreensOpen || view === 'memory' })
   const liveActivity = withSwarmActivity({ ...baseActivity, error: [baseActivity.error, liveSwarm.error].filter(Boolean).join(' '), refresh: () => { baseActivity.refresh(); liveSwarm.refresh?.() } }, liveSwarm.state)
   const [swarmNavigationRequest, setSwarmNavigationRequest] = useState<(SwarmRoomReference & { key: number }) | undefined>()
-  const [agentConversationRequest, setAgentConversationRequest] = useState<{ agent: SwarmAgentId; key: number }>()
+  const [agentConversationRequest, setAgentConversationRequest] = useState<{ agent: string; key: number }>()
   const [saveState, setSaveState] = useState(getSyncState)
   useEffect(() => {
     const update = () => setSaveState(getSyncState())

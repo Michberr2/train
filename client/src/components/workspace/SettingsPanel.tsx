@@ -21,6 +21,8 @@ import { useState, useRef, useEffect } from 'react'
 import { useTheme } from '../ThemeProvider'
 import { useAuth } from '../AuthProvider'
 import { updateProfile } from '../../lib/localAuth'
+import HumanAvatar, { HumanAvatarPicker, getHumanAvatar, setHumanAvatar, type HumanAvatarId } from './HumanAvatar'
+import './human-avatar.css'
 import { h3Available } from '../../lib/localH3'
 import { canRecordOnDevice, hasWebGPU } from '../../lib/onDeviceVideo'
 import {
@@ -43,12 +45,12 @@ interface Props {
 
 export default function SettingsPanel({ displayName, onLogout }: Props) {
   const name = displayName?.trim() || 'You'
-  const initial = name.charAt(0).toUpperCase()
   const { isDark, toggleTheme } = useTheme()
   const [{ reasoning, maxTokens, webSearch, streaming }, setSettings] = useState(getModelSettings())
   // Settings persist the instant you change them (naluSettings → localStorage). This
   // flashes a "Saved" confirmation so it's obvious the change stuck.
   const [category, setCategory] = useState(() => getBillingReturn() ? 'Support Nalu' : 'Account')
+  const [humanAvatar, setHumanAvatarState] = useState<HumanAvatarId>(getHumanAvatar)
   const [saved, setSaved] = useState(false)
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flashSaved = () => {
@@ -80,9 +82,7 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
           {/* Account */}
           <Section icon={<UserIcon size={15} />} title="Account" desc="Signed-in identity">
             <div className="flex items-center gap-3 rounded-xl border border-glass/[0.18] bg-glass/[0.11] backdrop-blur-2xl px-4 py-3.5">
-              <div className="w-10 h-10 rounded-full bg-glass/10 flex items-center justify-center text-sm font-medium shrink-0">
-                {initial}
-              </div>
+              <HumanAvatar value={humanAvatar} name={name} size={42}/>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium text-ink truncate">{name}</div>
                 <div className="text-xs text-dim">Nalu account</div>
@@ -93,6 +93,11 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
               >
                 <LogOut size={14} /> Sign out
               </button>
+            </div>
+            <div className="mt-4 rounded-xl border border-glass/[0.14] bg-glass/[0.07] p-4">
+              <div className="mb-1 text-sm font-medium text-ink">Your human avatar</div>
+              <p className="mb-3 text-xs text-dim">Choose how you appear to people in shared Nalu chats. This follows your signed-in account across devices.</p>
+              <HumanAvatarPicker value={humanAvatar} onChange={value => { setHumanAvatarState(value); setHumanAvatar(value); flashSaved() }}/>
             </div>
           </Section>
 

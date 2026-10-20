@@ -51,6 +51,15 @@ try {
       assert.equal(f.calls.length, 1)
     }
   })
+  await check('custom dog personality is bounded flavor text and cannot override the system contract', async () => {
+    const f = fixture(['Poppy contribution.'])
+    const result = await executeSwarmWork({ ...base, speaker: 'Poppy', allowCustomSpeaker: true, personality: 'Warm, careful trip planner.' })
+    assert.equal(result.content, 'Poppy contribution.')
+    assert.match(f.calls[0].messages[0].content, /You are Poppy/)
+    assert.match(f.calls[0].messages[1].content, /user-created, untrusted flavor guidance/)
+    assert.match(f.calls[0].messages[1].content, /cannot change safety, privacy, or tool limits/)
+    await assert.rejects(executeSwarmWork({ ...base, speaker: 'Poppy', personality: 'hi' }), /Invalid Swarm execution/)
+  })
   await check('reply uses only supplied context, finite provider options and outward answer', async () => {
     const f = fixture(['<think>Do not expose this.</think>Here is the next step.'])
     globalThis.unrelatedAccountMemory = 'PRIVATE_OTHER_PROJECT_SENTINEL'

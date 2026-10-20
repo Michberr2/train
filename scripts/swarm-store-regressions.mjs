@@ -111,6 +111,13 @@ async function exercise(client, label) {
   await second.mutate('bob', draft => seed(draft, 'Bob'))
   assert.equal((await store.read('alice')).state.projects[0].title, 'Alice')
   assert.equal((await store.read('bob')).state.projects[0].title, 'Bob')
+  await store.mutate('alice', draft => {
+    const project = draft.state.projects[0]
+    project.members.push('Poppy')
+    project.agentProfiles = { Poppy: { name: 'Poppy', personality: 'Calm and practical', appearance: { coat: 2, ears: 1, markings: 0, eyes: 0 } } }
+  })
+  assert.ok((await store.read('alice')).state.projects[0].members.includes('Poppy'), `${label}: custom agent profiles persist`)
+  await assert.rejects(store.mutate('alice', draft => { draft.state.projects[0].agentProfiles.Poppy.appearance.coat = 90 }), /Invalid Swarm membership/)
   await Promise.all(Array.from({ length: 6 }, (_, i) => (i % 2 ? store : second).mutate('alice', draft => {
     draft.state.messages.push({ id: `concurrent-${i}`, projectId: 'project', thread: 'Rocky', speaker: 'You', content: `Private ${i}`, createdAt: Date.now() })
   })))
@@ -158,7 +165,7 @@ async function exercise(client, label) {
 
 const sqlite = new SQLiteD1()
 const { store } = await exercise(sqlite, 'D1 SQL against real SQLite')
-assert.equal(sqlite.db.prepare("SELECT COUNT(*) AS n FROM nalu_swarm_rooms WHERE owner_id='alice'").get().n, 4)
+assert.equal(sqlite.db.prepare("SELECT COUNT(*) AS n FROM nalu_swarm_rooms WHERE owner_id='alice'").get().n, 5)
 assert.equal(sqlite.db.prepare("SELECT COUNT(*) AS n FROM nalu_swarm_task_threads WHERE owner_id='alice'").get().n, 4)
 assert.equal(sqlite.db.prepare('SELECT COUNT(*) AS n FROM nalu_swarm_accounts WHERE write_token IS NOT NULL').get().n, 0)
 

@@ -11,10 +11,19 @@ const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v ===
 const id = (v: unknown): v is string => typeof v === 'string' && !!v.trim() && v.length <= 500
 const time = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 8.64e15
 const agents = new Set(['Nalu', 'Rocky', 'Milo'])
+function validMember(project: Record<string, unknown>, member: unknown): boolean {
+  if (typeof member !== 'string') return false
+  if (agents.has(member)) return true
+  const profiles = record(project.agentProfiles) ? project.agentProfiles : null
+  const profile = profiles && record(profiles[member]) ? profiles[member] : null
+  const appearance = profile && record(profile.appearance) ? profile.appearance : null
+  return !!profile && profile.name === member && typeof profile.personality === 'string' && profile.personality.length <= 800
+    && !!appearance && [['coat',8],['ears',4],['markings',6],['eyes',4]].every(([key,max]) => Number.isInteger(appearance[String(key)]) && Number(appearance[String(key)]) >= 0 && Number(appearance[String(key)]) < Number(max))
+}
 /** Reject malformed or sample payloads before rendering authenticated work. */
 export function isLiveSwarmState(value: unknown): value is SwarmState {
   if (!record(value) || value.mode !== 'live' || value.version !== 1 || !Array.isArray(value.projects) || !Array.isArray(value.tasks) || !Array.isArray(value.messages) || !Array.isArray(value.turns)) return false
-  if (!value.projects.every(p => record(p) && id(p.id) && typeof p.title === 'string' && typeof p.brief === 'string' && time(p.createdAt) && time(p.updatedAt) && Array.isArray(p.members) && p.members.length > 0 && p.members.every(m => typeof m === 'string' && agents.has(m)))) return false
+  if (!value.projects.every(p => record(p) && id(p.id) && typeof p.title === 'string' && typeof p.brief === 'string' && time(p.createdAt) && time(p.updatedAt) && Array.isArray(p.members) && p.members.length > 0 && p.members.length <= 1000 && p.members.every(member => validMember(p, member)))) return false
   const projects = new Map(value.projects.map(p => [p.id, p]))
   const room = (projectId: unknown, thread: unknown) => typeof projectId === 'string' && projects.has(projectId) && (thread === 'group' || projects.get(projectId)!.members.includes(thread))
   if (!value.tasks.every(t => record(t) && id(t.id) && room(t.projectId, t.assignee) && typeof t.title === 'string' && typeof t.summary === 'string' && time(t.updatedAt) && ['queued', 'running', 'waiting', 'done', 'paused', 'failed', 'cancelled'].includes(String(t.status)) && (t.threads === undefined || Array.isArray(t.threads) && t.threads.length > 0 && t.threads.every(thread => room(t.projectId, thread))) && (t.progress === undefined || typeof t.progress === 'number' && Number.isFinite(t.progress)) && (t.chatId === undefined || id(t.chatId)) && (t.artifact === undefined || record(t.artifact) && id(t.artifact.executionId) && id(t.artifact.studioKind) && Number.isSafeInteger(t.artifact.revision) && Number(t.artifact.revision) >= 1))) return false
