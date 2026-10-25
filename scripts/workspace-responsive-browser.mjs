@@ -46,7 +46,11 @@ try {
   }
   const open=carousel.locator('.workspace-carousel-open')
   await open.scrollIntoViewIfNeeded()
-  await expect(open).toBeInViewport({ratio:1})
+  // Chromium may round scroll offsets by a fraction of a pixel. Keep the
+  // whole action reachable while allowing that rendering precision.
+  await expect(open).toBeInViewport({ratio:0.99})
+  const clipped=await open.evaluate(button=>{const box=button.getBoundingClientRect();const frame=button.closest('.workspace-carousel-root').getBoundingClientRect();return Math.max(frame.top-box.top,box.bottom-frame.bottom,-box.left,box.right-innerWidth)})
+  assert.ok(clipped<=1,`${width}x${height}: carousel action is not clipped`)
   const overlap=await open.evaluate(button=>{const description=button.parentElement.querySelector('.workspace-carousel-select>p');return description.getBoundingClientRect().bottom>button.getBoundingClientRect().top+1})
   assert.equal(overlap,false,`${width}x${height}: carousel description clears Open`)
   await page.screenshot({path:`${output}/${width}x${height}-carousel.png`})

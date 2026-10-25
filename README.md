@@ -152,6 +152,8 @@ bulk-stage an existing dirty workspace to satisfy the gate. The release script
 rejects uncommitted or untracked source, and never stages or commits anything.
 Keep the local `.vercel/project.json` linked to the intended project.
 
+`n4lu.com` is the primary Nalu web domain. Deploy it and `n4lu.ai` (including both `www` aliases) from the existing **nalu** Vercel project in **mberry-hillpointecs-projects**: project `prj_ioPGZidahnVtnjg85JmfjuozBiQ4`, team `team_IJAo18ztooFWZvBqiBOoSuu0`. The checked workflow rejects a different project or team before contacting Vercel. A Chrome profile name does not grant Vercel team access; sign in with an account that can access this project.
+
 ```sh
 ./deploy.sh
 ```

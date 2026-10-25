@@ -8,7 +8,9 @@ import { checkPreview } from './preview-release-checks.mjs'
 import { OFFLINE_RELEASE_CHECKS } from './offline-release-checks.mjs'
 import { browserTestPolicy, parseReleaseArguments, selectReleaseChecks } from './lib/release-check-mode.mjs'
 
-export const RELEASE_DOMAINS = ['n4lu.ai', 'www.n4lu.ai', 'n4lu.com', 'www.n4lu.com']
+// n4lu.com is the primary domain; every alias belongs to this one project.
+export const PRODUCTION_PROJECT = Object.freeze({ projectId: 'prj_ioPGZidahnVtnjg85JmfjuozBiQ4', orgId: 'team_IJAo18ztooFWZvBqiBOoSuu0' })
+export const RELEASE_DOMAINS = ['n4lu.com', 'www.n4lu.com', 'n4lu.ai', 'www.n4lu.ai']
 const root = fileURLToPath(new URL('../', import.meta.url))
 export async function assertCanonicalWebDesign(cwd) {
   // The redesigned landing/workspace is now the product baseline. Keep this
@@ -104,7 +106,7 @@ export async function release({ cwd = root, target, publish, browserTestSkipReas
   const commit = call('git', ['rev-parse', 'HEAD']).trim()
   assert.match(commit, /^[a-f0-9]{40}$/i, 'A committed source revision is required')
   const project = JSON.parse(await readFile(resolve(cwd, '.vercel/project.json'), 'utf8'))
-  assert.ok(project.projectId && project.orgId, 'Link the intended Vercel project before deploying')
+  assert.ok(project.projectId === PRODUCTION_PROJECT.projectId && project.orgId === PRODUCTION_PROJECT.orgId, 'Release blocked: n4lu.com must deploy from the existing nalu production project in mberry-hillpointecs-projects. Restore its project link and sign in with access to that team.')
   const cli = (args) => call('vercel', [...args, '--scope', project.orgId, ...(process.env.VERCEL_TOKEN ? ['--token', process.env.VERCEL_TOKEN] : [])])
   // Refresh short-lived CLI login credentials before reading the auth file for
   // API metadata verification. CI can instead supply an explicit scoped token.

@@ -12,7 +12,7 @@ const commit = '1'.repeat(40), deploymentId = 'dpl_new123', previousId = 'dpl_ol
 const report = []
 try {
   await mkdir(join(directory, '.vercel'))
-  await writeFile(join(directory, '.vercel/project.json'), JSON.stringify({ projectId: 'prj_fixture', orgId: 'team_fixture' }))
+  await writeFile(join(directory, '.vercel/project.json'), JSON.stringify({ projectId: 'prj_ioPGZidahnVtnjg85JmfjuozBiQ4', orgId: 'team_IJAo18ztooFWZvBqiBOoSuu0' }))
   const appPath = join(directory, 'client/src/App.tsx')
   const wrapperPath = join(directory, 'client/src/components/workspace/design/DesignedWorkspace.tsx')
   const appSource = "import LandingPage from './components/landing/LandingPage'\nconst Workspace = lazy(() => import('./components/workspace/design/DesignedWorkspace'))\nexport default function App() { return user ? <Workspace /> : <LandingPage /> }\n"
@@ -81,7 +81,7 @@ try {
           ? Object.hasOwn(options, 'candidateSource') ? options.candidateSource : options.wrongCommit ? '2'.repeat(40) : commit
           : Object.hasOwn(options, 'liveSource') ? options.liveSource : 'a'.repeat(40)
         const gitSource = isCandidate ? options.candidateGitSource : options.liveGitSource
-        return response({ id: options.wrongMetadataId ? 'dpl_unexpected' : url.pathname.split('/').pop(), readyState: options.metadataNotReady ? 'ERROR' : 'READY', target: isCandidate && Object.hasOwn(options, 'candidateTarget') ? options.candidateTarget : 'production', projectId: options.wrongProject ? 'prj_other' : 'prj_fixture', meta: { naluSourceCommit: source, gitCommitSha: gitSource } }, options.metadataUnauthorized ? 401 : 200)
+        return response({ id: options.wrongMetadataId ? 'dpl_unexpected' : url.pathname.split('/').pop(), readyState: options.metadataNotReady ? 'ERROR' : 'READY', target: isCandidate && Object.hasOwn(options, 'candidateTarget') ? options.candidateTarget : 'production', projectId: options.wrongProject ? 'prj_other' : 'prj_ioPGZidahnVtnjg85JmfjuozBiQ4', meta: { naluSourceCommit: source, gitCommitSha: gitSource } }, options.metadataUnauthorized ? 401 : 200)
       }
       if (url.pathname === '/api/health') return response({ ok: options.badHealth !== hostname, checks: { db: { ok: true } }, config: { llmPrimary: true, llmModel: 'fixture' } })
       if (url.pathname === '/') return response('<!doctype html><script type="module" src="/assets/app.js"></script>', 200, 'text/html')
@@ -94,6 +94,15 @@ try {
     }
     return { calls, logs, aliases, run, fetchImpl, readToken: async () => 'synthetic-token-never-sent' }
   }
+  const correctProject = await readFile(join(directory, '.vercel/project.json'), 'utf8')
+  for (const invalidProject of [{ projectId: 'prj_other', orgId: 'team_IJAo18ztooFWZvBqiBOoSuu0' }, { projectId: 'prj_ioPGZidahnVtnjg85JmfjuozBiQ4', orgId: 'team_other' }]) {
+    await writeFile(join(directory, '.vercel/project.json'), JSON.stringify(invalidProject))
+    const wrongLink = fixture()
+    await assert.rejects(release({ cwd: directory, ...wrongLink, log: () => {} }), /n4lu.com must deploy from the existing nalu production project/)
+    assert.equal(wrongLink.calls.some(call => call.command === 'vercel'), false, 'wrong project is rejected before any deployment access')
+  }
+  await writeFile(join(directory, '.vercel/project.json'), correctProject)
+  report.push('n4lu.com releases reject a different project or team before contacting Vercel')
   const success = fixture()
   const receipt = await release({ cwd: directory, ...success, log: line => success.logs.push(line) })
   assert.equal(receipt.complete, true)
@@ -193,12 +202,12 @@ try {
     ['SPA route fallback', { spaFallback: true }, /expected 405, got 200/, false],
     ['server error', { route500: true }, /expected 405, got 500/, false],
     ['network failure', { networkFailure: true }, /network failure/, false],
-    ['alias failure', { aliasFailure: 'n4lu.ai' }, /n4lu.ai: assignment failed/, true],
-    ['partial alias failure', { aliasFailure: 'n4lu.com' }, /n4lu.com: assignment failed/, true],
+    ['alias failure', { aliasFailure: 'n4lu.com' }, /n4lu.com: assignment failed/, true],
+    ['partial alias failure', { aliasFailure: 'n4lu.ai' }, /n4lu.ai: assignment failed/, true],
     ['wrong alias target', { wrongAlias: 'www.n4lu.ai' }, /www.n4lu.ai: alias points to the wrong deployment/, true],
     ['public health failure', { badHealth: 'n4lu.com' }, /n4lu.com: health is degraded/, true],
     ['public source mismatch', { wrongEntry: 'www.n4lu.com' }, /www.n4lu.com: served JavaScript differs/, true],
-    ['concurrent publication before alias assignment', { concurrentAlias: 'n4lu.ai' }, /changed to another release/, false],
+    ['concurrent publication before alias assignment', { concurrentAlias: RELEASE_DOMAINS[0] }, /changed to another release/, false],
     ['concurrent publication before final verification', { finalAliasRace: 'n4lu.ai' }, /changed before release verification completed/, true],
   ]
   for (const browserTestSkipReason of [undefined, waiverReason]) for (const [name, options, message, mayAssign] of failures) {
@@ -280,9 +289,9 @@ try {
   assert.throws(() => verify(live, 'e'.repeat(40)), /candidate source .* is unavailable/)
   report.push('real Git history permits descendants and explicit ancestor rollbacks, and blocks stale, divergent and unavailable source')
 
-  const readMetadata = meta => verifyDeploymentMetadata(deploymentId, { projectId: 'prj_fixture', orgId: 'team_fixture' }, {
+  const readMetadata = meta => verifyDeploymentMetadata(deploymentId, { projectId: 'prj_ioPGZidahnVtnjg85JmfjuozBiQ4', orgId: 'team_IJAo18ztooFWZvBqiBOoSuu0' }, {
     readToken: async () => 'synthetic-token-never-sent',
-    fetchImpl: async () => new Response(JSON.stringify({ id: deploymentId, projectId: 'prj_fixture', readyState: 'READY', target: 'production', meta }), { status: 200 }),
+    fetchImpl: async () => new Response(JSON.stringify({ id: deploymentId, projectId: 'prj_ioPGZidahnVtnjg85JmfjuozBiQ4', readyState: 'READY', target: 'production', meta }), { status: 200 }),
   })
   assert.deepEqual(await readMetadata({ gitCommitSha: 'a'.repeat(40).toUpperCase() }), { sourceCommit: 'a'.repeat(40) })
   assert.deepEqual(await readMetadata({ naluSourceCommit: commit, gitCommitSha: commit }), { sourceCommit: commit })
