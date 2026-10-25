@@ -76,7 +76,7 @@
 }
 /* In a very short landscape window, retain readable content and reachable
    controls rather than squeezing the carousel's text underneath its button. */
-@media(max-height:500px), (max-width:767px) and (max-height:650px) {
+@media(max-height:580px), (max-width:767px) and (max-height:650px) {
   .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-carousel-root { overflow-y:auto; }
   .nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-carousel-stage { flex:1 0 260px; }
 }

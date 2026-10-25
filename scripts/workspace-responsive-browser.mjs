@@ -34,7 +34,7 @@ try {
  const dock=page.getByRole('navigation',{name:'Workspace navigation',exact:true})
  await expect(dock).toBeVisible({timeout:60000})
  await page.emulateMedia({reducedMotion:'reduce'})
- for(const [width,height] of [[1920,1080],[1440,900],[1024,768],[900,600],[768,600],[600,600],[390,844],[320,568],[844,390]]) {
+ for(const [width,height] of [[1920,1080],[1440,900],[1024,768],[900,600],[900,524],[768,600],[600,600],[390,844],[320,568],[844,390]]) {
   await page.setViewportSize({width,height})
   await page.getByRole('button',{name:'Nalu home',exact:true}).first().click()
   const carousel=page.getByRole('region',{name:'Choose a workspace',exact:true})
@@ -63,7 +63,7 @@ try {
   }
  }
  assert.deepEqual(errors,[])
- console.log(`PASS: ${report.length} app layouts across nine window sizes; dock targets and carousel action reachable`)
+ console.log(`PASS: ${report.length} app layouts across ten window sizes; dock targets and carousel action reachable`)
 } finally {
  await writeFile(output+'/report.json',JSON.stringify(report,null,2))
  await browser?.close()
