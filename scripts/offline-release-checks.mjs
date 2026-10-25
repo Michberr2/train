@@ -84,6 +84,7 @@ export const OFFLINE_RELEASE_CHECKS = [
   ['map-browser-verify.mjs', '--layers'],
   ['map-browser-verify.mjs', '--comparisons'],
   'workspace-shell-browser-regressions.mjs',
+  'workspace-responsive-browser.mjs',
 ]
 export function runOfflineReleaseChecks({ browserTestSkipReason, run = spawnSync, log = console.log, sourceEnv = process.env } = {}) {
   const plan = selectReleaseChecks(OFFLINE_RELEASE_CHECKS, browserTestSkipReason)

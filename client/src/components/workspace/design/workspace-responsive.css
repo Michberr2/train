@@ -1,0 +1,82 @@
+/* One set of dimensions for the scene, launcher and every open app. Keep the
+   approved large-screen frame, but give short/narrow windows their space back. */
+.nalu-design-review.workspace-design-surface[data-workspace-design] {
+  --workspace-frame-side:clamp(20px,5.8vw,84px);
+  --workspace-frame-bottom:clamp(112px,15.5dvh,140px);
+  --workspace-scene-side:max(10px,calc(var(--workspace-frame-side) - 28px));
+  --workspace-scene-bottom:56px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace[data-workspace-design-preview] {
+  gap:var(--workspace-frame-row-gap,16px) 18px;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .review-desktop-scene {
+  left:var(--workspace-scene-side);
+  right:var(--workspace-scene-side);
+  bottom:var(--workspace-scene-bottom);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace :is(.workspace-carousel-root,.review-launcher-loading) {
+  inset:calc(var(--workspace-frame-header) + var(--workspace-frame-row-gap,16px)) var(--workspace-frame-side) var(--workspace-frame-bottom);
+  width:auto;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .review-workspace-header {
+  min-width:0;
+  height:var(--workspace-frame-header);
+  grid-template-columns:minmax(0,1fr) minmax(0,auto) minmax(0,1fr);
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-app-dock {
+  min-width:0;
+  max-width:100%;
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-app-dock-app {
+  flex:1 1 66px;
+  width:66px;
+  min-width:44px;
+}
+@media(min-width:951px) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .review-header-brand { left:var(--workspace-frame-side); }
+}
+@media(max-width:950px) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] {
+    --workspace-frame-side:clamp(20px,4vw,38px);
+    --workspace-frame-header:128px;
+    --workspace-frame-bottom:112px;
+    --workspace-frame-row-gap:10px;
+  }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .review-workspace-header {
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+    grid-template-rows:44px 84px;
+    gap:0;
+  }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .review-desktop-scene {
+    top:calc(44px + var(--workspace-preview-banner));
+  }
+}
+@media(max-width:767px) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] {
+    --workspace-frame-side:clamp(12px,3vw,20px);
+    --workspace-scene-side:8px;
+    --workspace-frame-header:118px;
+  }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .review-workspace-header { grid-template-rows:44px 74px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-app-dock {
+    width:min(100%,362px);
+    padding:10px 5px 8px;
+  }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-app-dock-app { flex-basis:48px; min-height:56px; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-app-dock-icon { width:40px; height:40px; }
+}
+@media(max-height:650px) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] { --workspace-frame-bottom:112px; }
+}
+@media(min-width:951px) and (max-height:750px) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] { --workspace-frame-header:88px; }
+}
+.nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-chat-launcher {
+  bottom:calc(var(--workspace-scene-bottom) - 12px);
+}
+/* In a very short landscape window, retain readable content and reachable
+   controls rather than squeezing the carousel's text underneath its button. */
+@media(max-height:500px), (max-width:767px) and (max-height:650px) {
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .nalu-workspace .workspace-carousel-root { overflow-y:auto; }
+  .nalu-design-review.workspace-design-surface[data-workspace-design] .workspace-carousel-stage { flex:1 0 260px; }
+}
