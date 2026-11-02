@@ -13,7 +13,7 @@ import './landing.css'
 
 const NaluChase = lazy(() => import('../NaluChase'))
 const sections = [{ id: 'meet', name: 'Meet Nalu' }, { id: 'platform', name: 'The core' }, { id: 'possibilities', name: 'Capabilities' }]
-const statement = 'A little help. A lot of possibility. Turn the things on your mind into things you can actually use. Think it through. Bring it to life. Make it yours.'
+const statement = 'This is AI you can watch work. Tell Nalu what you need. Follow the agents as they build, search, and create on your screen. Keep the conversation and the work together.'
 const words = statement.split(' ')
 
 function RevealWord({ word, index, progress, reduced }: { word: string; index: number; progress: MotionValue<number>; reduced: boolean }) {
@@ -104,7 +104,7 @@ export default function LandingPage() {
       <div {...(intro ? { inert: '' } as Record<string, string> : {})}>
         <a href="#meet" className="nalu-skip-link" onClick={event => { event.preventDefault(); setPaused(true); goTo(0); requestAnimationFrame(() => hero.current?.focus({ preventScroll: true })) }}>Skip to content</a>
         <header className="nalu-landing-header">
-          <a href="#meet" className="nalu-brand" aria-label="Nalu home" onClick={event => { event.preventDefault(); goTo(0) }}><NaluMark /><span>nalu</span></a>
+          <div className="nalu-brand-lockup"><a href="#meet" className="nalu-brand" aria-label="Nalu home" onClick={event => { event.preventDefault(); goTo(0) }}><NaluMark /><span>nalu</span></a><span className="nalu-brand-promise">AI that works on your screen.</span></div>
           <nav className="nalu-desktop-navigation" aria-label="Main navigation">{sections.map((section, index) => <a href={`#${section.id}`} key={section.id} aria-current={activeIndex === index ? 'location' : undefined} onClick={event => { event.preventDefault(); goTo(index) }}>{section.name}</a>)}</nav>
           <div className="nalu-header-actions">
             <button className="nalu-motion-toggle" aria-label={paused ? 'Play animations' : 'Pause animations'} aria-pressed={paused} onClick={() => setPaused(!paused)} disabled={!!prefersReduced}><span>MOTION</span><span>{paused || prefersReduced ? 'OFF' : 'ON'}</span>{paused || prefersReduced ? <Play size={10} /> : <Pause size={10} />}</button>
@@ -121,12 +121,12 @@ export default function LandingPage() {
             <div className="nalu-scene"><Scenery src="/images/bg-hills-teal.png" /></div>
             <div className="nalu-scene-shade" /><div className="nalu-scene-grid" aria-hidden="true" />
             <div className="nalu-hero-content">
-              <span className="nalu-eyebrow"><BuildCopy text="YOUR IDEAS, IN GOOD COMPANY." /></span>
-              <h1 id="nalu-hero-title"><span><BuildCopy text="You dream it." /></span><strong><BuildCopy text="Nalu does it." /></strong></h1>
-              <p><BuildCopy text="A LITTLE HELP FOR THE THINGS YOU WANT TO DO." /><br /><BuildCopy text="FROM THE FIRST IDEA TO THE FINISHED WORK." /></p>
+              <span className="nalu-eyebrow"><BuildCopy text="YOUR AI SWARM. VISIBLE SCREEN CONTROL." /></span>
+              <h1 id="nalu-hero-title"><span><BuildCopy text="AI at work." /></span><strong><BuildCopy text="On your screen." /></strong></h1>
+              <p><BuildCopy text="WATCH NALU BUILD, SEARCH, AND CREATE IN FRONT OF YOU." /><br /><BuildCopy text="ONE CHAT. YOUR AGENTS. EVERY PROJECT IN VIEW." /></p>
               <div className="nalu-hero-actions"><button className="nalu-button-outline" onClick={() => goTo(1)}><BuildCopy text="EXPLORE THE CORE" /><ArrowUpRight size={17} /></button><button className="nalu-button-text" onClick={() => openAuth('signup')}><BuildCopy text="Meet your Nalu" /><ArrowUpRight size={16} /></button></div>
             </div>
-            <div className="nalu-hero-bottom"><span>A LITTLE HELP. A LOT OF POSSIBILITY.</span><button onClick={() => goTo(1)}>SCROLL TO EXPLORE <ArrowDown size={14} /></button><span>01 — 03</span></div>
+            <div className="nalu-hero-bottom"><span>AI YOU CAN SEE WORKING.</span><button onClick={() => goTo(1)}>WATCH NALU WORK <ArrowDown size={14} /></button><span>01 / 03</span></div>
           </section>
           </div>
           <ScrollStory container={container} reduced={reduced} />
@@ -134,7 +134,7 @@ export default function LandingPage() {
           <Capabilities container={container} reduced={reduced} />
           <footer id="start" className="nalu-landing-footer">
             <div className="nalu-scene"><Scenery src="/images/bg-meadow-sunset.png" /></div><div className="nalu-scene-shade" /><div className="nalu-scene-grid" aria-hidden="true" />
-            <div className="nalu-footer-content"><span className="nalu-eyebrow"><BuildCopy text="03 / YOUR NEXT MOVE" /></span><h2><BuildCopy text="Bring the idea." /><br /><strong><BuildCopy text="Let’s make it happen." /></strong></h2><p><BuildCopy text="The little things. The big plans. Whatever’s on your mind." /></p><button className="nalu-button-outline" onClick={() => openAuth('signup')}><BuildCopy text="LET’S GET STARTED" /><ArrowUpRight size={18} /></button><button className="nalu-footer-signin" onClick={() => openAuth('signin')}><BuildCopy text="Already have a Nalu? Sign in." /></button></div>
+            <div className="nalu-footer-content"><span className="nalu-eyebrow"><BuildCopy text="03 / PUT YOUR AI TO WORK" /></span><h2><BuildCopy text="Tell Nalu." /><br /><strong><BuildCopy text="Watch it happen." /></strong></h2><p><BuildCopy text="Your agents, your projects, and the work taking shape on your screen." /></p><button className="nalu-button-outline" onClick={() => openAuth('signup')}><BuildCopy text="MEET YOUR AI SWARM" /><ArrowUpRight size={18} /></button><button className="nalu-footer-signin" onClick={() => openAuth('signin')}><BuildCopy text="Already have a Nalu? Sign in." /></button></div>
             <Playground reduced={reduced} />
             <div className="nalu-footer-bottom"><a className="nalu-brand" href="#meet" onClick={event => { event.preventDefault(); goTo(0) }} aria-label="Back to Nalu home"><NaluMark /><span>nalu</span></a><span>YOUR IDEAS. YOUR PACE. YOUR NALU.</span><nav aria-label="Policies"><a href="/sms.html">Messaging</a><a href="/privacy.html">Privacy</a>{!reduced && <button onClick={() => { setIntro(true); window.dispatchEvent(new Event('nalu-construction-replay')) }}>Replay intro</button>}<button onClick={() => goTo(0)}>Top ↑</button></nav></div>
           </footer>
