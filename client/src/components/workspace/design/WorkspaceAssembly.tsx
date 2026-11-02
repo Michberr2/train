@@ -20,7 +20,7 @@ export default function WorkspaceAssembly({ target, request, active, activity }:
     const ctx = layer.getContext('2d')
     if (!ctx) return
     const shape = new Path2D(pointer), seen = new WeakSet<HTMLElement>(), jobs: Job[] = []
-    let frame = 0, alive = true, serial = 0
+    let frame = 0, alive = true, serial = 0, interacting = false, releaseTimer: ReturnType<typeof setTimeout> | undefined
     const size = () => { const ratio = Math.min(devicePixelRatio || 1, 2); layer.width = innerWidth * ratio; layer.height = innerHeight * ratio; ctx.setTransform(ratio, 0, 0, ratio, 0, 0) }
     size()
     const restore = (job: Job) => {
@@ -31,7 +31,7 @@ export default function WorkspaceAssembly({ target, request, active, activity }:
     }
     const paint = (now: number) => {
       frame = 0
-      if (!alive) return
+      if (!alive || interacting) return
       ctx.clearRect(0, 0, innerWidth, innerHeight)
       let working = false, spoken = ''
       for (const job of jobs) {
@@ -67,6 +67,7 @@ export default function WorkspaceAssembly({ target, request, active, activity }:
       if (working || work.current) frame = requestAnimationFrame(paint)
     }
     const collect = () => {
+      if (interacting) return
       let discovered = 0
       const targets = new Set<HTMLElement>(root.querySelectorAll<HTMLElement>('h1,h2,h3,p,button,input,textarea,select,img'))
       for (const element of document.querySelectorAll<HTMLElement>('.nalu-delegated-work h1,.nalu-delegated-work h2,.nalu-delegated-work h3,.nalu-delegated-work h4,.nalu-delegated-work p,.nalu-delegated-work button,.nalu-delegated-work img')) targets.add(element)
@@ -85,17 +86,23 @@ export default function WorkspaceAssembly({ target, request, active, activity }:
       layer.dataset.jobs = String(serial)
       if (discovered && !frame) frame = requestAnimationFrame(paint)
     }
-    wake.current = () => { if (alive && !frame) frame = requestAnimationFrame(paint) }
+    wake.current = () => { if (alive && !interacting && !frame) frame = requestAnimationFrame(paint) }
     const observer = new MutationObserver(collect)
     // Chat is portaled outside the main scene. Observe its actual creation
     // nodes too, without rewriting a generated iframe's opaque document.
     observer.observe(document.body, { childList: true, subtree: true })
     collect()
     const stop = () => { jobs.forEach(restore); ctx.clearRect(0, 0, innerWidth, innerHeight); layer.dataset.assembling = 'false' }
+    // Keep the clicked control in place until the browser delivers its click.
+    // Restoring transforms during pointerdown moves it before pointerup, which
+    // can send the click to a different element or swallow it altogether.
+    const beginInteraction = () => { interacting = true; clearTimeout(releaseTimer); cancelAnimationFrame(frame); frame = 0; ctx.clearRect(0, 0, innerWidth, innerHeight) }
+    const finishInteraction = () => { if (!interacting) return; clearTimeout(releaseTimer); stop(); interacting = false }
+    const releaseInteraction = () => { if (interacting) releaseTimer = setTimeout(finishInteraction, 0) }
     const reduced = matchMedia('(prefers-reduced-motion: reduce)')
     const motion = () => { if (reduced.matches) { observer.disconnect(); stop() } }
-    window.addEventListener('resize', stop); window.addEventListener('pointerdown', stop, true); reduced.addEventListener('change', motion)
-    return () => { alive = false; wake.current = () => {}; setNarration(''); observer.disconnect(); cancelAnimationFrame(frame); stop(); window.removeEventListener('resize', stop); window.removeEventListener('pointerdown', stop, true); reduced.removeEventListener('change', motion) }
+    window.addEventListener('resize', stop); window.addEventListener('pointerdown', beginInteraction, true); window.addEventListener('pointerup', releaseInteraction); window.addEventListener('pointercancel', finishInteraction); window.addEventListener('click', finishInteraction); reduced.addEventListener('change', motion)
+    return () => { alive = false; wake.current = () => {}; setNarration(''); observer.disconnect(); cancelAnimationFrame(frame); clearTimeout(releaseTimer); stop(); window.removeEventListener('resize', stop); window.removeEventListener('pointerdown', beginInteraction, true); window.removeEventListener('pointerup', releaseInteraction); window.removeEventListener('pointercancel', finishInteraction); window.removeEventListener('click', finishInteraction); reduced.removeEventListener('change', motion) }
   }, [target, request.key, active])
   return <><canvas ref={canvas} className="workspace-assembly-cursors" aria-hidden="true" aria-label={`Assembling ${request.label}`} />{(narration || activity) && active && <div className="workspace-agent-narration" role="status"><span aria-hidden="true" className="workspace-agent-narration-dot"/><span>{narration || activity}</span></div>}</>
 }
