@@ -21,12 +21,12 @@ const realFetch = globalThis.fetch
 globalThis.fetch = () => { throw new Error('Unexpected cloud/network request in local inference') }
 const fake = `export const prebuiltAppConfig = ${JSON.stringify(prebuiltAppConfig)};
 export class WebWorkerMLCEngine {
-  constructor(_worker, options) { this.options = options; this.chat = { completions: { create: async request => { globalThis.__localAIEngineTest.inputs.push(request); return this.tokens(request.extra_body?.enable_thinking); } } }; }
+  constructor(_worker, options) { this.options = options; this.chat = { completions: { create: async request => { globalThis.__localAIEngineTest.inputs.push(request); return this.tokens(request.extra_body?.enable_thinking, request.messages[0].content.includes('independent coding reviewer')); } } }; }
   async reload(id, config) { const c = globalThis.__localAIEngineTest; c.reloads.push(id); c.lastConfig = config; this.options.initProgressCallback({ progress: .5, text: 'Synthetic preparation' }); if (c.holdReload) await c.holdReload; }
   async unload() { globalThis.__localAIEngineTest.unloaded++; }
   async resetChat() { globalThis.__localAIEngineTest.resets++; }
   interruptGenerate() { globalThis.__localAIEngineTest.interrupts++; }
-  async *tokens(thinking) { const c = globalThis.__localAIEngineTest; const tokens = c.responses.length ? c.responses.shift() : [...c.next]; const reason = c.reason; if (c.holdToken) await c.holdToken; if(thinking) yield { choices: [{delta:{content:'Private fixture assessment.</think>\\n\\n'}}] }; for (const content of tokens) yield { choices: [{ delta: { content } }] }; yield { choices: [{ delta: {}, finish_reason: reason }] }; }
+  async *tokens(thinking, review) { const c = globalThis.__localAIEngineTest; const tokens = c.responses.length ? c.responses.shift() : [...c.next]; const reason = c.reason; if (c.holdToken) await c.holdToken; if (review && c.holdReview) await c.holdReview; if(thinking) yield { choices: [{delta:{content:'Private fixture assessment.</think>\\n\\n'}}] }; for (const content of tokens) yield { choices: [{ delta: { content } }] }; yield { choices: [{ delta: {}, finish_reason: reason }] }; }
 }`
 await build({ entryPoints: ['client/src/lib/localAI.ts', 'client/src/lib/localAIProtocol.ts', 'client/src/components/workspace/chatStream.ts', 'client/src/components/workspace/chatRequest.ts'], outdir: directory, bundle: true, format: 'esm', platform: 'browser', write: true, outExtension: { '.js': '.mjs' }, plugins: [{ name: 'synthetic-browser-engine', setup(build) { build.onResolve({ filter: /^@mlc-ai\/web-llm$/ }, () => ({ path: 'engine', namespace: 'fixture' })); build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: fake, loader: 'js' })) } }] })
 // Bundle a single entry so the request adapter and runtime share session state.
@@ -66,6 +66,31 @@ try {
   control.next = ['<th', 'ink>', '\n', '</thi', 'nk>', '\n4']
   assert.equal((await answer(request())).text, '4')
   check('Real SSE contract, clean template output, and cleared conversation cache')
+  const reviewedAnswer = async signal => local.readChatStream((await local.requestChat(JSON.stringify(request('Write JavaScript without mutating input. Return source only.')), signal)).body, { signal })
+  let priorCalls = control.inputs.length
+  control.responses = [['UNREVIEWED_MUTATING_DRAFT'], [JSON.stringify({ assessment: 'The corrected source copies the input.', answer: 'function copy(items) { return items.slice(); }', complete: true })]]
+  const checkedCode = await reviewedAnswer()
+  assert.equal(checkedCode.text, 'function copy(items) { return items.slice(); }')
+  assert.doesNotMatch(checkedCode.text, /UNREVIEWED/)
+  assert.equal(control.inputs.length - priorCalls, 2)
+  assert.match(control.inputs.at(-1).messages[0].content, /independent coding reviewer/)
+  assert.match(control.inputs.at(-1).response_format.schema, /assessment/)
+  assert.equal(control.inputs.at(-1).extra_body.enable_thinking, false)
+  control.responses = [['PRIVATE_BAD_DRAFT'], ['not valid review JSON']]
+  const failedReview = await reviewedAnswer()
+  assert.equal(failedReview.text, '')
+  assert.match(failedReview.error, /coding review was incomplete/)
+  let releaseReview
+  control.holdReview = new Promise(resolve => { releaseReview = resolve })
+  control.responses = [['PRIVATE_CANCELLED_DRAFT'], [JSON.stringify({ assessment: 'Reviewed.', answer: 'LATE_REVIEW', complete: true })]]
+  priorCalls = control.inputs.length
+  const stopReview = new AbortController(), pendingReview = reviewedAnswer(stopReview.signal)
+  for (let turn = 0; turn < 30 && control.inputs.length < priorCalls + 2; turn++) await tick()
+  assert.equal(control.inputs.length, priorCalls + 2)
+  stopReview.abort()
+  assert.equal((await pendingReview).text, '')
+  control.holdReview = null; releaseReview()
+  check('Coding drafts stay private until a separate local model returns a complete structured correction')
   const template = new local.LocalTextFilter()
   assert.equal(template.push('<thi'), ''); assert.equal(template.push('nk>unfinished'), '')
   assert.throws(() => template.push('', true), /stopped before/)
@@ -111,6 +136,22 @@ try {
   assert.ok(control.terminated > 0)
   assert.equal((await answer(request('Hello'))).text, 'Done')
   check('Cancellation interrupts a stalled model and the next session still works')
+  {
+    let releaseBlocked
+    control.next = ['QUEUED_SURVIVOR']
+    control.holdToken = new Promise(resolve => { releaseBlocked = resolve })
+    const cancelled = new AbortController(), first = answer(request('Hello'), cancelled.signal)
+    await tick(); await tick()
+    const second = answer(request('Hello'))
+    control.holdToken = null
+    cancelled.abort(); releaseBlocked()
+    const [cancelledResult, queuedResult] = await Promise.all([first, second])
+    assert.equal(cancelledResult.text, '')
+    assert.equal(queuedResult.text, 'QUEUED_SURVIVOR')
+    assert.equal(queuedResult.error, undefined)
+    control.next = ['Done']
+  }
+  check('Stopping one active agent preserves an independent request already waiting for the shared model')
   const originalTimeout = AbortSignal.timeout, deadline = new AbortController()
   try {
     AbortSignal.timeout = duration => duration === 180000 ? deadline.signal : originalTimeout(duration)

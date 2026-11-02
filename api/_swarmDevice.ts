@@ -7,6 +7,7 @@ import type { SwarmStore, SwarmJob } from './_swarmStore'
 import { SWARM_LEASE_MS } from './_swarmStore'
 import type { SwarmExecutionResult } from '../shared/swarmExecution'
 import type { SwarmDeviceJob } from '../shared/swarmDevice'
+import { DEVICE_SWARM_PARALLELISM } from '../shared/swarmDevice'
 import { studioKind } from '../shared/studioIntent'
 
 export const DEVICE_SWARM_ACTIONS = new Set(['device-claim', 'device-renew', 'device-result', 'device-fail'])
@@ -45,7 +46,7 @@ function resultFor(job: SwarmJob, value: unknown): SwarmExecutionResult {
 export async function runSwarmDeviceAction(store: Pick<SwarmStore, 'read' | 'claim' | 'renew' | 'mutateLeased'>, owner: string, body: Record<string, unknown>) {
   if (!DEVICE_SWARM_ACTIONS.has(String(body.action)) || body.executionMode !== 'device') throw new SwarmError('Invalid device execution request.')
   if (body.action === 'device-claim') {
-    const job = await store.claim(owner, undefined, 1, 'device')
+    const job = await store.claim(owner, undefined, DEVICE_SWARM_PARALLELISM, 'device')
     const snapshot = await store.read(owner)
     let deviceJob: SwarmDeviceJob | null = null
     const active = job && snapshot.jobs.find(item => item.id === job.id && item.status === 'running' && item.leaseToken === job.leaseToken)

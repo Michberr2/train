@@ -1,5 +1,6 @@
 import { executeSwarmWork } from '../../../shared/swarmExecution'
 import type { SwarmDeviceJob } from '../../../shared/swarmDevice'
+import { DEVICE_SWARM_PARALLELISM } from '../../../shared/swarmDevice'
 import { STUDIO_KINDS } from '../../../shared/studioIntent'
 import { getLocalPreferences, requestLocalChat } from './localAI'
 import { handleLocalAIRequest } from './localAIRequests'
@@ -27,9 +28,8 @@ type Options = {
   update: (response: SwarmResponse) => void; error: (message: string) => void
   request?: typeof fetch
 }
-/** One durable claim per account. The GPU runtime separately serializes all
- * local work; no server model endpoint is reachable from this executor. */
-export class LocalSwarmRunner {
+/** One durable job slot. Cancellation is scoped to this slot's saved lease. */
+class LocalSwarmSlot {
   private controller?: AbortController
   private job?: SwarmDeviceJob
   private disposed = false
@@ -84,6 +84,16 @@ export class LocalSwarmRunner {
       if (this.controller === controller) this.controller = undefined
     }
   }
+}
+
+/** Independent jobs stay active together while the model scheduler shares GPU
+ * memory. The account-wide API cap also applies across separate browser tabs. */
+export class LocalSwarmRunner {
+  private slots: LocalSwarmSlot[]
+  constructor(options: Options) { this.slots = Array.from({ length: DEVICE_SWARM_PARALLELISM }, () => new LocalSwarmSlot(options)) }
+  stop() { this.slots.forEach(slot => slot.stop()) }
+  observe(state: SwarmState) { this.slots.forEach(slot => slot.observe(state)) }
+  async pump(): Promise<void> { await Promise.all(this.slots.map(slot => slot.pump())) }
 }
 
 export async function executeLocalSwarmJob(job: SwarmDeviceJob, options: { signal: AbortSignal; current: () => void; token?: string; request?: typeof fetch; onProgress?: (progress: import('../../../shared/swarmExecution').SwarmExecutionProgress) => Promise<void> }): Promise<unknown> {

@@ -338,6 +338,23 @@ await regression('device jobs use no quota/provider wake, stay out of cloud clai
   assert.ok(!JSON.stringify(custom.context).includes('MILO_PRIVATE_CANARY'))
   assert.ok(!JSON.stringify(custom.context).includes('ROCKY_PRIVATE_CANARY'))
   assert.equal((await local({ action: 'device-result', jobId: custom.id, leaseToken: custom.leaseToken, result: { status: 'done', content: 'Poppy reviewed the supplied idea.', summary: 'Reply ready.' } })).code, 200)
+  const otherProject = await local({ action: 'create', requestId: 'parallel-project-02', title: 'Separate document project', brief: 'An unrelated document, kept separate from the launch.' })
+  for (let index = 0; index < 6; index++) {
+    const projectId = index % 2 ? otherProject.body.projectId : id
+    const added = await local({ action: 'add-task', projectId, thread: 'Rocky', requestId: `parallel-task-${index}`, title: `Write independent deliverable ${index}.`, assignee: 'Rocky' })
+    const queuedTask = added.body.state.tasks.find(item => item.requestId === `parallel-task-${index}`)
+    assert.equal((await local({ action: 'start-task', projectId, taskId: queuedTask.id, requestId: `parallel-start-${index}` })).code, 200)
+  }
+  const simultaneous = await Promise.all(Array.from({ length: 8 }, () => local({ action: 'device-claim' })))
+  const activeJobs = simultaneous.flatMap(response => response.body.deviceJob ? [response.body.deviceJob] : [])
+  assert.equal(activeJobs.length, 4, 'independent agent jobs run up to the account-wide device cap')
+  assert.equal(new Set(activeJobs.map(job => job.id)).size, 4)
+  assert.equal(new Set(activeJobs.map(job => job.projectId)).size, 2, 'separate projects remain active together')
+  const interrupted = activeJobs[0], interruptedTask = (await store.read('device-owner')).state.tasks.find(task => task.executionId === interrupted.id)
+  assert.equal((await local({ action: 'stop-task', projectId: interrupted.projectId, taskId: interruptedTask.id })).code, 200)
+  assert.equal((await local({ action: 'device-result', jobId: interrupted.id, leaseToken: interrupted.leaseToken, result: { status: 'done', content: 'Late work', summary: 'Late work', artifact: { type: 'text', mime: 'text/markdown', filename: 'late.md', content: 'Late work' } } })).code, 409)
+  assert.ok((await local({ action: 'device-claim' })).body.deviceJob, 'stopping one job frees a slot for another project task')
+  assert.equal((await store.read('device-owner')).jobs.filter(job => job.executionMode === 'device' && job.status === 'running').length, 4)
   assert.equal(fixture.reservations, quota); assert.equal(fixture.wakes.length, wakes)
   fixture.quotaAllowed = true
 })

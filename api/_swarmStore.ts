@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { DEVICE_SWARM_PARALLELISM } from '../shared/swarmDevice'
 import { CloudflareStore, type CloudflareStatement } from './_cloudflareStore'
 import type { ConnectionClient } from './_connectionStore'
 import type { SwarmState, SwarmThread, SwarmAgentId } from '../client/src/components/workspace/design/swarmTypes'
@@ -354,7 +355,7 @@ export class SwarmStore {
   }
 
   async claim(owner: string, jobId?: string, maxActive = 3, executionMode: 'device' | 'cloud' = 'cloud'): Promise<SwarmJob | null> {
-    const now = Date.now(), token = randomUUID(), maximum = Math.max(1, Math.min(3, Math.floor(maxActive) || 3))
+    const now = Date.now(), token = randomUUID(), maximum = Math.max(1, Math.min(executionMode === 'device' ? DEVICE_SWARM_PARALLELISM : 3, Math.floor(maxActive) || 3))
     const matchesMode = (job: SwarmJob) => (job.executionMode || 'cloud') === executionMode
     const saved = await this.mutate(owner, draft => {
       for (const job of draft.jobs) {

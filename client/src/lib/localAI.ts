@@ -17,7 +17,7 @@ let state: LocalAIState = { phase: 'idle', progress: 0, message: 'AI runs on thi
 export function getLocalAIState() { return state }
 function report(patch: Partial<LocalAIState>) { state = { ...state, ...patch }; window.dispatchEvent(new Event('nalu-local-ai')) }
 
-let engine: MLCEngineInterface | undefined, worker: Worker | undefined, loadedModel = ''
+let engine: MLCEngineInterface | undefined, worker: Worker | undefined, loadedModel = '', modelGeneration = 0
 let epoch = 0, queue: Promise<unknown> = Promise.resolve(), lifetime = new AbortController()
 let activeRequest: AbortController | undefined
 function abortError() { return new DOMException('Cancelled', 'AbortError') }
@@ -29,14 +29,18 @@ function cancellable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
     promise.then(value => { signal.removeEventListener('abort', abort); resolve(value) }, error => { signal.removeEventListener('abort', abort); reject(error) })
   })
 }
-export function resetLocalAI() {
-  epoch++; lifetime.abort(); lifetime = new AbortController()
+function discardLocalModel() {
+  modelGeneration++
   engine?.interruptGenerate(); worker?.terminate()
   engine = undefined; worker = undefined; loadedModel = ''
+  report({ phase: 'idle', progress: 0, model: undefined, role: undefined, message: 'AI runs on this computer' })
+}
+export function resetLocalAI() {
+  epoch++; lifetime.abort(); lifetime = new AbortController()
+  discardLocalModel()
   // Terminating a worker can leave its pending RPC unresolved. A new session
   // gets a fresh queue; the old epoch can never emit or execute an action.
   queue = Promise.resolve()
-  report({ phase: 'idle', progress: 0, model: undefined, role: undefined, message: 'AI runs on this computer' })
 }
 export async function checkLocalDevice(): Promise<{ halfPrecision: boolean; maxBuffer: number }> {
   const gpu = (navigator as unknown as { gpu?: { requestAdapter(): Promise<{ features: Set<string>; limits: { maxStorageBufferBindingSize: number } } | null> } }).gpu
@@ -61,8 +65,9 @@ async function loadModel(role: LocalRole, signal?: AbortSignal) {
   if (engine) await cancellable(engine.unload(), taskSignal)
   if (signal?.aborted || epoch !== currentEpoch) throw abortError()
   if (!worker) worker = new Worker(new URL('./localAI.worker.ts', import.meta.url), { type: 'module' })
+  const generation = ++modelGeneration
   engine = new webllm.WebWorkerMLCEngine(worker, { initProgressCallback: progress => {
-    if (epoch === currentEpoch) report({ phase: 'loading', progress: Math.max(0, Math.min(1, progress.progress)), message: progress.text })
+    if (epoch === currentEpoch && generation === modelGeneration) report({ phase: 'loading', progress: Math.max(0, Math.min(1, progress.progress)), message: progress.text })
   } })
   const loadingEngine = engine
   await cancellable(loadingEngine.reload(model, { context_window_size: 8192, ...(model.startsWith('Qwen3.5-') ? { conv_config: { ...record.overrides?.conv_config, role_empty_sep: '\n<think>\n' } } : {}) }), taskSignal)
@@ -97,7 +102,7 @@ export function requestLocalChat(request: LocalRequest, signal?: AbortSignal): R
   const encoder = new TextEncoder()
   const controller = new AbortController()
   let closed = false
-  const abort = () => { controller.abort(); if (currentEpoch === epoch && activeRequest === controller) resetLocalAI() }
+  const abort = () => { controller.abort(); if (currentEpoch === epoch && activeRequest === controller) discardLocalModel() }
   signal?.addEventListener('abort', abort, { once: true })
   if (signal?.aborted) abort()
   const body = new ReadableStream<Uint8Array>({
@@ -163,7 +168,7 @@ export function requestLocalChat(request: LocalRequest, signal?: AbortSignal): R
           if (current()) {
             const message = error instanceof Error ? error.message : 'The local model could not finish. Try the compact crew.'
             emit('error', { message }); emit('done', { ok: false, message })
-            resetLocalAI(); report({ phase: 'error', message })
+            discardLocalModel(); report({ phase: 'error', message })
           }
         } finally {
           if (activeRequest === controller) activeRequest = undefined
