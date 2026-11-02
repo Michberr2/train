@@ -53,6 +53,7 @@ try {
   await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible()
   const header = page.locator('.nalu-landing-header'), headerBox = await header.boundingBox()
   assert.equal(await header.evaluate(el => getComputedStyle(el).backdropFilter), 'none', 'The fixed header does not sample moving construction layers')
+  assert.ok(await header.evaluate(el => Number(getComputedStyle(el).backgroundColor.match(/[\d.]+/g)?.[3] ?? 1) <= .3), 'The header remains visibly transparent over the scene')
   await page.screenshot({ path: `${output}/01-header-only.png` }); report.screenshots.push('01-header-only.png')
   record('After the retained loading screen, only the header and scroll cue are visible')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
