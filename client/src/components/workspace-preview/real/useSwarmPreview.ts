@@ -162,7 +162,7 @@ export default function useSwarmPreview(): SwarmController {
     draft: snapshot.drafts[swarmRoomId(snapshot.activeProjectId, snapshot.recipient)] || '', setDraft,
     pending: selectSwarmPending(snapshot.state, snapshot.activeProjectId, snapshot.recipient).length > 0,
     pendingCount: Object.values(snapshot.state.turns).filter(turn => turn.status === 'pending').length,
-    creating, setCreating, error, navigate, selectProject: id => navigate(id, 'group'), selectRecipient: thread => navigate(snapshot.activeProjectId, thread),
-    send, stop, createProject, addTask, updateTask, assignTask, recentRooms: snapshot.recentRooms,
+    creating, setCreating, error, navigate: (projectId, thread) => navigate(projectId, thread as SwarmThread), selectProject: id => navigate(id, 'group'), selectRecipient: thread => navigate(snapshot.activeProjectId, thread as SwarmThread),
+    send, stop, createProject, addTask: (title, assignee) => addTask(title, assignee as SwarmAgentId), updateTask, assignTask: (taskId, assignee) => assignTask(taskId, assignee as SwarmAgentId), recentRooms: snapshot.recentRooms,
   }
 }

@@ -41,6 +41,11 @@ try {
       const response = await api.call(req.postDataJSON(), req.headers().authorization?.replace(/^Bearer /, ''))
       return route.fulfill({ status: response.code, json: response.body }).catch(() => {})
     }
+    if (url.pathname === '/api/community') {
+      assert.equal(req.postDataJSON().action, 'list')
+      assert.ok(req.headers().authorization?.startsWith('Bearer '))
+      return route.fulfill({ json: { rooms: [] } })
+    }
     if (url.pathname === '/__fixture-local-model') {
       const request = req.postDataJSON(), text = JSON.stringify(request.messages)
       report.modelRequests.push({ text })

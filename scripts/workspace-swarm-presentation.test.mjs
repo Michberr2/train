@@ -6,7 +6,7 @@ const bundle = await build({ stdin: { contents: `
   import React from 'react'; import {renderToStaticMarkup} from 'react-dom/server';
   import WorkspaceSwarm from './client/src/components/workspace-preview/real/WorkspaceSwarm';
   export const render = swarm => renderToStaticMarkup(React.createElement(WorkspaceSwarm, {swarm, navigationKey:0, availableChatIds:[], onOpenChat(){}}));
-`, resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'esm', loader: { '.css': 'empty' }, write: false,
+`, resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'esm', loader: { '.css': 'empty' }, define: { 'import.meta.env.BASE_URL': '"/"' }, write: false,
   banner: { js: `import {createRequire} from 'node:module'; const require=createRequire(${JSON.stringify(`${process.cwd()}/package.json`)});` } })
 const { render } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`)
 function controller(content, mode = 'live', speaker = 'Rocky') {

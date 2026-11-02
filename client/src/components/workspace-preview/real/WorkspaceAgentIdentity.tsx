@@ -6,7 +6,7 @@ export type AgentName = 'Nalu' | 'Rocky' | 'Milo'
 /** Real Swarm work supplies its assigned identity. Ordinary chats and CLI work
  * remain attributed to Nalu; only the isolated fixtures use sample mappings. */
 export function agentForItem(item: ActivityItem): { name: AgentName } {
-  if (item.swarm) return { name: item.swarm.agent }
+  if (item.swarm) return { name: item.swarm.agent as AgentName }
   if (item.preview) {
     const chatId = item.chatId || item.id.replace(/^sample-work:/, '')
     if (chatId === 'preview-budget') return { name: 'Rocky' }

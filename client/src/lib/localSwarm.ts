@@ -15,6 +15,9 @@ function validJob(value: unknown, state: SwarmState): value is SwarmDeviceJob {
     || !Array.isArray(value.context) || value.context.length > 40 || value.context.some(message => !record(message) || !['user', 'assistant'].includes(String(message.role)) || typeof message.content !== 'string' || message.content.length > 12000)) return false
   const project = state.projects.find(project => project.id === value.projectId)
   if (!project || !project.members.includes(value.speaker as never) || value.thread !== 'group' && !project.members.includes(value.thread as never)) return false
+  const profile = project.agentProfiles?.[String(value.speaker)]
+  if (value.allowCustomSpeaker !== undefined && value.allowCustomSpeaker !== true || value.personality !== undefined && (typeof value.personality !== 'string' || value.personality.length > 800)) return false
+  if (value.allowCustomSpeaker && (!profile || profile.personality !== value.personality)) return false
   if (value.studio && (!record(value.studio) || !identifier(value.studio.taskId) || !identifier(value.studio.sourceJobId) || value.studio.kind === 'chat' || !(STUDIO_KINDS as readonly unknown[]).includes(value.studio.kind))) return false
   return true
 }

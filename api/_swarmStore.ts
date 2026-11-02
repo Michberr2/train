@@ -26,7 +26,13 @@ export class SwarmStoreLimitError extends Error {
   constructor() { super('Swarm history has reached its supported size. Existing work is preserved; no new content was saved.') }
 }
 const INTERRUPTED = 'Work was interrupted after its worker lease expired. Retry explicitly to start a new run.'
-const AGENTS = new Set(['Nalu', 'Rocky', 'Milo'])
+const BUILT_IN_AGENTS = new Set(['Nalu', 'Rocky', 'Milo'])
+function validAgent(project: SwarmState['projects'][number], member: string): boolean {
+  if (BUILT_IN_AGENTS.has(member)) return true
+  const profile = project.agentProfiles?.[member]
+  return !!profile && profile.name === member && typeof profile.personality === 'string' && profile.personality.length <= 800
+    && !!profile.appearance && [profile.appearance.coat, profile.appearance.ears, profile.appearance.markings, profile.appearance.eyes].every((value, index) => Number.isInteger(value) && value >= 0 && value < [8, 4, 6, 4][index])
+}
 const STATUSES = new Set(['queued', 'running', 'waiting', 'done', 'failed', 'cancelled'])
 const TABLES = ['projects', 'rooms', 'messages', 'tasks', 'task_threads', 'turns', 'jobs'] as const
 type Table = typeof TABLES[number]
@@ -79,7 +85,7 @@ function assertSnapshot(value: SwarmSnapshot, previous?: SwarmSnapshot): void {
     }
   }
   for (const project of state.projects) {
-    if (!Array.isArray(project.members) || !project.members.length || new Set(project.members).size !== project.members.length || project.members.some(member => !AGENTS.has(member))) throw new Error('Invalid Swarm membership.')
+    if (!Array.isArray(project.members) || !project.members.length || project.members.length > 1000 || new Set(project.members).size !== project.members.length || project.members.some(member => !validAgent(project, member))) throw new Error('Invalid Swarm membership.')
     if (typeof project.title !== 'string' || typeof project.brief !== 'string' || !timestamp(project.createdAt) || !timestamp(project.updatedAt)) throw new Error('Invalid Swarm project.')
   }
   for (const task of state.tasks) {
@@ -121,6 +127,23 @@ function assertSnapshot(value: SwarmSnapshot, previous?: SwarmSnapshot): void {
       if (['done', 'failed', 'cancelled'].includes(old.status) && job.status !== old.status) throw new Error('A finished Swarm attempt cannot be restarted.')
     }
   }
+}
+
+/** Only one teammate replies at a time to a shared group message. This makes
+ * each later reply able to read the earlier replies from that same round. */
+function blockedByEarlierGroupReply(snapshot: SwarmSnapshot, candidate: SwarmJob): boolean {
+  if (candidate.kind !== 'reply' || candidate.thread !== 'group' || !candidate.turnId) return false
+  const current = snapshot.state.turns.find(turn => turn.id === candidate.turnId)
+  if (!current) return false
+  const project = snapshot.state.projects.find(item => item.id === candidate.projectId)
+  if (!project) return false
+  const siblings = snapshot.state.turns.filter(turn => turn.projectId === candidate.projectId
+    && turn.thread === 'group' && turn.userMessageId === current.userMessageId)
+    .sort((a, b) => project.members.indexOf(a.replySpeaker) - project.members.indexOf(b.replySpeaker))
+  const index = siblings.findIndex(turn => turn.id === current.id)
+  if (index <= 0) return false
+  const earlier = new Set(siblings.slice(0, index).map(turn => turn.id))
+  return snapshot.jobs.some(job => job.turnId && earlier.has(job.turnId) && ['queued', 'running'].includes(job.status))
 }
 
 function assemble(revision: unknown, data: Partial<Record<Table, RecordRow[]>>): SwarmSnapshot {
@@ -347,7 +370,8 @@ export class SwarmStore {
       // recovery allowance. Do not mix it with starting fresh work at the cap.
       if (Buffer.byteLength(JSON.stringify(draft.state)) > SWARM_MAX_STATE_BYTES || Buffer.byteLength(JSON.stringify(draft)) > SWARM_MAX_SNAPSHOT_BYTES) return
       if (draft.jobs.filter(job => matchesMode(job) && job.status === 'running').length >= maximum) return
-      const job = draft.jobs.find(item => matchesMode(item) && item.status === 'queued' && (!jobId || item.id === jobId))
+      const job = draft.jobs.find(item => matchesMode(item) && item.status === 'queued' && (!jobId || item.id === jobId)
+        && !blockedByEarlierGroupReply(draft, item))
       if (!job) return
       job.status = 'running'; job.leaseToken = token; job.leaseUntil = now + SWARM_LEASE_MS; job.attempts++; job.updatedAt = now
       const task = draft.state.tasks.find(item => item.id === job.taskId)

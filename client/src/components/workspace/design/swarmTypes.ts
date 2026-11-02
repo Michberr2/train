@@ -1,10 +1,13 @@
 /** Swarm presentation contract. No fixtures, storage, network, or execution. */
-export type SwarmAgentId = 'Nalu' | 'Rocky' | 'Milo'
+/** Built-in and user-created dog agents share this identifier contract. */
+export type SwarmAgentId = string
 export type SwarmThread = 'group' | SwarmAgentId
 export type SwarmTaskStatus = 'queued' | 'running' | 'waiting' | 'done' | 'paused' | 'failed' | 'cancelled'
 export interface SwarmProject {
-  id: string; requestId?: string; title: string; brief: string; members: SwarmAgentId[]; createdAt: number; updatedAt: number
+  id: string; requestId?: string; title: string; brief: string; members: SwarmAgentId[]; agentProfiles?: Record<string, SwarmAgentProfile>; createdAt: number; updatedAt: number
 }
+export interface SwarmDogAppearance { coat: number; ears: number; markings: number; eyes: number }
+export interface SwarmAgentProfile { name: string; personality: string; appearance: SwarmDogAppearance }
 export interface SwarmRoom { id: string; projectId: string; thread: SwarmThread; title: string }
 export interface SwarmTask {
   id: string; requestId?: string; projectId: string; title: string; assignee: SwarmAgentId; status: SwarmTaskStatus
@@ -55,6 +58,7 @@ export interface SwarmController {
   send: (text?: string) => boolean | Promise<boolean>
   stop: () => void
   createProject: (title: string, brief: string) => string | null | Promise<string | null>
+  addAgent?: (name: string, personality: string, appearance: SwarmDogAppearance) => void | Promise<void>
   addTask: (title: string, assignee: SwarmAgentId) => void | Promise<void>
   /** Manual tracking in sample mode. Live execution status is read-only in UI. */
   updateTask: (taskId: string, status: SwarmTaskStatus) => void

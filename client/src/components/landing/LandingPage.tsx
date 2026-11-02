@@ -70,7 +70,7 @@ export default function LandingPage() {
     const target = document.getElementById(sections[index]?.id), host = container.current
     if (!target || !host) return
     setMenuOpen(false)
-    host.scrollTo({ top: target.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop, behavior: reduced ? 'auto' : 'smooth' })
+    host.scrollTo({ top: index === 0 ? 0 : target.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop, behavior: reduced ? 'auto' : 'smooth' })
   }, [reduced])
   useEffect(() => {
     const host = container.current

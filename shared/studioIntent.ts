@@ -59,6 +59,9 @@ export function fallbackStudioIntent(text: string, recentKind?: unknown): Studio
   if (/\b(?:do not|don't|dont|never)\s+(?:make|build|create|generate|design)\b/i.test(text)) return result('chat')
   const recent = studioKind(recentKind)
   if (recent && recent !== 'chat' && EDIT.test(text) && /\b(it|this|the same|that)\b/i.test(text) && !/\b(into|new|another|separate)\b/i.test(text)) return result(recent, 'edit')
+  // The requested output can be text about an artifact. A checklist for
+  // reviewing a website does not request creation of that website.
+  if (/\b(?:write|draft|prepare|produce|give|make|create)\s+(?:(?:me|us|a|an|the|my|our|some|short|brief|concise|detailed|complete|simple|\d+[ -](?:item|point|step)|(?:one|two|three|four|five|six|seven|eight|nine|ten)[ -](?:item|point|step))\s+){0,8}(?:checklists?|summar(?:y|ies)|outlines?|critiques?|explanations?|feedback|recommendations?|instructions?|code (?:examples?|snippets?))\b/i.test(text)) return result('chat')
   // A direct requested object is useful even if secondary nouns occur later.
   // More complicated syntax goes to chat on outage rather than guessing.
   const head = text.match(/\b(?:make|build|create|design|generate|produce|write|draft|prepare|need|want|render|draw|paint)\s+(?:(?:me|us|a|an|the|my|our|some|polished|beautiful|modern|new|simple|complete|editable|animated|aesthetic|professional)\s+){0,8}(website|web app|landing page|brand book|brand guidelines|floor plan|blueprint|logo reveal|motion graphic|logo|palette|poster|carousel|canvas|shopping list|document|report|book|spreadsheet|workbook|presentation|pitch deck|deck|image|photo|video|game|email|3d model)\b/i)?.[1]

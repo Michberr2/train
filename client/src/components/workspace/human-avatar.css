@@ -1,0 +1,7 @@
+.human-avatar{display:inline-block;flex:none;overflow:hidden;border-radius:50%;border:1px solid rgb(var(--ws-ink)/.12);background-color:rgb(var(--ws-panel));background-repeat:no-repeat;background-position:center;background-size:cover;box-shadow:0 1px 4px rgb(20 24 30/.12)}
+.human-avatar-picker{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:9px;max-width:520px}
+.human-avatar-picker button{display:flex;min-width:0;flex-direction:column;align-items:center;gap:6px;border:1px solid rgb(var(--ws-ink)/.1);border-radius:14px;background:rgb(var(--ws-panel)/.56);padding:10px 6px;color:rgb(var(--ws-ink));font-size:11px;transition:background .16s,border-color .16s,transform .16s}
+.human-avatar-picker button:hover{transform:translateY(-1px);background:rgb(var(--ws-panel)/.82)}
+.human-avatar-picker button[aria-pressed=true]{border-color:rgb(var(--ws-ink)/.48);background:rgb(var(--ws-panel)/.92);box-shadow:0 0 0 2px rgb(var(--ws-ink)/.08)}
+.human-avatar-picker .human-avatar{background-color:#f3f2f0}
+@media(max-width:640px){.human-avatar-picker{grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}.human-avatar-picker .human-avatar{width:42px!important;height:42px!important}.human-avatar-picker button{padding:8px 4px;font-size:10px}}

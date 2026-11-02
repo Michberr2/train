@@ -227,7 +227,8 @@ await regression('ordinary group sends persist one real worker reply per teammat
   assert.equal((await teamRequest(nextSend)).code, 200)
   const pending = (await store.read('carol')).jobs.filter(job => job.projectId === teamProject && job.thread === 'group' && job.status === 'queued')
   assert.equal(pending.length, 3)
-  const claim = await store.claim('carol', pending[0].id), started = defer(), late = defer()
+  const firstPending = pending.find(job => job.speaker === 'Nalu')
+  const claim = await store.claim('carol', firstPending.id), started = defer(), late = defer()
   const running = executeLeasedSwarmJob(store, 'carol', claim, { execute: async () => { started.resolve(); await late.promise; return { status: 'done', content: 'LATE_TEAM_REPLY', summary: 'Late' } } })
   await started.promise
   assert.equal((await teamRequest({ action: 'stop', projectId: teamProject, thread: 'group' })).code, 200)
@@ -328,6 +329,15 @@ await regression('device jobs use no quota/provider wake, stay out of cloud clai
   const reopened = await local({ action: 'artifact', projectId: id, taskId: docTask.id, executionId: studio.id })
   assert.equal(reopened.code, 200); assert.deepEqual(reopened.body.artifact.payload, payload)
   assert.equal((await local({ action: 'device-result', jobId: studio.id, leaseToken: studio.leaseToken, result: { payload } })).code, 200)
+  assert.equal((await local({ action: 'add-agent', projectId: id, requestId: 'device-custom-agent', name: 'Poppy', personality: 'A warm, careful reviewer.', appearance: { coat: 0, ears: 0, markings: 0, eyes: 0 } })).code, 200)
+  assert.equal((await sendLocal('Poppy', 'device-custom-reply', 'Review this shared launch idea.')).code, 200)
+  const custom = (await local({ action: 'device-claim' })).body.deviceJob
+  assert.equal(custom.speaker, 'Poppy')
+  assert.equal(custom.allowCustomSpeaker, true)
+  assert.equal(custom.personality, 'A warm, careful reviewer.')
+  assert.ok(!JSON.stringify(custom.context).includes('MILO_PRIVATE_CANARY'))
+  assert.ok(!JSON.stringify(custom.context).includes('ROCKY_PRIVATE_CANARY'))
+  assert.equal((await local({ action: 'device-result', jobId: custom.id, leaseToken: custom.leaseToken, result: { status: 'done', content: 'Poppy reviewed the supplied idea.', summary: 'Reply ready.' } })).code, 200)
   assert.equal(fixture.reservations, quota); assert.equal(fixture.wakes.length, wakes)
   fixture.quotaAllowed = true
 })

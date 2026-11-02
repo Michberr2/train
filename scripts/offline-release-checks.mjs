@@ -8,6 +8,9 @@ const cwd = fileURLToPath(new URL('../', import.meta.url))
 export const OFFLINE_RELEASE_CHECKS = [
   'deploy-release-regressions.mjs',
   'offline-release-checks-regressions.mjs',
+  'cursor-build-browser-regressions.mjs',
+  'chat-protocol-regressions.mjs',
+  'agent-action-contract-regressions.mjs',
   'project-data-regressions.mjs',
   'cloudflare-store-regressions.mjs',
   'chat-handler-regressions.mjs',
@@ -63,6 +66,7 @@ export const OFFLINE_RELEASE_CHECKS = [
   'swarm-store-regressions.mjs',
   'swarm-service-regressions.mjs',
   'swarm-route-regressions.mjs',
+  'community-route-regressions.mjs',
   'swarm-scheduler-regressions.mjs',
   'swarm-cloudflare-contract-regressions.mjs',
   'swarm-execution-regressions.mjs',

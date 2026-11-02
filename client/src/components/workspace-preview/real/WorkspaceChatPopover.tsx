@@ -4,11 +4,10 @@ import WorkspaceSwarm from './WorkspaceSwarm'
 import { isSwarmRoom, type SwarmController, type SwarmThread, type SwarmRoomReference } from '../../workspace/design/swarmTypes'
 import { AgentHead, type AgentName } from './WorkspaceAgentIdentity'
 import './workspace-chat-popover.css'
-
 export type WorkspaceChatPopoverProps = {
   swarm?: SwarmController
   swarmNavigationRequest?: SwarmRoomReference & { key: number }
-  agentConversationRequest?: { agent: AgentName; key: number }
+  agentConversationRequest?: { agent: string; key: number }
   persistenceKey?: string
   fullPageAnchor?: HTMLElement | null
   fullPageVisible?: boolean
@@ -62,7 +61,7 @@ export default function WorkspaceChatPopover({ swarm, swarmNavigationRequest, ag
   const surfaceVisible = open || fullPageVisible && !!inlineBounds
   const ordinaryVisible = surfaceVisible && (!open || conversation === 'chat')
   const [swarmNavigation, setSwarmNavigation] = useState(0)
-  const [startingAgent, setStartingAgent] = useState<AgentName>()
+  const [startingAgent, setStartingAgent] = useState<string>()
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const [jumpOpen, setJumpOpen] = useState(false)
   const [jumpQuery, setJumpQuery] = useState('')
@@ -375,7 +374,7 @@ export default function WorkspaceChatPopover({ swarm, swarmNavigationRequest, ag
       }}>
         <button ref={quickHome} type="button" aria-pressed={conversation === 'chat'} onClick={() => { if (activeChatId) restoreQuickTab(chatTabId(activeChatId)); setConversation('chat'); setJumpOpen(false); setNewMenuOpen(false); if (mobile) setHistoryOpen(false); focusComposer() }}>Nalu</button>
         {swarm && activeProject && !hiddenTabs.includes(swarmTabId(activeProject.id, 'group')) && <QuickTab label={`Swarm · ${activeProject.title}`} active={conversation === 'swarm' && swarm.recipient === 'group'} onOpen={() => showSwarm(activeProject.id)} onHide={() => hideQuickTab(swarmTabId(activeProject.id, 'group'))}>
-          <span className="workspace-chat-quick-participants" aria-hidden="true">{activeProject.members.map(member => <span key={member} className="workspace-chat-quick-participant"><AgentHead name={member}/></span>)}</span>
+          <span className="workspace-chat-quick-participants" aria-hidden="true">{activeProject.members.map(member => <span key={member} className="workspace-chat-quick-participant"><AgentHead name={member as AgentName}/></span>)}</span>
           <span className="workspace-chat-quick-tab-copy"><span className="workspace-chat-quick-tab-name">Swarm</span><span className="workspace-chat-quick-tab-detail">{activeProject.title}</span></span>
         </QuickTab>}
         {swarm && swarm.recentRooms.filter(room => room.thread !== 'group' && !hiddenTabs.includes(swarmTabId(room.projectId, room.thread))).slice(0, 4).map(room => {
@@ -401,7 +400,7 @@ export default function WorkspaceChatPopover({ swarm, swarmNavigationRequest, ag
           }}>
             {swarm && <div className="workspace-chat-swarm-history"><header><h3>Swarm workspaces</h3><button type="button" onClick={createSwarm} aria-label="Create a swarm workspace">＋</button></header>
               {swarm.state.projects.map(project => <div key={project.id}><button type="button" data-chat-history-select aria-current={conversation === 'swarm' && project.id === swarm.activeProjectId && swarm.recipient === 'group' ? 'page' : undefined} onClick={() => showSwarm(project.id)}><strong>{project.title}</strong><span>{project.members.length} agents</span></button>
-                {conversation === 'swarm' && project.id === swarm.activeProjectId && <div className="workspace-chat-agent-threads"><small>Private chats</small>{project.members.map(member => <button key={member} type="button" data-chat-history-select aria-current={swarm.recipient === member ? 'page' : undefined} onClick={() => showSwarm(project.id, member)}><AgentHead name={member}/>{member}</button>)}</div>}
+                {conversation === 'swarm' && project.id === swarm.activeProjectId && <div className="workspace-chat-agent-threads"><small>Private chats</small>{project.members.map(member => <button key={member} type="button" data-chat-history-select aria-current={swarm.recipient === member ? 'page' : undefined} onClick={() => showSwarm(project.id, member)}><AgentHead name={member as AgentName}/>{member}</button>)}</div>}
               </div>)}
             </div>}
             <div onClick={event => {

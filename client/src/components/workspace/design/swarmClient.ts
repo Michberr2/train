@@ -9,9 +9,9 @@ interface Options { account: SwarmAccount; readAccount: () => SwarmAccount | nul
 const emptyState = (): SwarmState => ({ version: 1, mode: 'live', projects: [], tasks: [], messages: [], turns: [] })
 const emptyPreferences = (): Preferences => ({ activeProjectId: '', recipient: 'group', drafts: {}, recentRooms: [], intents: [] })
 export const emptySwarmSnapshot: SwarmSnapshot = { state: emptyState(), revision: -1, preferences: emptyPreferences(), creating: false, loading: true, error: '', sendingRooms: [], busyTaskIds: [] }
-const roomThread = (value: unknown): value is SwarmThread => ['group', 'Nalu', 'Rocky', 'Milo'].includes(String(value))
+const roomThread = (value: unknown): value is SwarmThread => typeof value === 'string' && value.length > 0 && value.length <= 48
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
-const intentActions = new Set(['create', 'send', 'add-task', 'start-task', 'continue-studio'])
+const intentActions = new Set(['create', 'send', 'add-agent', 'add-task', 'start-task', 'continue-studio'])
 const intentKey = (action: string, payload: Payload, context = '') => JSON.stringify([action, Object.entries(payload).sort(([a], [b]) => a.localeCompare(b)), context])
 function readPreferences(storage: Options['storage'], key: string): Preferences {
   try {
@@ -204,6 +204,11 @@ export class SwarmClient {
       this.patch({ error }); throw new Error(error)
     }
     await this.mutate('add-task', { projectId, thread, title: title.trim(), assignee })
+  }
+  addAgent = async (name: string, personality: string, appearance: { coat: number; ears: number; markings: number; eyes: number }): Promise<void> => {
+    const projectId = this.snapshot.preferences.activeProjectId
+    if (!projectId || !name.trim()) return
+    await this.mutate('add-agent', { projectId, name: name.trim(), personality: personality.trim(), appearance: JSON.stringify(appearance) })
   }
   private taskAction = async (action: string, taskId: string, extra: Payload = {}): Promise<void> => {
     const projectId = this.snapshot.preferences.activeProjectId

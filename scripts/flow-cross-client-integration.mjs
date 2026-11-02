@@ -16,7 +16,7 @@ import tailwindConfig from '../client/tailwind.config.js'
 import { chromium, expect } from '@playwright/test'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const mobileRoot = process.env.NALU_REPOS_ROOT ? path.join(process.env.NALU_REPOS_ROOT, 'nalumobile') : path.resolve(root, '../nalumobile')
+const mobileRoot = process.env.NALU_REPOS_ROOT ? path.resolve(process.env.NALU_REPOS_ROOT, 'nalumobile') : path.resolve(root, '../nalumobile')
 const output = process.env.OUTPUT_DIR || '/tmp/nalu-flow-cross-client-integration'
 const require = createRequire(import.meta.url)
 const owner = 'compat-integration-owner'
@@ -226,7 +226,7 @@ try {
   assert.deepEqual(report.blockedRequests, [], 'No unexpected network/API traffic occurred')
   record('All six jobs remain queued in memory; no provider calls, native effects, or production mutations')
   for (const relative of ['client/src/components/workspace/AgentsPanel.tsx', 'client/src/lib/sync.ts', 'api/data.ts', 'api/_cloudflareData.ts', 'api/_cloudflareTasks.ts', 'cloudflare/nalu-data/worker.ts', '../nalumobile/src/api.ts', '../nalumobile/src/assistant.ts', '../nalumobile/src/commands.ts']) {
-    report.sourceHashes[relative] = createHash('sha256').update(await readFile(process.env.NALU_REPOS_ROOT && relative.startsWith('../nalu') ? path.join(process.env.NALU_REPOS_ROOT, relative.slice(3)) : path.resolve(root, relative))).digest('hex')
+    report.sourceHashes[relative] = createHash('sha256').update(await readFile(relative.startsWith('../nalumobile/') ? path.resolve(mobileRoot, relative.slice('../nalumobile/'.length)) : path.resolve(root, relative))).digest('hex')
   }
   report.passed = true
 } catch (error) {

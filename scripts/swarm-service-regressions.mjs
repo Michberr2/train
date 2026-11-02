@@ -19,6 +19,16 @@ const projectId = state.state.projects[0].id
 assert.equal(createdProjectId('owner-a', projectRequest), projectId)
 change(state, projectRequest)
 assert.equal(state.state.projects.length, 1)
+{
+  const snapshot = empty(); change(snapshot, projectRequest)
+  change(snapshot, { action: 'add-agent', projectId, requestId: 'agent-poppy-0001', name: 'Poppy', personality: 'Careful trip planner', appearance: JSON.stringify({ coat: 2, ears: 1, markings: 0, eyes: 0 }) })
+  assert.ok(snapshot.state.projects[0].members.includes('Poppy'))
+  assert.equal(snapshot.state.projects[0].agentProfiles.Poppy.personality, 'Careful trip planner')
+  change(snapshot, { action: 'send', projectId, thread: 'group', requestId: 'agent-message-001', content: '@Poppy help plan this.' })
+  assert.deepEqual(snapshot.jobs.map(job => job.speaker), ['Poppy'])
+  assert.throws(() => change(snapshot, { action: 'add-agent', projectId, requestId: 'agent-poppy-0002', name: 'Poppy', personality: '', appearance: JSON.stringify({ coat: 2, ears: 1, markings: 0, eyes: 0 }) }), /already exists/)
+  assert.throws(() => change(snapshot, { action: 'add-agent', projectId, requestId: 'agent-badlook-01', name: 'Bad', personality: '', appearance: JSON.stringify({ coat: 90, ears: 1, markings: 0, eyes: 0 }) }), /appearance/)
+}
 assert.throws(() => change(state, { ...projectRequest, title: 'Different' }), /different project/)
 const other = empty(); change(other, projectRequest, 1000, 'owner-b')
 assert.notEqual(other.state.projects[0].id, projectId)
@@ -72,6 +82,17 @@ const context = swarmContext(state, rocky).context.map(message => message.conten
 assert.match(context, /Shared|launch/)
 assert.match(context, /ROCKY_PRIVATE_CANARY/)
 assert.doesNotMatch(context, /MILO_PRIVATE_CANARY/)
+{
+  const round = empty(); change(round, projectRequest)
+  change(round, { action: 'send', projectId, thread: 'group', requestId: 'group-round-0001', content: 'Can you all review this trip pull?' }, 2000)
+  const firstJob = round.jobs.find(job => job.speaker === 'Nalu')
+  appendSwarmResult(round, firstJob, 'I can organize the itinerary; we need the trip dates.', 2100)
+  const nextJob = round.jobs.find(job => job.speaker === 'Rocky')
+  const shared = swarmContext(round, nextJob).context.map(message => message.content).join('\n')
+  assert.match(shared, /Nalu: I can organize the itinerary; we need the trip dates/)
+  round.state.messages.push({ id: 'unrelated-later-turn', projectId, thread: 'group', speaker: 'You', content: 'UNRELATED_LATER_TURN', createdAt: 2200 })
+  assert.doesNotMatch(swarmContext(round, nextJob).context.map(message => message.content).join('\n'), /UNRELATED_LATER_TURN/)
+}
 change(state, { ...projectRequest, requestId: 'project-0002', title: 'Other' }, 1000)
 const otherProject = state.state.projects[1].id
 change(state, { action: 'send', projectId: otherProject, requestId: 'other-msg-001', thread: 'group', content: 'OTHER_PROJECT_CANARY' }, 1100)

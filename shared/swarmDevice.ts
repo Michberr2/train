@@ -2,7 +2,7 @@ import type { SwarmExecutionInput } from './swarmExecution'
 import type { StudioKind } from './studioIntent'
 
 /** Only the authenticated job's pinned thread context crosses this boundary. */
-export interface SwarmDeviceJob extends Pick<SwarmExecutionInput, 'speaker' | 'kind' | 'input' | 'brief' | 'context'> {
+export interface SwarmDeviceJob extends Pick<SwarmExecutionInput, 'speaker' | 'kind' | 'input' | 'brief' | 'context' | 'personality' | 'allowCustomSpeaker'> {
   executionMode: 'device'
   id: string
   projectId: string

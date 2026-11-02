@@ -26,6 +26,11 @@ test('transport uses explicit account authorization and rejects fixture/malforme
   assert.deepEqual(JSON.parse(captured.options.body), { action: 'list', executionMode: 'device' })
   assert.equal(result.state.mode, 'live')
   assert.equal(isLiveSwarmState({ ...base(), mode: 'sample' }), false)
+  const dogState = base()
+  dogState.projects[0] = { ...dogState.projects[0], members: [...dogState.projects[0].members, 'Poppy'], agentProfiles: { Poppy: { name: 'Poppy', personality: 'Careful planner', appearance: { coat: 2, ears: 1, markings: 0, eyes: 0 } } } }
+  assert.equal(isLiveSwarmState(dogState), true, 'custom agent profile is accepted by the authenticated transport')
+  dogState.projects[0].agentProfiles.Poppy.appearance.coat = 90
+  assert.equal(isLiveSwarmState(dogState), false, 'malformed custom appearance is rejected')
   assert.equal(isLiveSwarmState({ ...base(), tasks: [task('bad', { projectId: 'other-owner' })] }), false)
   assert.equal(isLiveSwarmState({ ...base(), messages: [{ id: 'bad', projectId: 'launch', thread: 'Rocky', speaker: 'Rocky', content: 'sample', createdAt: 2, sample: true }] }), false)
 })

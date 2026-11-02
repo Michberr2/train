@@ -53,7 +53,9 @@ export async function runSwarmDeviceAction(store: Pick<SwarmStore, 'read' | 'cla
       const scoped = active.artifact?.type === 'studio-generation'
         ? validateSwarmGenerationScope(snapshot, owner, { sourceJobId: String(active.artifact.sourceJobId), taskId: active.taskId!, expectedStudioKind: active.artifact.studioKind as never, executionId: active.id, leaseToken: active.leaseToken! }) : undefined
       const context = scoped || swarmContext(snapshot, active)
+      const profile = snapshot.state.projects.find(project => project.id === active.projectId)?.agentProfiles?.[active.speaker]
       deviceJob = { executionMode: 'device', id: active.id, projectId: active.projectId, thread: active.thread, speaker: active.speaker, kind: active.kind, input: active.input, brief: context.brief, context: context.context.map(message => ({ ...message })), leaseToken: active.leaseToken!, leaseUntil: active.leaseUntil!,
+        ...(profile ? { personality: profile.personality, allowCustomSpeaker: true } : {}),
         ...(scoped ? { studio: { kind: scoped.studioKind, sourceJobId: scoped.sourceJobId, taskId: scoped.taskId } } : {}) }
     }
     return { state: snapshot.state, revision: snapshot.revision, deviceJob }

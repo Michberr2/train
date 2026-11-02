@@ -71,7 +71,7 @@ export function applySwarmAction(snapshot: SwarmSnapshot, owner: string, body: R
   }
   // Manual tracking/sharing cannot consume space already reserved for pending
   // jobs. Cancellation and reassignment remain available near the limit.
-  if (before !== JSON.stringify(snapshot) && ['create', 'send', 'add-task', 'start-task', 'continue-studio', 'update-artifact', 'share-task'].includes(String(body.action))) capacity(snapshot, 0)
+  if (before !== JSON.stringify(snapshot) && ['create', 'send', 'add-agent', 'add-task', 'start-task', 'continue-studio', 'update-artifact', 'share-task'].includes(String(body.action))) capacity(snapshot, 0)
 }
 
 function applyAction(snapshot: SwarmSnapshot, owner: string, body: Record<string, unknown>, now: number): void {
@@ -89,6 +89,23 @@ function applyAction(snapshot: SwarmSnapshot, owner: string, body: Record<string
     return
   }
   const project = projectFor(state, body.projectId)
+  if (body.action === 'add-agent') {
+    const request = requestId(body)
+    const name = text(body.name, 'dog name', 48)
+    if (!/^[\p{L}\p{N}][\p{L}\p{N} .'’-]*$/u.test(name)) throw new SwarmError('Use letters, numbers, spaces, apostrophes, periods, or hyphens for a dog name.')
+    const existing = project.members.find(member => member.toLocaleLowerCase() === name.toLocaleLowerCase())
+    const personality = text(body.personality, 'personality', 800, true)
+    let appearance: Record<string, unknown> | null = null
+    try { const raw = typeof body.appearance === 'string' ? JSON.parse(body.appearance) : body.appearance; appearance = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null } catch { /* handled below */ }
+    if (!appearance || ![['coat', 8], ['ears', 4], ['markings', 6], ['eyes', 4]].every(([key, max]) => Number.isInteger(appearance![String(key)]) && Number(appearance![String(key)]) >= 0 && Number(appearance![String(key)]) < Number(max))) throw new SwarmError('Choose a valid dog appearance.')
+    const prior = project.agentProfiles?.[existing || name]
+    if (prior?.personality === personality && JSON.stringify(prior.appearance) === JSON.stringify(appearance)) return
+    if (existing) throw new SwarmError('A teammate with that name already exists in this project.', 409)
+    if (project.members.length >= 1000) throw new SwarmError('This project has reached the supported team size.', 429)
+    project.agentProfiles = { ...project.agentProfiles, [name]: { name, personality, appearance: { coat: Number(appearance.coat), ears: Number(appearance.ears), markings: Number(appearance.markings), eyes: Number(appearance.eyes) } } }
+    project.members.push(name); project.updatedAt = now
+    return
+  }
   if (body.action === 'update-artifact') {
     const task = taskFor(state, project.id, body.taskId)
     const { job, artifact, revision } = readSwarmArtifact(snapshot, body)
@@ -136,8 +153,10 @@ function applyAction(snapshot: SwarmSnapshot, owner: string, body: Record<string
     // Group messages invite the whole project team unless explicitly addressed.
     // Match complete handles, not an email address or a longer name.
     const members = [...new Set(project.members)]
-    const mentioned = members.filter(agent => new RegExp(`(?:^|[^\\p{L}\\p{N}_@])@${agent}(?![\\p{L}\\p{N}_])`, 'iu').test(content))
-    const speakers: SwarmAgentId[] = thread === 'group' ? mentioned.length ? mentioned : members : [thread]
+    const mentioned = members.filter(agent => new RegExp(`(?:^|[^\\p{L}\\p{N}_@])@${agent.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_])`, 'iu').test(content))
+    const defaultTeam = members.filter(agent => AGENTS.includes(agent)).slice(0, 3)
+    const speakers: SwarmAgentId[] = thread === 'group' ? mentioned.length ? mentioned : defaultTeam : [thread]
+    if (speakers.length > 24) throw new SwarmError('Mention up to 24 teammates per message so everyone has room to reply.', 429)
     capacity(snapshot, speakers.length)
     state.messages.push({ id: messageId, projectId: project.id, thread, speaker: 'You', content, createdAt: now })
     for (const speaker of speakers) {
@@ -257,12 +276,21 @@ export function readSwarmArtifact(snapshot: SwarmSnapshot, body: Record<string, 
 export function swarmContext(snapshot: SwarmSnapshot, job: SwarmJob) {
   const project = projectFor(snapshot.state, job.projectId)
   threadFor(snapshot.state, project.id, job.thread)
+  const currentTurn = job.turnId ? snapshot.state.turns.find(turn => turn.id === job.turnId) : undefined
+  // Group replies for one user message are deliberately claimed in turn order.
+  // Let each later teammate see the replies already posted for that same turn,
+  // even though they were written after the shared job-creation timestamp.
+  const sameGroupTurnIds = job.thread === 'group' && currentTurn
+    ? new Set(snapshot.state.turns.filter(turn => turn.projectId === project.id && turn.thread === 'group'
+      && turn.userMessageId === currentTurn.userMessageId).sort((a, b) => project.members.indexOf(a.replySpeaker) - project.members.indexOf(b.replySpeaker)).map(turn => turn.id))
+    : new Set<string>()
   // Assignment grants the new agent this work item, not the original agent's
   // private conversation or its other work. Group context remains shared.
   const ownsPrivateThread = job.thread !== 'group' && job.speaker === job.thread
   const messages = snapshot.state.messages.filter(message => message.projectId === project.id
     && (message.thread === 'group' || (ownsPrivateThread && message.thread === job.thread))
-    && message.createdAt <= job.createdAt)
+    && (message.createdAt <= job.createdAt
+      || (job.thread === 'group' && message.turnId && sameGroupTurnIds.has(message.turnId) && message.speaker !== job.speaker)))
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)).slice(-39)
   // Match the execution adapter's limits, including speaker prefixes, the
   // current request, the shared brief, and one optional status message.

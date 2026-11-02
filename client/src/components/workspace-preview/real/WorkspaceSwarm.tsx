@@ -1,9 +1,13 @@
 import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowUp, Plus, Square, X } from 'lucide-react'
 import { AgentHead, type AgentName } from './WorkspaceAgentIdentity'
-import { selectSwarmPending, selectSwarmThreadTasks, swarmProjectOverview, type SwarmController } from '../../workspace/design/swarmTypes'
+import { selectSwarmPending, selectSwarmThreadTasks, swarmProjectOverview, type SwarmController, type SwarmAgentId, type SwarmThread, type SwarmDogAppearance } from '../../workspace/design/swarmTypes'
+import DogAgentAvatar from './DogAgentAvatar'
+import CommunityChats from './CommunityChats'
 import Markdown from '../../workspace/Markdown'
 import NaluGlobe from '../../NaluGlobe'
+import HumanAvatar from '../../workspace/HumanAvatar'
+import '../../workspace/human-avatar.css'
 import './workspace-swarm.css'
 
 const SwarmStudioPreview = lazy(() => import('../../workspace/design/SwarmStudioPreview'))
@@ -13,15 +17,15 @@ type Props = {
   navigationKey: number
   onOpenChat: (id: string) => void
   availableChatIds: string[]
-  startingAgent?: AgentName
+  startingAgent?: string
 }
 type Task = SwarmController['state']['tasks'][number]
 const AGENTS: AgentName[] = ['Nalu', 'Rocky', 'Milo']
 const STATUS_LABEL: Record<Task['status'], string> = { queued: 'Queued', running: 'In progress', waiting: 'Needs you', done: 'Ready', paused: 'Paused', failed: 'Needs attention', cancelled: 'Stopped' }
 const SAMPLE_STATUSES: Task['status'][] = ['queued', 'running', 'waiting', 'done', 'paused']
 
-function Face({ name }: { name: AgentName }) {
-  return <span className="swarm-agent-face" data-agent={name} aria-hidden="true"><AgentHead name={name} className="swarm-agent-head"/></span>
+function Face({ name, profile }: { name: string; profile?: { appearance: SwarmDogAppearance } }) {
+  return <span className="swarm-agent-face" data-agent={name} aria-hidden="true">{name === 'Nalu' || name === 'Rocky' || name === 'Milo' ? <AgentHead name={name} className="swarm-agent-head"/> : <DogAgentAvatar name={name} appearance={profile?.appearance} size={30}/>}</span>
 }
 
 function LiveTaskActions({ task, swarm }: { task: Task; swarm: SwarmController }) {
@@ -48,7 +52,7 @@ function LiveTaskActions({ task, swarm }: { task: Task; swarm: SwarmController }
   </>
 }
 
-function NewSwarm({ swarm, startingAgent }: { swarm: SwarmController; startingAgent?: AgentName }) {
+function NewSwarm({ swarm, startingAgent }: { swarm: SwarmController; startingAgent?: string }) {
   const [title, setTitle] = useState(startingAgent ? `Work with ${startingAgent}` : '')
   const [brief, setBrief] = useState('')
   const [saving, setSaving] = useState(false)
@@ -61,7 +65,7 @@ function NewSwarm({ swarm, startingAgent }: { swarm: SwarmController; startingAg
     setSaving(true); setSubmitError('')
     try {
       const id = await swarm.createProject(title.trim(), brief.trim())
-      if (id && startingAgent) swarm.navigate(id, startingAgent)
+      if (id && startingAgent && (AGENTS as string[]).includes(startingAgent)) swarm.navigate(id, startingAgent)
       else if (!id) setSubmitError('Your workspace could not be created. Please try again.')
     }
     catch { setSubmitError('Your workspace could not be created. Please try again.') }
@@ -80,6 +84,19 @@ function NewSwarm({ swarm, startingAgent }: { swarm: SwarmController; startingAg
   </div>
 }
 
+function AddDog({ swarm, disabled }: { swarm: SwarmController; disabled: boolean }) {
+  const [open, setOpen] = useState(false), [name, setName] = useState(''), [personality, setPersonality] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('')
+  const [appearance, setAppearance] = useState<SwarmDogAppearance>({ coat: 2, ears: 1, markings: 0, eyes: 0 })
+  if (!open) return <button type="button" className="swarm-add-dog" disabled={disabled} onClick={() => setOpen(true)}><Plus size={14}/>Add a dog</button>
+  return <form className="swarm-add-dog-form" onSubmit={event => { event.preventDefault(); if (!name.trim() || busy) return; setBusy(true); setError(''); void Promise.resolve(swarm.addAgent?.(name.trim(), personality.trim(), appearance)).then(() => { setOpen(false); setName(''); setPersonality('') }).catch(reason => setError(reason instanceof Error ? reason.message : 'Could not add this dog.')).finally(() => setBusy(false)) }}>
+    <input aria-label="Dog name" placeholder="Name" value={name} maxLength={48} onChange={event => setName(event.target.value)} required/>
+    <input aria-label="Dog personality" placeholder="Personality or role (optional)" value={personality} maxLength={800} onChange={event => setPersonality(event.target.value)}/>
+    {([['Coat','coat',8],['Ears','ears',4],['Markings','markings',6],['Eyes','eyes',4]] as const).map(([label,key,count]) => <label key={key}>{label} <select value={appearance[key]} onChange={event => setAppearance({ ...appearance, [key]: Number(event.target.value) })}>{Array.from({ length: count }, (_, i) => <option key={i} value={i}>{label} {i + 1}</option>)}</select></label>)}
+    <button type="submit" disabled={!name.trim() || busy}>{busy ? 'Adding…' : 'Add teammate'}</button><button type="button" onClick={() => setOpen(false)}>Cancel</button>
+    {error && <span role="alert">{error}</span>}
+  </form>
+}
+
 /** Group and direct project conversations; the supplied controller owns all data. */
 export default function WorkspaceSwarm({ swarm, startingAgent, navigationKey, onOpenChat, availableChatIds }: Props) {
   const root = useRef<HTMLElement>(null)
@@ -95,7 +112,7 @@ export default function WorkspaceSwarm({ swarm, startingAgent, navigationKey, on
   const [addingTask, setAddingTask] = useState(false)
   const [savingTask, setSavingTask] = useState(false)
   const [taskTitle, setTaskTitle] = useState('')
-  const [taskAssignee, setTaskAssignee] = useState<AgentName>('Nalu')
+  const [taskAssignee, setTaskAssignee] = useState<SwarmAgentId>('Nalu')
   const sample = swarm.state.mode === 'sample'
   const taskLimit = sample ? 180 : 2000
   const overview = swarmProjectOverview(swarm.state)
@@ -163,7 +180,7 @@ export default function WorkspaceSwarm({ swarm, startingAgent, navigationKey, on
     input.style.height = `${Math.min(input.scrollHeight, 118)}px`
   }, [swarm.draft, section, swarm.creating])
 
-  const openThread = (recipient: 'group' | AgentName) => {
+  const openThread = (recipient: SwarmThread) => {
     swarm.selectRecipient(recipient)
     setSection('conversation')
     requestAnimationFrame(() => composer.current?.focus({ preventScroll: true }))
@@ -194,7 +211,7 @@ export default function WorkspaceSwarm({ swarm, startingAgent, navigationKey, on
     } catch { /* The controller exposes the error; retain this form for retry. */ }
     finally { if (taskFormState.current.threadKey === submitted.threadKey) setSavingTask(false) }
   }
-  const trackMessage = (content: string, speaker: 'You' | AgentName) => {
+  const trackMessage = (content: string, speaker: 'You' | SwarmAgentId) => {
     setTaskTitle(content.trim())
     setTaskAssignee(speaker === 'You' ? swarm.recipient === 'group' ? 'Nalu' : swarm.recipient : speaker)
     setAddingTask(true)
@@ -223,10 +240,12 @@ export default function WorkspaceSwarm({ swarm, startingAgent, navigationKey, on
       <div className="swarm-thread-picker" role="group" aria-label="Project conversations">
         <button type="button" aria-pressed={swarm.recipient === 'group'} onClick={() => openThread('group')}>Group</button>
         <div className="swarm-participant-stack" role="group" aria-label="Swarm participants">
-          {project.members.map((name, index) => <button key={name} type="button" title={`Talk to ${name}`} style={{ zIndex: project.members.length - index }} aria-label={`Chat with ${name} about ${project.title}`} aria-pressed={swarm.recipient === name} onClick={() => openThread(name)}><Face name={name}/></button>)}
+          {project.members.map((name, index) => <button key={name} type="button" title={`Talk to ${name}`} style={{ zIndex: project.members.length - index }} aria-label={`Chat with ${name} about ${project.title}`} aria-pressed={swarm.recipient === name} onClick={() => openThread(name)}><Face name={name} profile={project.agentProfiles?.[name]}/></button>)}
         </div>
         <div className="swarm-participant-copy"><strong>{swarm.recipient === 'group' ? 'Everyone in this chat' : `Talking with ${swarm.recipient}`}</strong><span title={project.title}>{swarm.recipient === 'group' ? `You, ${project.members.join(', ')}` : `Private · ${project.title}`}</span></div>
+        <AddDog swarm={swarm} disabled={!swarm.addAgent || sample}/>
       </div>
+      <CommunityChats/>
       {!wide && <div className="swarm-sections" role="group" aria-label="Swarm view"><button type="button" aria-pressed={section === 'conversation'} onClick={() => setSection('conversation')}>Conversation</button><button type="button" aria-pressed={section === 'board'} onClick={() => setSection('board')}>Work in this chat{visibleTasks.some(task => task.status === 'waiting') ? ' · Needs you' : ''}</button></div>}
       {swarm.error && <p className="swarm-error" role="alert">{swarm.error}</p>}
       <div className="swarm-layout">
@@ -235,7 +254,8 @@ export default function WorkspaceSwarm({ swarm, startingAgent, navigationKey, on
           <div ref={scroll} className="swarm-messages" role="log" aria-label={swarm.recipient === 'group' ? `${project.title} group conversation` : `${swarm.recipient} direct conversation`} aria-live="polite" aria-relevant="additions text" onScroll={() => { const element = scroll.current; if (element) nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 70 }}>
             {messages.length === 0 && <div className="swarm-empty-thread"><strong>{swarm.recipient === 'group' ? 'A place to work things out.' : `A moment with ${swarm.recipient}.`}</strong><p>{swarm.recipient === 'group' ? project.brief : `Ask about ${project.title}, share a detail, or work through the next step together.`}</p></div>}
             {messages.map(message => <article key={message.id} className="swarm-message" data-speaker={message.speaker} aria-label={`${message.speaker} message`}>
-              {message.speaker !== 'You' && <button type="button" className="swarm-message-agent" aria-label={`Open ${message.speaker} direct conversation`} onClick={() => openThread(message.speaker as AgentName)}><Face name={message.speaker}/></button>}
+              {message.speaker === 'You' && <HumanAvatar className="swarm-message-human" size={30}/>}
+              {message.speaker !== 'You' && <button type="button" className="swarm-message-agent" aria-label={`Open ${message.speaker} direct conversation`} onClick={() => openThread(message.speaker)}><Face name={message.speaker} profile={project.agentProfiles?.[message.speaker]}/></button>}
               <div className="swarm-message-copy"><div className="swarm-message-meta"><strong>{message.speaker}</strong><time dateTime={new Date(message.createdAt).toISOString()}>{new Date(message.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></div>{!sample && message.speaker !== 'You' ? <div className="swarm-message-markdown"><Markdown>{message.content}</Markdown></div> : <p>{message.content}</p>}<button type="button" className="swarm-track-message" aria-label={message.speaker === 'You' ? 'Track work from your message' : `Track work from ${message.speaker}'s message`} onClick={() => trackMessage(message.content, message.speaker)}>Track work</button></div>
             </article>)}
             {swarm.sending && !swarm.pending && <p className="swarm-pending" role="status">Sending your message…</p>}
@@ -260,13 +280,13 @@ export default function WorkspaceSwarm({ swarm, startingAgent, navigationKey, on
             {addingTask && <form className="swarm-add-task-form" onSubmit={event => void addTask(event)}>
               <textarea ref={taskInput} autoFocus value={taskTitle} onChange={event => setTaskTitle(event.target.value)} aria-label="Task instructions" placeholder="Describe what you want the agent to do" rows={3} required/>
               <p className="swarm-task-length" role={taskTitle.length > taskLimit ? 'alert' : undefined}>{taskTitle.length.toLocaleString()} / {taskLimit.toLocaleString()} characters{taskTitle.length > taskLimit ? ' · Shorten the instructions before adding this task.' : ''}</p>
-              <div><select aria-label="Assign new task" value={taskAssignee} onChange={event => setTaskAssignee(event.target.value as AgentName)}>{project.members.map(name => <option key={name} value={name}>{name}</option>)}</select><button type="submit" disabled={!taskTitle.trim() || taskTitle.length > taskLimit || savingTask}>{savingTask ? 'Adding…' : 'Add'}</button><button type="button" aria-label="Cancel new task" onClick={closeTaskForm}><X size={13}/></button></div>
+              <div><select aria-label="Assign new task" value={taskAssignee} onChange={event => setTaskAssignee(event.target.value)}>{project.members.map(name => <option key={name} value={name}>{name}</option>)}</select><button type="submit" disabled={!taskTitle.trim() || taskTitle.length > taskLimit || savingTask}>{savingTask ? 'Adding…' : 'Add'}</button><button type="button" aria-label="Cancel new task" onClick={closeTaskForm}><X size={13}/></button></div>
             </form>}
             <div className="swarm-tasks">
             {visibleTasks.map(task => <article key={task.id} className="swarm-task" data-status={task.status} aria-label={`${task.title}, ${task.assignee}, ${STATUS_LABEL[task.status]}`}>
               <h4 title={task.title}>{task.title}</h4>
               <div className="swarm-task-controls">
-                <div className="swarm-task-owner"><Face name={task.assignee}/><select disabled={!sample && (task.status === 'running' || task.status === 'waiting' || !!task.executionId && task.status === 'queued' || swarm.busyTaskIds?.includes(task.id))} aria-label={`Assignee for ${task.title}`} value={task.assignee} onChange={event => swarm.assignTask(task.id, event.target.value as AgentName)}>{project.members.map(name => <option key={name} value={name}>{name}</option>)}</select></div>
+                <div className="swarm-task-owner"><Face name={task.assignee} profile={project.agentProfiles?.[task.assignee]}/><select disabled={!sample && (task.status === 'running' || task.status === 'waiting' || !!task.executionId && task.status === 'queued' || swarm.busyTaskIds?.includes(task.id))} aria-label={`Assignee for ${task.title}`} value={task.assignee} onChange={event => swarm.assignTask(task.id, event.target.value)}>{project.members.map(name => <option key={name} value={name}>{name}</option>)}</select></div>
                 {sample ? <select className="swarm-task-status" aria-label={`Status for ${task.title}`} value={task.status} onChange={event => swarm.updateTask(task.id, event.target.value as Task['status'])}>{SAMPLE_STATUSES.map(status => <option key={status} value={status}>{STATUS_LABEL[status]}</option>)}</select>
                   : <span className="swarm-task-status" role="status" aria-label={`Status for ${task.title}: ${STATUS_LABEL[task.status]}`}>{STATUS_LABEL[task.status]}</span>}
               </div>
