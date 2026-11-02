@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   createContext,
   useContext,
   useState,
@@ -9,6 +11,8 @@ import {
 import * as localAuth from '../lib/localAuth'
 import { installSync, loadFromServer, clearLocal, prepareAccount } from '../lib/sync'
 import AuthModal from './AuthModal'
+
+const LocalWorkspaceEntry = import.meta.env.DEV ? lazy(() => import('./LocalWorkspaceEntry')) : null
 
 type Mode = 'signin' | 'signup'
 
@@ -124,6 +128,7 @@ export default function AuthProvider({
   return (
     <AuthContext.Provider value={{ user, signOut, openAuth, updateUser }}>
       {children}
+      {import.meta.env.DEV && LocalWorkspaceEntry && !user && ['localhost', '127.0.0.1'].includes(location.hostname) && <Suspense fallback={null}><LocalWorkspaceEntry onAuthed={handleAuthed}/></Suspense>}
       {restoreError && <div role="alert" className="fixed bottom-4 left-1/2 z-[110] w-[min(92vw,32rem)] -translate-x-1/2 rounded-xl border border-border-gray bg-surface p-4 text-sm text-primary shadow-lg">
         <p>We couldn’t safely open this browser’s saved data. Your existing data has been kept.</p>
         <button className="mt-2 font-medium underline" onClick={() => setRestoreAttempt(value => value + 1)}>Retry opening saved data</button>

@@ -1,4 +1,4 @@
-export const CHAT_ARTIFACT_FIELDS = ['doc', 'sheet', 'deck', 'design', 'cad', 'video', 'image', 'email', 'attachments', 'clarify']
+export const CHAT_ARTIFACT_FIELDS = ['generativeUi', 'uiValues', 'uiComplete', 'doc', 'sheet', 'deck', 'design', 'cad', 'video', 'image', 'email', 'attachments', 'clarify']
 type RecordValue = Record<string, unknown>
 const record = (value: unknown): value is RecordValue => !!value && typeof value === 'object' && !Array.isArray(value)
 

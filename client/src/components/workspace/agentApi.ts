@@ -367,12 +367,12 @@ export async function streamChat(
   // Per-call overrides of the user's global model settings. AutoPilot pipeline
   // steps can research current facts using just their task instruction; attached
   // records and prior outputs stay out of public search queries.
-  overrides?: { webSearch?: boolean; researchPrompt?: string },
+  overrides?: { webSearch?: boolean; researchPrompt?: string; systemPrompt?: string },
 ): Promise<TurnResult> {
   const { onDelta, onReasoning, onError, onRoute, signal } = handlers
   let res: Response
   try {
-    res = await requestChat(JSON.stringify({ messages, model, useMemory: !!wantMemory, ...(tools && tools.length ? { tools } : {}), ...(context || {}), ...(think && think > 0 ? { think: true, thinkLevel: think } : {}), ...(specialist ? { specialist } : {}), ...(() => { const s = getModelSettings(); return { reasoning: s.reasoning, maxTokens: s.maxTokens, webSearch: overrides?.webSearch ?? s.webSearch, ...(overrides?.researchPrompt !== undefined ? { researchPrompt: overrides.researchPrompt } : {}), ...(s.systemPrompt && s.systemPrompt.trim() ? { systemPrompt: s.systemPrompt } : {}) } })(), ...(wantMemory ? (() => { try { const mem = buildChatMemory(messages); return mem ? { memory: mem } : {} } catch { return {} } })() : {}) }), signal)
+    res = await requestChat(JSON.stringify({ messages, model, useMemory: !!wantMemory, ...(tools && tools.length ? { tools } : {}), ...(context || {}), ...(think && think > 0 ? { think: true, thinkLevel: think } : {}), ...(specialist ? { specialist } : {}), ...(() => { const s = getModelSettings(); return { reasoning: s.reasoning, maxTokens: s.maxTokens, webSearch: overrides?.webSearch ?? s.webSearch, ...(overrides?.researchPrompt !== undefined ? { researchPrompt: overrides.researchPrompt } : {}), ...([overrides?.systemPrompt, s.systemPrompt].filter(Boolean).length ? { systemPrompt: [overrides?.systemPrompt, s.systemPrompt].filter(Boolean).join('\n\n') } : {}) } })(), ...(wantMemory ? (() => { try { const mem = buildChatMemory(messages); return mem ? { memory: mem } : {} } catch { return {} } })() : {}) }), signal)
   } catch {
     const error = signal?.aborted ? undefined : 'Couldn’t reach Nalu — check your connection and try again.'
     if (error) onError?.(error)

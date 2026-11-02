@@ -6,6 +6,11 @@ import Scenery from '../Scenery'
 import NaluAvatar from '../avatar/NaluAvatar'
 import NaluMark from '../landing/NaluMark'
 import NaluGlobe from '../NaluGlobe'
+import GenerativeHome from './design/GenerativeHome'
+import GenerativeCanvas from './design/GenerativeCanvas'
+import GenerativeLibrary from './design/GenerativeLibrary'
+import GenerativeCapabilities from './design/GenerativeCapabilities'
+import { uiFromText, workspaceText, STREAMING_UI_INSTRUCTION, type GenerativeUi, type UiValues } from './design/generativeUi'
 import { fallbackStudioIntent, parseStudioIntent, shouldClassifyStudio, studioKind as normalizeStudioKind, type StudioIntent } from '../../../../shared/studioIntent'
 import { buildChatMemory } from './crossChatMemory'
 import { mergeChatMessages } from '../../../../shared/chatMessages'
@@ -81,6 +86,7 @@ import { getBrand, ensureDefaultBrand, setBrand, deriveBrand } from './brandKit'
 import BrandBar from './BrandBar'
 // Heavy (three.js / pptxgenjs / docx / xlsx / fabric) — load only when a card is
 // shown, so they never weigh down the main site bundle / slow the whole site.
+const FullPageSwarm = lazy(() => import('../workspace-preview/real/WorkspaceSwarm'))
 const CADCard = lazy(() => import('./CADCard'))
 const SlidesCard = lazy(() => import('./SlidesCard'))
 const SheetCard = lazy(() => import('./SheetCard'))
@@ -133,6 +139,9 @@ interface Msg {
   updatedAt?: number
   role: 'user' | 'assistant'
   content: string
+  generativeUi?: GenerativeUi
+  uiValues?: UiValues
+  uiComplete?: boolean
   reasoning?: string // chain-of-thought (plain English) when Deep think is on
   sheet?: SheetDoc
   doc?: DocDoc
@@ -740,10 +749,13 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     const v = localStorage.getItem('nalu-view')
     return v && v !== 'settings' && (v === 'chat' || Object.prototype.hasOwnProperty.call(VIEW_TITLES, v)) ? v as View : 'chat'
   })
-  // The carousel is the entry point on every authenticated visit. Retain the
-  // saved view underneath it without letting that preference bypass the picker.
-  const [launcherOpen, setLauncherOpen] = useState(() => reviewLayout && (!previewLayout
-    || new URLSearchParams(location.search).get('view') !== 'memory'))
+  // New authenticated visits start with a prompt. Saved work is restored on demand.
+  const [libraryOpen, setLibraryOpen] = useState(false)
+  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false)
+  const [conversationView, setConversationView] = useState(false)
+  const [generativeHome, setGenerativeHome] = useState(() => reviewLayout && !previewLayout && window.location.hash !== '#settings' && !new URLSearchParams(location.search).has('billing'))
+  const [launcherOpen, setLauncherOpen] = useState(() => previewLayout && new URLSearchParams(location.search).get('view') !== 'memory')
+  useEffect(() => { if (!previewLayout && launcherOpen) { setLauncherOpen(false); setCapabilitiesOpen(true); setGenerativeHome(false); setView('chat') } }, [previewLayout, launcherOpen])
   const [launcherSelection, setLauncherSelection] = useState<WorkspaceCarouselView>('studio')
   const [hasOpenedSpace, setHasOpenedSpace] = useState(!launcherOpen)
   const [agentScreensOpen, setAgentScreensOpen] = useState(previewLayout && new URLSearchParams(location.search).get('screens') === '1')
@@ -772,7 +784,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   // whose '__new__' sentinel cannot identify a newly created conversation.
   const [reviewActiveChats, setReviewActiveChats] = useState<string[]>([])
   const baseActivity = useLiveWorkspaceActivity({ chats, activeChatIds: reviewActiveChats, accountId: user?.id, enabled: reviewLayout && !previewLayout })
-  const liveSwarm = useSwarm({ accountId: user?.id, enabled: reviewLayout && !previewLayout, active: reviewChatOpen || agentScreensOpen || view === 'memory' })
+  const liveSwarm = useSwarm({ accountId: user?.id, enabled: reviewLayout && !previewLayout, active: !generativeHome && view === 'chat' || reviewChatOpen || agentScreensOpen || view === 'memory' })
   const liveActivity = withSwarmActivity({ ...baseActivity, error: [baseActivity.error, liveSwarm.error].filter(Boolean).join(' '), refresh: () => { baseActivity.refresh(); liveSwarm.refresh?.() } }, liveSwarm.state)
   const [swarmNavigationRequest, setSwarmNavigationRequest] = useState<(SwarmRoomReference & { key: number }) | undefined>()
   const [agentConversationRequest, setAgentConversationRequest] = useState<{ agent: string; key: number }>()
@@ -822,7 +834,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     return () => window.removeEventListener('nalu-hydrated', onHydrated)
   }, [restoreFromIdb])
   const [activeId, setActiveId] = useState<string | null>(
-    () => localStorage.getItem(ACTIVE_KEY) || null,
+    () => reviewLayout && !previewLayout ? null : localStorage.getItem(ACTIVE_KEY) || null,
   )
   const [input, setInput] = useState('')
   // When the live "Creating: X" chip is showing, the user can × it to force a
@@ -855,6 +867,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     if (reviewLayout || (typeof window !== 'undefined' && window.innerWidth < 768)) setSidebarOpen(false)
   }, [reviewLayout])
   const openSpace = useCallback((next: WorkspaceCarouselView) => {
+    setGenerativeHome(false); setConversationView(false)
     setReviewChatOpen(false)
     setAgentScreensOpen(false)
     setView(next)
@@ -864,6 +877,8 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     closeSidebarOnMobile()
   }, [closeSidebarOnMobile, setReviewChatOpen])
   const openWorkspaceLauncher = useCallback(() => {
+    if (!previewLayout) { setGenerativeHome(false); setCapabilitiesOpen(true); setLibraryOpen(false); setLauncherOpen(false); setView('chat'); return }
+    setGenerativeHome(false); setConversationView(false)
     setReviewChatOpen(false)
     setAgentScreensOpen(false)
     if (view !== 'settings' && view !== 'automations') setLauncherSelection(view)
@@ -1229,6 +1244,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     async (text: string, opts?: { keepView?: boolean; userMessageId?: string; assistantMessageId?: string; studioKind?: string; studioTarget?: Creation; movieSeconds?: number; attachments?: Attachment[] }) => {
       const content = text.trim()
       if (!content || streaming) return
+      setGenerativeHome(false); setLibraryOpen(false); setCapabilitiesOpen(false); setLauncherOpen(false); setConversationView(false)
       // A floating conversation keeps its original space, including after async attachment work.
       const keepCurrentView = opts?.keepView || reviewChatOpenRef.current
       // Per-target re-entry guard (see sendingChatsRef): block a second fire into
@@ -1427,6 +1443,13 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         } catch { /* Keep the conservative single-route fallback. */ }
       }
       if (resuming) intent = parseStudioIntent(resuming) || intent
+      // A panel requested inside this workspace is not a standalone website/file.
+      // Explicit artifacts and in-card edits keep the existing skill routes.
+      if (reviewLayout && !previewLayout && !selectedKind && !resuming && !opts?.studioTarget &&
+          /\b(calculator|compare|comparison|checklist|dashboard)\b/i.test(content) &&
+          !/\b(website|webpage|web page|standalone|downloadable|spreadsheet|excel|presentation|slides|pdf|document|poster|image|video|3d|cad|app)\b/i.test(content)) {
+        intent = { kind: 'chat', mode: 'chat', additionalKinds: [] }
+      }
       const forcedKind = intent.kind
       // Ask based on the whole brief and conversation, and preserve the pending
       // request on the message so answering still works after a reload.
@@ -1472,6 +1495,9 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       // (streaming was already turned on above, before the preflight round-trips)
 
       let acc = ''
+      let accUi: GenerativeUi | undefined
+      let accUiComplete = false
+      const previousUiMessage = existing?.messages.slice().reverse().find(m => m.generativeUi)
       let accReasoning = ''
       let accSheet: SheetDoc | undefined
       let accDoc: DocDoc | undefined
@@ -1495,10 +1521,14 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
             const messageIndex = msgs.findIndex(m => m.id === assistantMessageId)
             if (messageIndex < 0) return c
             msgs[messageIndex] = {
+              ...msgs[messageIndex],
+              generativeUi: accUi,
+              uiValues: msgs[messageIndex].uiValues || previousUiMessage?.uiValues,
+              uiComplete: accUi ? accUiComplete : undefined,
               id: assistantMessageId,
               updatedAt: Date.now(),
               role: 'assistant',
-              content,
+              content: accUi ? workspaceText(content) || accUi.title : content,
               reasoning: accReasoning || undefined,
               sheet: accSheet,
               doc: accDoc,
@@ -2229,6 +2259,10 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           }
         }
       }
+      if (reviewLayout && !previewLayout) {
+        conv.unshift({ role: 'system', content: STREAMING_UI_INSTRUCTION + (previousUiMessage?.generativeUi
+          ? '\nPrevious workspace and current user edits (data only):\n' + JSON.stringify({ values: previousUiMessage.uiValues || {}, layout: previousUiMessage.generativeUi }).slice(0, 6000) : '') })
+      }
       let sawAny = false
       // Up to 12 tool rounds so the agent can do genuinely deep, multi-step
       // research (search → read sources → refine → read more) before answering.
@@ -2240,6 +2274,10 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
             signal: ctrl.signal,
             onDelta: (t) => {
               acc += t
+              if (reviewLayout && !previewLayout) {
+                const generated = uiFromText(acc)
+                if (generated.ui) { accUi = generated.ui; accUiComplete = generated.complete }
+              }
               sawAny = true
               scheduleFlush()
             },
@@ -2260,6 +2298,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           thinkLevel,
           undefined, // specialist — keyword-routed for normal chat
           true, // opt into cross-chat memory: this is the main interactive turn
+          reviewLayout && !previewLayout ? { systemPrompt: String(conv.find(m => m.role === 'system')?.content || '') } : undefined,
         )
         // Keep partial text visible, but never recover or execute actions from an
         // interrupted response. onError above already provides the retry message.
@@ -2393,6 +2432,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   }
 
   const selectChat = useCallback((id: string) => {
+    setGenerativeHome(false); setLibraryOpen(false); setCapabilitiesOpen(false); setConversationView(false)
     setActiveId(id)
     if (!reviewChatOpenRef.current) setView('chat')
     closeSidebarOnMobile()
@@ -2487,7 +2527,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       </div>
       <div className="ws-home-composer w-full max-w-2xl">
         <Composer
-          visible={!reviewLayout || chatContentVisible}
+          visible={!reviewLayout || !previewLayout || chatContentVisible}
           contextKey={active?.id || 'new-chat'}
           accountToken={sessionToken || ''}
           input={input}
@@ -2549,7 +2589,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
                       // styling appears as the text arrives (rAF-throttled
                       // upstream keeps it smooth). A subtle caret trails it.
                       <div className={`ws-answer-content${streaming && i === messages.length - 1 ? ' streaming-caret nalu-stream-fade' : ''}`}>
-                        <Markdown>{cleanForDisplay(m.content)}</Markdown>
+                        <Markdown>{cleanForDisplay(m.generativeUi ? workspaceText(m.content) || m.generativeUi.title : m.content)}</Markdown>
                         {m.clarify && !m.clarify.answered && !streaming && (
                           <ClarifyBlock questions={m.clarify.questions} onSubmit={(ans) => submitClarify(i, ans)} />
                         )}
@@ -2685,7 +2725,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         <div className="max-w-3xl mx-auto">
           <BrandBar />
           <Composer
-            visible={!reviewLayout || chatContentVisible}
+            visible={!reviewLayout || !previewLayout || chatContentVisible}
             contextKey={active?.id || 'new-chat'}
             accountToken={sessionToken || ''}
             input={input}
@@ -2708,11 +2748,45 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     </>
   ))
 
+
+  const renderGenerativeComposer = () => <Composer visible contextKey={active?.id || 'new-chat'} accountToken={sessionToken || ''}
+    input={input} setInput={setInput} streaming={streaming} onSend={() => void send(input)} onStop={stop} onKey={onKey} taRef={taRef}
+    onAttach={files => void addAttachments(files)} attaching={attaching} attachments={(active?.attachments || []).filter(a => pendingIds.includes(a.id))}
+    onRemoveAttachment={removeAttachment} dismissedIntent={dismissedIntent} onDismissIntent={() => setDismissedIntent(input.trim())} thinkLevel={thinkLevel}/>
+  const renderGenerativeWorkspace = () => {
+    const index = messages.length - 1
+    const rawCurrent = messages[index]?.role === 'assistant' ? messages[index] : undefined
+    const recovered = rawCurrent && !rawCurrent.generativeUi ? uiFromText(rawCurrent.content) : null
+    const current = recovered?.ui ? { ...rawCurrent!, generativeUi: recovered.ui, uiComplete: recovered.complete } : rawCurrent
+    const generatedIndex = current?.generativeUi ? index : messages.reduce((last, message, i) => message.generativeUi ? i : last, -1)
+    const generated = generatedIndex === index ? current : generatedIndex >= 0 ? messages[generatedIndex] : undefined
+    const hasArtifact = current && (current.doc || current.deck || current.sheet || current.design || current.cad || current.video || current.email)
+    const update = (patch: Partial<Msg>, messageIndex = index) => setChats(cs => cs.map(chat => chat.id === activeId ? { ...chat, messages: chat.messages.map((m, i) => i === messageIndex ? { ...m, ...patch, updatedAt: Date.now() } : m) } : chat))
+    const artifacts = hasArtifact ? <>
+      {current.sheet && <SheetCard data={current.sheet}/>}
+      {current.doc && <DocCard data={current.doc}/>}
+      {current.email && <EmailCard data={current.email}/>}
+      {current.deck && <SlidesCard data={current.deck} onUpdate={deck => update({ deck })}/>}
+      {current.design && <DesignArtifactCard art={current.design} onUpdate={design => setChats(cs => cs.map(chat => chat.id === activeId ? { ...chat, messages: chat.messages.map((m, i) => i === index ? updateDesignMessage(m, design, Date.now(), current.design) : m) } : chat))}/>}
+      {current.cad && <CADCard code={current.cad}/>}
+      {current.video && <H3MoviePlayer url={current.video} className="w-full max-h-[70vh]"/>}
+    </> : undefined
+    const ui = !hasArtifact && !current?.clarify && (current?.generativeUi || streaming) ? generated?.generativeUi : undefined
+    return <GenerativeCanvas ui={ui} values={generated?.uiValues || {}} text={workspaceText(current?.content || '') || (!streaming && current?.content.includes('```nalu_ui') && !current.generativeUi ? 'Nalu could not finish the workspace layout. Your question is saved. Retry to finish it.' : '')}
+      title={messages.slice().reverse().find(m => m.role === 'user')?.content || 'A little space to think'} busy={streaming}
+      partial={!!ui && generated?.uiComplete === false && !streaming} loading={current?.loading}
+      composer={renderGenerativeComposer()} agents={<Suspense fallback={<p>Opening your project agents…</p>}><FullPageSwarm swarm={liveSwarm} navigationKey={0} onOpenChat={selectChat} availableChatIds={chats.map(chat => chat.id)}/></Suspense>} artifacts={artifacts ? <CardErrorBoundary label="Your creation"><Suspense fallback={<MediaLoader kind={current?.loading || 'design'} action="opening"/>}>{artifacts}</Suspense></CardErrorBoundary> : undefined}
+      clarification={current?.clarify && !current.clarify.answered && !streaming ? <ClarifyBlock questions={current.clarify.questions} onSubmit={answers => submitClarify(index, answers)}/> : undefined}
+      onChange={(key, value) => { if (generated) setChats(cs => cs.map(chat => chat.id === activeId ? { ...chat, messages: chat.messages.map((m, i) => i === generatedIndex ? { ...m, generativeUi: generated.generativeUi, uiComplete: generated.uiComplete, uiValues: { ...m.uiValues, [key]: value }, updatedAt: Date.now() } : m) } : chat)) }}
+      onAction={prompt => void send(prompt)} onConversation={() => setConversationView(true)} onRetry={() => regenerate(index)}/>
+  }
+
   return (
     <div
       className="nalu-workspace relative isolate h-[100dvh] w-screen flex text-ink overflow-hidden font-sans" data-workspace-theme={isDark ? 'dark' : 'light'}
       data-workspace-view={view} data-workspace-design-preview={reviewLayout || undefined}
       data-workspace-launcher={reviewLayout && launcherOpen || undefined}
+      data-generative-home={generativeHome || undefined}
       data-agent-screens={reviewLayout && agentScreensOpen || undefined}
       onKeyDownCapture={reviewLayout && launcherOpen && !reviewChatOpen ? event => {
         if (event.key === 'Escape') {
@@ -2725,18 +2799,30 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       {/* The avatar workspace is scoped to the authenticated app. */}
 
       {reviewLayout && <header className="review-workspace-header">
-        <button className="review-header-brand" aria-label="Nalu home" onClick={openWorkspaceLauncher}>
+        <button className="review-header-brand" aria-label="Nalu home" onClick={() => { if (!previewLayout) { setGenerativeHome(true); setLibraryOpen(false); setCapabilitiesOpen(false); setLauncherOpen(false); setReviewChatOpen(false); setConversationView(false) } else openWorkspaceLauncher() }}>
           <span className="review-logo-wordmark"><NaluMark/><b>nalu</b></span>
         </button>
-        {WorkspaceAppDock && <Suspense fallback={<nav aria-label="Workspace navigation"/>}><WorkspaceAppDock currentView={view} launcherOpen={launcherOpen || agentScreensOpen} onOpen={openSpace}/></Suspense>}
+        {previewLayout && WorkspaceAppDock && <Suspense fallback={<nav aria-label="Workspace navigation"/>}><WorkspaceAppDock currentView={view} launcherOpen={launcherOpen || agentScreensOpen} onOpen={openSpace}/></Suspense>}
+        {!previewLayout && <nav className="generative-header-nav" aria-label="Workspace navigation">
+          <button onClick={() => { newChat(); setGenerativeHome(true); setLibraryOpen(false); setCapabilitiesOpen(false); setLauncherOpen(false); setConversationView(false) }}>New workspace</button>
+          <button onClick={() => { setGenerativeHome(false); setLibraryOpen(true); setCapabilitiesOpen(false); setLauncherOpen(false); setView('chat') }}>Saved work</button>
+          <button onClick={() => { setGenerativeHome(false); setCapabilitiesOpen(true); setLibraryOpen(false); setLauncherOpen(false); setView('chat') }}>Capabilities</button>
+        </nav>}
         <WorkspaceAccountMenu displayName={user?.displayName} saveState={saveState} onLogout={onLogout} onRetrySave={retrySync}
-          onSettings={() => { setReviewChatOpen(false); setLauncherOpen(false); setAgentScreensOpen(false); setHasOpenedSpace(true); setView('settings'); closeSidebarOnMobile() }}/>
+          onSettings={() => { setGenerativeHome(false); setLibraryOpen(false); setCapabilitiesOpen(false); setReviewChatOpen(false); setLauncherOpen(false); setAgentScreensOpen(false); setHasOpenedSpace(true); setView('settings'); closeSidebarOnMobile() }}/>
 
       </header>}
 
-      {reviewLayout && launcherOpen && WorkspaceCarousel && <Suspense fallback={<div className="review-launcher-loading" role="status">Opening your spaces…</div>}>
+      {reviewLayout && previewLayout && launcherOpen && WorkspaceCarousel && <Suspense fallback={<div className="review-launcher-loading" role="status">Opening your spaces…</div>}>
         <WorkspaceCarousel initialView={launcherSelection} onOpen={openSpace} onClose={hasOpenedSpace ? () => setLauncherOpen(false) : undefined}/>
       </Suspense>}
+
+      {reviewLayout && generativeHome && <GenerativeHome chats={chats} onSpaces={() => { setGenerativeHome(false); setCapabilitiesOpen(true); setLibraryOpen(false); setView('chat') }}
+        onOpenChat={id => { setGenerativeHome(false); selectChat(id) }}
+        composer={<Composer visible contextKey={active?.id || 'new-chat'} accountToken={sessionToken || ''}
+          input={input} setInput={setInput} streaming={streaming} onSend={() => void send(input)} onStop={stop} onKey={onKey} taRef={taRef}
+          onAttach={files => void addAttachments(files)} attaching={attaching} attachments={(active?.attachments || []).filter(a => pendingIds.includes(a.id))}
+          onRemoveAttachment={removeAttachment} dismissedIntent={dismissedIntent} onDismissIntent={() => setDismissedIntent(input.trim())} thinkLevel={thinkLevel}/>}/>}
 
       {/* Mobile backdrop — taps close the off-canvas sidebar. */}
       {!reviewLayout && sidebarOpen && (
@@ -2860,7 +2946,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
 
       {/* Main */}
       <main ref={reviewMainRef} tabIndex={reviewLayout ? -1 : undefined} aria-hidden={reviewLayout && (launcherOpen || agentScreensOpen) || undefined} data-launcher-hidden={reviewLayout && (launcherOpen || agentScreensOpen) || undefined} className="ws-main flex-1 flex flex-col min-w-0">
-        <div className="ws-topbar flex items-center gap-2 px-5 shrink-0">
+        {(previewLayout || !reviewLayout) && <div className="ws-topbar flex items-center gap-2 px-5 shrink-0">
           {!reviewLayout && <button
             onClick={() => setSidebarOpen((v) => !v)}
             className="w-8 h-8 rounded-md hover:bg-glass/10 flex items-center justify-center text-ink"
@@ -2880,7 +2966,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
             <span className="hidden sm:inline">{isDark ? 'Light' : 'Dark'}</span>
           </button>}
           {view === 'chat' && renderChatTools()}
-        </div>
+        </div>}
 
         {showConnect && (
           <div
@@ -3030,7 +3116,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           <SettingsPanel displayName={user?.displayName} onLogout={onLogout} />
         )}
 
-        {view === 'chat' && (reviewLayout ? (reviewChatOpen ? (
+        {view === 'chat' && !generativeHome && (reviewLayout && !previewLayout ? (libraryOpen ? <GenerativeLibrary chats={chats} onOpen={selectChat} onNew={() => { newChat(); setLibraryOpen(false); setGenerativeHome(true) }}/> : capabilitiesOpen ? <GenerativeCapabilities onChoose={prompt => { newChat(); setInput(prompt); setCapabilitiesOpen(false); setGenerativeHome(true); requestAnimationFrame(() => taRef.current?.focus()) }} onClose={() => { setCapabilitiesOpen(false); setGenerativeHome(true) }}/> : conversationView ? <div className="generative-conversation"><button className="generative-back" onClick={() => setConversationView(false)}>← Back to workspace</button>{renderChatContent()}</div> : renderGenerativeWorkspace()) : reviewLayout ? (reviewChatOpen ? (
           <div className="review-chat-detached">
             <NaluMark />
             <h2>Your conversation is open below.</h2>
@@ -3039,11 +3125,11 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         ) : <div ref={setChatInlineAnchor} className="workspace-chat-inline-slot" aria-hidden="true" />) : renderChatContent())}
       </main>
 
-      {reviewLayout && agentScreensOpen && WorkspaceAgentScreens && <Suspense fallback={<div className="review-launcher-loading" role="status">Opening agent screens…</div>}>
+      {reviewLayout && previewLayout && agentScreensOpen && WorkspaceAgentScreens && <Suspense fallback={<div className="review-launcher-loading" role="status">Opening agent screens…</div>}>
         <WorkspaceAgentScreens chats={chats} activeChatIds={reviewActiveChats} activity={liveActivity} selectedItemId={selectedAgentItem}
           onSelectItem={selectActivityItem} onOpenSwarm={openSwarmActivity} onOpenChat={id => { setActiveId(id); openSpace('chat') }} onOpenSpace={openSpace} onClose={closeAgentScreens}/>
       </Suspense>}
-      {reviewLayout && WorkspaceAgentTray && <Suspense fallback={null}>
+      {reviewLayout && previewLayout && WorkspaceAgentTray && <Suspense fallback={null}>
         <WorkspaceAgentTray chats={chats} activeChatIds={reviewActiveChats} activity={liveActivity}
           onOpenChat={id => { setActiveId(id); openSpace('chat') }}
           onOpenPicker={() => setReviewChatOpen(false)}
@@ -3052,10 +3138,10 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           onSelectItem={selectActivityItem} onOpenScreens={() => openAgentScreens(null)}/>
       </Suspense>}
 
-      {reviewLayout && WorkspaceChatPopover && <Suspense fallback={null}>
+      {reviewLayout && previewLayout && WorkspaceChatPopover && <Suspense fallback={null}>
         <WorkspaceChatPopover swarm={previewLayout ? undefined : liveSwarm} swarmNavigationRequest={swarmNavigationRequest} agentConversationRequest={agentConversationRequest} open={reviewChatOpen} onOpen={() => setReviewChatOpen(true)}
           fullPageAnchor={chatInlineAnchor}
-          fullPageVisible={view === 'chat' && !launcherOpen && !agentScreensOpen}
+          fullPageVisible={view === 'chat' && !generativeHome && !launcherOpen && !agentScreensOpen}
           onChatVisibilityChange={setChatContentVisible}
           onClose={() => setReviewChatOpen(false)}
           onNewChat={newChat} title={active?.title || 'A little space to think'}

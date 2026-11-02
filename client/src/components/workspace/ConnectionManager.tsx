@@ -9,7 +9,7 @@ type Editor = { app: string; id?: string; method: ConnMethod; label: string; use
 const inputClass = 'mt-1 w-full rounded-xl border border-glass/20 bg-glass/[0.06] px-3 py-2.5 text-sm text-ink outline-none placeholder:text-dim focus:border-gold/60'
 const buttonClass = 'rounded-xl border border-glass/20 px-3 py-2 text-sm text-ink hover:bg-glass/10 disabled:opacity-50'
 
-export default function ConnectionManager({ onClose, onChange, initialApp }: { onClose: () => void; onChange: () => void; initialApp?: string }) {
+export default function ConnectionManager({ onClose, onChange, initialApp, embedded = false }: { embedded?: boolean; onClose: () => void; onChange: () => void; initialApp?: string }) {
   const [connections, setConnections] = useState<Connection[]>([]), [providers, setProviders] = useState<string[]>([])
   const [editor, setEditor] = useState<Editor | null>(null), [query, setQuery] = useState('')
   const initialOpened = useRef('')
@@ -100,10 +100,10 @@ export default function ConnectionManager({ onClose, onChange, initialApp }: { o
   const hasOAuth = !!definition?.provider && providers.includes(definition.provider)
   const canSave = !!editor?.label.trim() && !busy && (editor?.method === 'oauth' || (webhook ? !!(editor?.endpoint.trim() || editor?.hasEndpoint) : !!(editor?.secret.trim() || editor?.hasSecret)))
 
-  return <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/20 p-3 backdrop-blur-sm sm:p-6" onClick={onClose}>
-    <div ref={dialog} role="dialog" aria-modal="true" aria-label="App connections" tabIndex={-1} className="flex max-h-[90dvh] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-glass/25 bg-panel/50 text-ink shadow-2xl backdrop-blur-2xl outline-none" onClick={e => e.stopPropagation()} onKeyDown={e => {
+  return <div className={embedded ? "generative-connections-content" : "fixed inset-0 z-[80] flex items-center justify-center bg-black/20 p-3 backdrop-blur-sm sm:p-6"} onClick={embedded ? undefined : onClose}>
+    <div ref={dialog} role={embedded ? "region" : "dialog"} aria-modal={embedded ? undefined : true} aria-label="App connections" tabIndex={-1} className="flex max-h-[90dvh] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-glass/25 bg-panel/50 text-ink shadow-2xl backdrop-blur-2xl outline-none" onClick={e => e.stopPropagation()} onKeyDown={e => {
       if (e.key === 'Escape') onClose()
-      if (e.key === 'Tab') {
+      if (!embedded && e.key === 'Tab') {
         const controls = [...(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),a[href]') || [])].filter(el => el.getClientRects().length)
         const first = controls[0], last = controls[controls.length - 1]
         if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus() }

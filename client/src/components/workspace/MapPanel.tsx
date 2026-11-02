@@ -564,7 +564,8 @@ const MAP_KEYS = [
 const SHAPES_KEY = 'nalu-map-shapes'
 const ACTIVE_KEY = 'nalu-map-active-layers' // layers you turned on persist + reload with the map
 
-export default function MapPanel() {
+export default function MapPanel({ request }: { request?: { key: number; query: string } } = {}) {
+  const handledRequest = useRef<number>()
   const { isDark } = useTheme()
   // Roadmap base ('dark'/'streets') follows the app theme; satellite/terrain
   // keep Google's native imagery.
@@ -1540,6 +1541,13 @@ export default function MapPanel() {
       if (searchRequests.current.owns(request)) { searchRequests.current.finish(request); setLoading(false) }
     }
   }
+  useEffect(() => {
+    if (!request || handledRequest.current === request.key) return
+    setQuery(request.query)
+    if (!ready || authErr) return
+    handledRequest.current = request.key
+    void runSearch(request.query)
+  }, [request?.key, ready, authErr])
   const search = () => void runSearch(query.trim())
   // One-tap category search — straight to Places (no AI round-trip needed).
   const searchCategory = (term: string) => { setQuery(term); void runSearch(term, false) }

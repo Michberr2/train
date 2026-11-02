@@ -8,6 +8,7 @@ const cwd = fileURLToPath(new URL('../', import.meta.url))
 export const OFFLINE_RELEASE_CHECKS = [
   'deploy-release-regressions.mjs',
   'login-access-regressions.mjs',
+  'generative-ui-regressions.mjs',
   'offline-release-checks-regressions.mjs',
   'cursor-build-browser-regressions.mjs',
   'chat-protocol-regressions.mjs',
@@ -88,7 +89,7 @@ export const OFFLINE_RELEASE_CHECKS = [
   ['map-browser-verify.mjs', '--camera'],
   ['map-browser-verify.mjs', '--layers'],
   ['map-browser-verify.mjs', '--comparisons'],
-  'workspace-shell-browser-regressions.mjs',
+  'generative-workspace-browser-regressions.mjs',
 ]
 export function runOfflineReleaseChecks({ browserTestSkipReason, run = spawnSync, log = console.log, sourceEnv = process.env } = {}) {
   const plan = selectReleaseChecks(OFFLINE_RELEASE_CHECKS, browserTestSkipReason)
