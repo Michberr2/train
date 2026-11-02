@@ -109,10 +109,14 @@ try {
       host.scrollTop = top + Math.max(0, target.offsetHeight - host.clientHeight) * fraction
       host.dispatchEvent(new Event('scroll'))
     }, fraction)
-    await crewPage.clock.runFor(20000)
+    await crewPage.clock.runFor(100)
+    await crewPage.clock.fastForward(20000)
+    await crewPage.clock.runFor(32)
   }
   await crewPage.locator('.nalu-landing').evaluate(el => { el.scrollTop = 64; el.dispatchEvent(new Event('scroll')) })
-  await crewPage.clock.runFor(20000)
+  await crewPage.clock.runFor(100)
+  await crewPage.clock.fastForward(20000)
+  await crewPage.clock.runFor(32)
   await scroll('.nalu-manifesto')
   await scroll('.nalu-process')
   for (const fraction of [0, .25, .5, .75, 1]) await scroll('.nalu-capabilities', fraction)
