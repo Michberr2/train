@@ -5,6 +5,8 @@ import type { SwarmState, SwarmThread, SwarmAgentId } from '../client/src/compon
 
 export type SwarmJobStatus = 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'cancelled'
 export interface SwarmJob {
+  executionMode?: 'device' | 'cloud'
+  deviceReceipt?: { tokenHash: string; resultHash: string }
   id: string; projectId: string; thread: SwarmThread; kind: 'reply' | 'task'; taskId?: string; turnId?: string
   speaker: SwarmAgentId; status: SwarmJobStatus; input: string; requestId: string
   createdAt: number; updatedAt: number; leaseToken?: string; leaseUntil?: number; attempts: number
@@ -96,6 +98,8 @@ function assertSnapshot(value: SwarmSnapshot, previous?: SwarmSnapshot): void {
   const tasks = new Map(state.tasks.map(task => [task.id, task]))
   const requests = new Set<string>()
   for (const job of value.jobs) {
+    if (job.executionMode !== undefined && !['device', 'cloud'].includes(job.executionMode)) throw new Error('Invalid Swarm execution mode.')
+    if (job.deviceReceipt && (job.executionMode !== 'device' || ['queued', 'running'].includes(job.status) || job.leaseToken !== undefined || !/^[a-f0-9]{64}$/.test(job.deviceReceipt.tokenHash) || !/^[a-f0-9]{64}$/.test(job.deviceReceipt.resultHash))) throw new Error('Invalid device completion receipt.')
     if (!room(job.projectId, job.thread) || !projectMap.get(job.projectId)?.members.includes(job.speaker) || !STATUSES.has(job.status) || !['reply', 'task'].includes(job.kind) || !validId(job.requestId) || requests.has(job.requestId) || typeof job.input !== 'string') throw new Error('Invalid Swarm job.')
     requests.add(job.requestId)
     if (!timestamp(job.createdAt) || !timestamp(job.updatedAt) || !Number.isSafeInteger(job.attempts) || job.attempts < 0 || (job.progress !== undefined && (!Number.isFinite(job.progress) || job.progress < 0 || job.progress > 1))) throw new Error('Invalid Swarm job progress.')
@@ -112,7 +116,7 @@ function assertSnapshot(value: SwarmSnapshot, previous?: SwarmSnapshot): void {
     for (const job of value.jobs) {
       const old = oldJobs.get(job.id)
       if (!old) continue
-      for (const key of ['requestId', 'projectId', 'thread', 'kind', 'taskId', 'turnId', 'speaker', 'input', 'createdAt'] as const) if (job[key] !== old[key]) throw new Error('A Swarm job request cannot be rewritten.')
+      for (const key of ['executionMode', 'requestId', 'projectId', 'thread', 'kind', 'taskId', 'turnId', 'speaker', 'input', 'createdAt'] as const) if (job[key] !== old[key]) throw new Error('A Swarm job request cannot be rewritten.')
       if (old.status !== 'queued' && job.status === 'queued') throw new Error('Retry Swarm work with a new job ID.')
       if (['done', 'failed', 'cancelled'].includes(old.status) && job.status !== old.status) throw new Error('A finished Swarm attempt cannot be restarted.')
     }
@@ -321,16 +325,17 @@ export class SwarmStore {
   async dueOwners(limit = 20): Promise<string[]> {
     await this.ensure()
     const cap = Math.max(1, Math.min(100, Math.floor(limit) || 20)), now = Date.now()
-    if (this.client instanceof CloudflareStore) return (await this.client.query(`SELECT owner_id,MIN(updated_at) AS oldest FROM nalu_swarm_jobs WHERE status='queued' OR (status='running' AND lease_until<=?) GROUP BY owner_id ORDER BY oldest LIMIT ?`, [now, cap])).results.map(row => String(row.owner_id))
+    if (this.client instanceof CloudflareStore) return (await this.client.query(`SELECT owner_id,MIN(updated_at) AS oldest FROM nalu_swarm_jobs WHERE COALESCE(json_extract(payload,'$.executionMode'),'cloud')<>'device' AND (status='queued' OR (status='running' AND lease_until<=?)) GROUP BY owner_id ORDER BY oldest LIMIT ?`, [now, cap])).results.map(row => String(row.owner_id))
     const client = this.client
-    return serial(client, async () => (await client.query(`SELECT owner_id,MIN(updated_at) AS oldest FROM nalu_swarm_jobs WHERE status='queued' OR (status='running' AND lease_until<=$1) GROUP BY owner_id ORDER BY oldest LIMIT $2`, [now, cap])).rows.map(row => String(row.owner_id)))
+    return serial(client, async () => (await client.query(`SELECT owner_id,MIN(updated_at) AS oldest FROM nalu_swarm_jobs WHERE COALESCE(payload->>'executionMode','cloud')<>'device' AND (status='queued' OR (status='running' AND lease_until<=$1)) GROUP BY owner_id ORDER BY oldest LIMIT $2`, [now, cap])).rows.map(row => String(row.owner_id)))
   }
 
-  async claim(owner: string, jobId?: string, maxActive = 3): Promise<SwarmJob | null> {
+  async claim(owner: string, jobId?: string, maxActive = 3, executionMode: 'device' | 'cloud' = 'cloud'): Promise<SwarmJob | null> {
     const now = Date.now(), token = randomUUID(), maximum = Math.max(1, Math.min(3, Math.floor(maxActive) || 3))
+    const matchesMode = (job: SwarmJob) => (job.executionMode || 'cloud') === executionMode
     const saved = await this.mutate(owner, draft => {
       for (const job of draft.jobs) {
-        if (job.status !== 'running' || (job.leaseUntil || 0) > now) continue
+        if (!matchesMode(job) || job.status !== 'running' || (job.leaseUntil || 0) > now) continue
         job.status = 'failed'; job.error = INTERRUPTED; job.summary = INTERRUPTED; job.updatedAt = now
         delete job.leaseToken; delete job.leaseUntil
         const turn = draft.state.turns.find(item => item.id === job.turnId)
@@ -341,12 +346,12 @@ export class SwarmStore {
       // Preserve the interruption sweep even when it uses the small terminal
       // recovery allowance. Do not mix it with starting fresh work at the cap.
       if (Buffer.byteLength(JSON.stringify(draft.state)) > SWARM_MAX_STATE_BYTES || Buffer.byteLength(JSON.stringify(draft)) > SWARM_MAX_SNAPSHOT_BYTES) return
-      if (draft.jobs.filter(job => job.status === 'running').length >= maximum) return
-      const job = draft.jobs.find(item => item.status === 'queued' && (!jobId || item.id === jobId))
+      if (draft.jobs.filter(job => matchesMode(job) && job.status === 'running').length >= maximum) return
+      const job = draft.jobs.find(item => matchesMode(item) && item.status === 'queued' && (!jobId || item.id === jobId))
       if (!job) return
       job.status = 'running'; job.leaseToken = token; job.leaseUntil = now + SWARM_LEASE_MS; job.attempts++; job.updatedAt = now
       const task = draft.state.tasks.find(item => item.id === job.taskId)
-      if (task && (!task.executionId || task.executionId === job.id)) { task.status = 'running'; task.executionId = job.id; task.updatedAt = now }
+      if (task && (!task.executionId || task.executionId === job.id)) { task.status = 'running'; task.executionId = job.id; task.updatedAt = now; if (executionMode === 'device') task.summary = 'Running on this computer.' }
     })
     return saved.jobs.find(job => job.leaseToken === token && job.status === 'running') || null
   }

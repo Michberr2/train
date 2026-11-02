@@ -196,7 +196,7 @@ class AwaitingApproval extends Error {}
 // Describe-to-Build: turn a plain-English ask into a pipeline plan (JSON).
 const BUILD_PROMPT = (ask: string, catalog: { agents: unknown; outputs: unknown; controls: unknown }) =>
   `Build an executable Nalu flow from the user's request. Return ONLY JSON. Available steps: ${JSON.stringify(catalog)}.
-Use 1-16 purposeful steps, with explicit IDs and directed edges. Preserve parallel work, conditional branches, and joins; do not flatten everything into a chain. Use agent steps for reasoning, websearch/fetchurl for explicit source gathering, router/filter for decisions, foreach for iteration, and the appropriate artifact/output for the final deliverable. Internal routing decisions need no web search. For scheduled reports without an explicitly requested file format, prefer markdown output so the file can finish while the workspace is closed. Factual agent steps should have webSearch:true unless the user wants only supplied data.
+Use 1-16 purposeful steps, with explicit IDs and directed edges. Preserve parallel work, conditional branches, and joins; do not flatten everything into a chain. Use agent steps for reasoning, websearch/fetchurl for explicit source gathering, router/filter for decisions, foreach for iteration, and the appropriate artifact/output for the final deliverable. Internal routing decisions need no web search. Scheduled work needs this browser to remain open; all model inference runs on this computer. Prefer markdown when no file format was requested. Factual agent steps should have webSearch:true unless the user wants only supplied data.
 Each node kind must be a concrete supported type. "output" is a category, never a node kind. Use kind:"markdown", "textfile", "doc", "pdf", "slides", "sheet", "website", "email", or another exact output type in the catalog.
 Complete example: {"name":"Research brief","schedule":"manual","time":"08:00","nodes":[{"id":"scan","kind":"agent","agent":"general","label":"Research","prompt":"Research the requested topic and cite sources.","webSearch":true},{"id":"report","kind":"markdown","label":"Save the brief","prompt":"{{input}}"}],"edges":[{"from":"scan","to":"report"}]}.
 Include only necessary supported configuration: router routeBy:"condition|ai", branches:[{label,cond}], outgoing edge label matching each branch; filter condMode:"contains|gt|lt|notempty|ai", cond; http method,url,headers; fetchurl url; email to,subject; memory memOp:"get|set|append",memKey; foreach splitBy:"lines|json|numbered|commas",maxItems; planner maxSteps; output format. Use {{input}} for upstream results. Never invent an email recipient, credential, endpoint, connection ID, or real-world business fact. Leave missing configuration empty for the user to fill in. No cycles. Every router branch must lead to a step. Schedule only as requested, otherwise manual. The plan will be reviewed before saving and starts disabled.
@@ -245,7 +245,7 @@ type Version = { id: string; at: number; note: string; nodes: PNode[]; edges: Ed
 // refDoc: a document the user uploads from their computer that every agent in the
 // flow gets as authoritative reference context on each run.
 type RefDoc = { name: string; text: string; coverage?: string }
-type Flow = { id: string; name: string; nodes: PNode[]; edges: Edge[]; schedule: Schedule; time: string; timeZone?: string; enabled: boolean; lastRun?: number; results?: Record<string, string>; company?: Company; artifacts?: Record<string, OutputMeta>; defaultKey?: string; run?: FlowRun; refDoc?: RefDoc
+type Flow = { executionMode?: 'device' | 'cloud'; id: string; name: string; nodes: PNode[]; edges: Edge[]; schedule: Schedule; time: string; timeZone?: string; enabled: boolean; lastRun?: number; results?: Record<string, string>; company?: Company; artifacts?: Record<string, OutputMeta>; defaultKey?: string; run?: FlowRun; refDoc?: RefDoc
   // 10x: persistent per-flow memory (survives runs), pending approvals, exposed-as-API,
   // and the last run's inspector snapshot.
   memory?: Record<string, string>; approvals?: Record<string, Approval>; apiEnabled?: boolean; apiSecret?: string; snap?: RunSnap; versions?: Version[] }
@@ -364,7 +364,7 @@ function withDefaults(saved: Flow[]): Flow[] {
     .map((t) => ({ ...t.build(), id: t.id, defaultKey: t.key }))
   let legacy: ReturnType<typeof importLegacyAutomations> = []
   try { legacy = importLegacyAutomations(localStorage.getItem('nalu-automations'), saved, dead) } catch { /* storage unavailable */ }
-  return [...saved, ...legacy, ...missing].map(f => ({ ...f, timeZone: (f as Flow).timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone }))
+  return [...saved, ...legacy, ...missing].map(f => ({ ...f, executionMode: 'device' as const, timeZone: (f as Flow).timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone }))
 }
 function loadFlows(): Flow[] {
   try {
@@ -374,7 +374,7 @@ function loadFlows(): Flow[] {
   } catch { /* fresh */ }
   return withDefaults([])
 }
-const saveFlows = (flows: Flow[]) => { try { localStorage.setItem(FLOWS_KEY, JSON.stringify(flows)) } catch { /* */ } }
+const saveFlows = (flows: Flow[]) => { try { localStorage.setItem(FLOWS_KEY, JSON.stringify(flows.map(flow => ({ ...flow, executionMode: 'device' })))) } catch { /* */ } }
 const loadRuns = (): Run[] => {
   try {
     const a = JSON.parse(localStorage.getItem(RUNS_KEY) || '[]')
@@ -418,7 +418,7 @@ function validateFlow(f: Flow): { blockers: string[]; warnings: string[] } {
   }
   if (f.schedule !== 'manual') {
     const foreground = f.nodes.filter(needsOpenWorkspace)
-    if (foreground.length) warnings.push(`Keep Nalu open for these steps: ${foreground.map(n => n.label).join(', ')}. Word documents, email drafts, social carousels and portable files can finish with the workspace closed.`)
+    if (foreground.length) warnings.push(`Keep Nalu open for these steps: ${foreground.map(n => n.label).join(', ')}. All model work runs on this computer; it pauses when Nalu is closed.`)
   }
   return { blockers, warnings }
 }

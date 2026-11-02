@@ -4,8 +4,9 @@ async function load(path) {
   const result = await build({ entryPoints: [path], bundle: true, write: false, platform: 'node', format: 'esm' })
   return import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}`)
 }
-const { consumeChatStream } = await load('../naludesktop/src/lib/chatStream.ts')
-const { createSSEParser } = await load('../nalumobile/src/sse.ts')
+const reposRoot = process.env.NALU_REPOS_ROOT || '..'
+const { consumeChatStream } = await load(`${reposRoot}/naludesktop/src/lib/chatStream.ts`)
+const { createSSEParser } = await load(`${reposRoot}/nalumobile/src/sse.ts`)
 const frame = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
 const text = 'Who is this website for? 🐺'
 const wire = ': keepalive\n\n' + frame('route', { name: 'Nalu', kind: 'general' }) + frame('delta', { text }) + ': keepalive\n\n' + frame('finish', { reason: 'stop' }) + frame('done', { ok: true })

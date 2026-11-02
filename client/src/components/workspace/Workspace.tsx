@@ -117,6 +117,7 @@ import PlaygroundControls from './PlaygroundControls'
 import SkillsPanel from './SkillsPanel'
 import AutomationsPanel from './AutomationsPanel'
 import SettingsPanel from './SettingsPanel'
+import LocalAIControl from './LocalAIControl'
 import { pushChatsFull, sessionWasCleared, getSyncState, retrySync } from '../../lib/sync'
 import { idbGetChats, idbSetChats } from '../../lib/chatStore'
 import { getToken } from '../../lib/localAuth'
@@ -2450,6 +2451,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
 
   const renderChatTools = () => (
     <div className="flex shrink-0 items-center gap-2">
+              <LocalAIControl />
               <PlaygroundControls />
               {activeRepo ? (
                 <>

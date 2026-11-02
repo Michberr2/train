@@ -3,6 +3,7 @@ import { motion, useMotionValueEvent, useScroll, useTransform } from 'framer-mot
 import { ArrowDown, ArrowUpRight } from 'lucide-react'
 import { useAuth } from '../AuthProvider'
 import Scenery from '../Scenery'
+import BuildCopy from './BuildCopy'
 
 const capabilities = [
   { name: 'Data Engineering', title: 'Data Engineering', description: 'Bring your data together. Clean it up, shape it, and turn scattered files and sources into something you can actually work with.', tags: 'DATA · PIPELINES · TRANSFORMATIONS' },
@@ -57,13 +58,13 @@ export default function Capabilities({ container, reduced }: { container: RefObj
       <div className="nalu-scene"><Scenery src="/images/bg-meadow-sunset.png" /></div><div className="nalu-scene-shade" /><div className="nalu-scene-grid" aria-hidden="true" />
       <div className="nalu-capabilities-content">
         <div className="nalu-section-topline"><span>02 / WHAT NALU CAN DO</span><div className="nalu-section-rule" /><span className="nalu-scroll-direction">{staticMode ? 'EXPLORE THE POSSIBILITIES' : 'KEEP SCROLLING'} <ArrowDown size={12} /></span></div>
-        <h2 id="nalu-capabilities-title">Engineered for<br /><strong>what’s next.</strong></h2>
+        <h2 id="nalu-capabilities-title"><BuildCopy text="Engineered for" /><br /><strong><BuildCopy text="what’s next." /></strong></h2>
         <div className="nalu-capabilities-window">
           <motion.div ref={track} className="nalu-capabilities-track" style={staticMode ? { x: 0 } : { x }}>
             {capabilities.map((item, index) => <article id={`nalu-capability-${index}`} key={item.name} className={`nalu-capability-card ${active === index || staticMode ? 'is-active' : ''}`} aria-label={item.name}>
               <div className="nalu-capability-meta"><span>0{index + 1}</span><span>{item.tags}</span></div>
-              <div className="nalu-capability-copy"><h3><span>{item.title}</span><span aria-hidden="true" className="nalu-capability-title-fill">{item.title}</span></h3><p>{item.description}</p></div>
-              <button onClick={() => openAuth('signup')} className="nalu-capability-cta" aria-label={`Try ${item.name.toLowerCase()} with Nalu`}>TRY IT WITH NALU <ArrowUpRight size={14} /></button>
+              <div className="nalu-capability-copy"><h3><span><BuildCopy text={item.title} /></span><span aria-hidden="true" className="nalu-capability-title-fill">{item.title}</span></h3><p><BuildCopy text={item.description} /></p></div>
+              <button onClick={() => openAuth('signup')} className="nalu-capability-cta" aria-label={`Try ${item.name.toLowerCase()} with Nalu`}><BuildCopy text="TRY IT WITH NALU" /><ArrowUpRight size={14} /></button>
               <span className="nalu-capability-number" aria-hidden="true">0{index + 1}</span>
             </article>)}
           </motion.div>

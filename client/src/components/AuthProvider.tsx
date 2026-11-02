@@ -9,6 +9,7 @@ import {
 import * as localAuth from '../lib/localAuth'
 import { installSync, loadFromServer, clearLocal, prepareAccount } from '../lib/sync'
 import AuthModal from './AuthModal'
+import { resetLocalAI } from '../lib/localAI'
 
 type Mode = 'signin' | 'signup'
 
@@ -69,6 +70,7 @@ export default function AuthProvider({
     void restore()
     const onStorage = (event: StorageEvent) => {
       if (event.key !== 'nalu-token' && event.key !== null) return
+      resetLocalAI()
       // Storage events can queue behind a newer change in another tab.
       if (event.key === 'nalu-token' && event.newValue !== localAuth.getToken()) return
       const attempt = ++revision.current
@@ -90,6 +92,7 @@ export default function AuthProvider({
   const closeAuth = useCallback(() => setModalOpen(false), [])
 
   const signOut = useCallback(() => {
+    resetLocalAI()
     revision.current++
     void localAuth.signOut()
     void clearLocal()
@@ -100,6 +103,7 @@ export default function AuthProvider({
 
   const handleAuthed = useCallback(
     async (u: localAuth.PublicUser) => {
+      resetLocalAI()
       const attempt = ++revision.current
       const token = localAuth.getToken()
       if (!token) return

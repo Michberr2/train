@@ -217,3 +217,43 @@ for (const labels of [[undefined,undefined],[' a ','B']]) {
 }
 delete globalThis.__cronModel
 console.log('PASS ambiguous/unknown/duplicate router connections fail before execution; exact legacy and normalized explicit branch mappings survive.')
+
+// Device-owned work must never become paid inference on a scheduler, webhook,
+// orphan takeover, forced run, or another client's resume request.
+{
+  globalThis.__cronModel = () => assert.fail('device-owned flow reached a cloud model')
+  const flow = { ...base, executionMode: 'device', run: { status: 'running', startedAt: 1, heartbeat: 1 }, results: { private: 'saved device work' } }
+  const db = database(flow)
+  const before = db.flow
+  assert.equal((await runDueCrons(db)).flowsRan, 0)
+  for (const mode of ['run', 'resume']) {
+    const result = await runOneFlow(db, 'test-user', base.id, mode, true)
+    assert.equal(result.code, 409)
+    assert.match(result.error, /user’s computer/)
+    assert.deepEqual(db.flow, before)
+  }
+  const hook = await runFlowByHook(db, base.id, base.apiSecret, 'inbound payload')
+  assert.equal(hook.status, 409)
+  assert.deepEqual(db.flow, before)
+  assert.equal((await runOneFlow(db, 'test-user', base.id, 'stop')).ok, true)
+  delete globalThis.__cronModel
+  console.log('PASS device workflows refuse cloud scheduling, orphan takeover, force, resume and webhooks; saved results and cancellation survive.')
+}
+
+{
+  let calls = 0, db
+  globalThis.__cronModel = () => {
+    calls++
+    db.flow = { ...db.flow, executionMode: 'device' }
+    return 'Completed before the switch to device execution'
+  }
+  db = database({ ...base, approvals: {}, nodes: [{ id: 'first', type: 'agent', webSearch: false, prompt: 'First step' }, { id: 'second', type: 'agent', webSearch: false, prompt: 'Second step' }], edges: [{ from: 'first', to: 'second' }] })
+  const result = await runOneFlow(db, 'test-user', base.id, 'run')
+  assert.equal(result.status, 'stopped')
+  assert.equal(calls, 1)
+  assert.equal(db.flow.executionMode, 'device')
+  assert.equal(db.flow.results.first, 'Completed before the switch to device execution')
+  assert.equal(db.flow.results.second, undefined)
+  delete globalThis.__cronModel
+  console.log('PASS switching an active workflow to device execution stops further cloud steps and preserves completed work and the device setting.')
+}

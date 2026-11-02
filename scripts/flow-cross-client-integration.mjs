@@ -16,7 +16,7 @@ import tailwindConfig from '../client/tailwind.config.js'
 import { chromium, expect } from '@playwright/test'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const mobileRoot = path.resolve(root, '../nalumobile')
+const mobileRoot = process.env.NALU_REPOS_ROOT ? path.join(process.env.NALU_REPOS_ROOT, 'nalumobile') : path.resolve(root, '../nalumobile')
 const output = process.env.OUTPUT_DIR || '/tmp/nalu-flow-cross-client-integration'
 const require = createRequire(import.meta.url)
 const owner = 'compat-integration-owner'
@@ -180,8 +180,19 @@ try {
   await context.close()
   record('Actual web import and rename serialize and sync the inert manual workflow through the real API/Worker')
 
-  for (const [representation, value] of [['web-json-string', webValue], ['legacy-array', flows], ['nested-legacy-string', JSON.stringify(webValue)]]) {
-    if (representation !== 'web-json-string') await expectAPI({ action: 'set', key: 'nalu-agent-flows', value })
+  assert.equal(flow.executionMode, 'device')
+  for (const command of [`run pipeline ${name}`, `resume flow ${flow.id}`]) {
+    const before = db.prepare('SELECT COUNT(*) AS count FROM nalu_task_jobs WHERE user_id=?').get(owner).count
+    const errors = []
+    await mobile.assistantTurn([{ role: 'user', content: command }], { onError: error => errors.push(error) }, token)
+    assert.ok(errors.some(error => /user’s computer/.test(error)), 'Native caller must receive the device-run requirement')
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM nalu_task_jobs WHERE user_id=?').get(owner).count, before)
+  }
+  record('Mobile can list browser-device workflows but cannot accidentally queue paid cloud execution')
+  const legacyFlows = flows.map(item => { const { executionMode, ...rest } = item; return { ...rest, executionMode: 'cloud', run: { status: 'stopped', startedAt: 1700000000000 } } })
+  const legacyValue = JSON.stringify(legacyFlows)
+  for (const [representation, value] of [['web-json-string', legacyValue], ['legacy-array', legacyFlows], ['nested-legacy-string', JSON.stringify(legacyValue)]]) {
+    await expectAPI({ action: 'set', key: 'nalu-agent-flows', value })
     const listed = await mobile.loadFlows(token)
     assert.deepEqual(listed.find(item => item.id === flow.id), { id: flow.id, name })
     const runs = []
@@ -190,7 +201,7 @@ try {
         // Resume is valid only for a flow with a persisted continuation. Seed
         // the isolated fixture with one so this check exercises the real
         // resume dispatch path instead of asserting an invalid request.
-        const resumable = flows.map(item => item.id === flow.id
+        const resumable = legacyFlows.map(item => item.id === flow.id
           ? { ...item, run: { status: 'running', startedAt: Date.now(), revision: 1 } }
           : item)
         await expectAPI({ action: 'set', key: 'nalu-agent-flows', value: resumable })
@@ -215,7 +226,7 @@ try {
   assert.deepEqual(report.blockedRequests, [], 'No unexpected network/API traffic occurred')
   record('All six jobs remain queued in memory; no provider calls, native effects, or production mutations')
   for (const relative of ['client/src/components/workspace/AgentsPanel.tsx', 'client/src/lib/sync.ts', 'api/data.ts', 'api/_cloudflareData.ts', 'api/_cloudflareTasks.ts', 'cloudflare/nalu-data/worker.ts', '../nalumobile/src/api.ts', '../nalumobile/src/assistant.ts', '../nalumobile/src/commands.ts']) {
-    report.sourceHashes[relative] = createHash('sha256').update(await readFile(path.resolve(root, relative))).digest('hex')
+    report.sourceHashes[relative] = createHash('sha256').update(await readFile(process.env.NALU_REPOS_ROOT && relative.startsWith('../nalu') ? path.join(process.env.NALU_REPOS_ROOT, relative.slice(3)) : path.resolve(root, relative))).digest('hex')
   }
   report.passed = true
 } catch (error) {

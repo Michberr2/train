@@ -60,8 +60,15 @@ function cancelJob(snapshot: SwarmSnapshot, job: SwarmJob, now: number) {
 /** Pure, synchronous mutation of a disposable draft. The caller commits only
  * after it returns successfully; confirmed conflicts may replay the callback. */
 export function applySwarmAction(snapshot: SwarmSnapshot, owner: string, body: Record<string, unknown>, now: number): void {
+  if (body.executionMode !== undefined && !['device', 'cloud'].includes(String(body.executionMode))) throw new SwarmError('Invalid Swarm execution mode.')
+  const priorJobs = new Set(snapshot.jobs.map(job => job.id))
   const before = JSON.stringify(snapshot)
   applyAction(snapshot, owner, body, now)
+  if (body.executionMode === 'device') for (const job of snapshot.jobs) if (!priorJobs.has(job.id)) {
+    job.executionMode = 'device'
+    const task = snapshot.state.tasks.find(task => task.id === job.taskId && task.executionId === job.id)
+    if (task) task.summary = 'Waiting for this computer to start.'
+  }
   // Manual tracking/sharing cannot consume space already reserved for pending
   // jobs. Cancellation and reassignment remain available near the limit.
   if (before !== JSON.stringify(snapshot) && ['create', 'send', 'add-task', 'start-task', 'continue-studio', 'update-artifact', 'share-task'].includes(String(body.action))) capacity(snapshot, 0)

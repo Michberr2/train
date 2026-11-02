@@ -8,9 +8,10 @@ import tailwindcss from 'tailwindcss'
 import autoprefixer from 'autoprefixer'
 import tailwindConfig from '../client/tailwind.config.js'
 import { chromium, expect } from '@playwright/test'
+import { localEngineBrowserFixture, enableFixtureLocalAI } from './lib/local-engine-browser-fixture.mjs'
 const root=fileURLToPath(new URL('../client/',import.meta.url)),out=process.env.OUTPUT_DIR||'/private/tmp/nalu-workspace-shell-browser-review'
 await mkdir(out,{recursive:true})
-const server=await createServer({root,configFile:root+'vite.config.ts',cacheDir:out+'/vite-cache',css:{postcss:{plugins:[tailwindcss({...tailwindConfig,content:[root+'src/**/*.{ts,tsx}']}),autoprefixer()]}},server:{host:'127.0.0.1',port:5198,strictPort:true,hmr:false}})
+const server=await createServer({root,configFile:root+'vite.config.ts',plugins:[localEngineBrowserFixture()],cacheDir:out+'/vite-cache',css:{postcss:{plugins:[tailwindcss({...tailwindConfig,content:[root+'src/**/*.{ts,tsx}']}),autoprefixer()]}},server:{host:'127.0.0.1',port:5198,strictPort:true,hmr:false}})
 const origin='http://127.0.0.1:5198',report={checks:[],errors:[],requests:[],blocked:[]}
 const carouselOnly=process.env.CAROUSEL_ONLY==='1'
 let browser, lastPage
@@ -72,11 +73,18 @@ try{
  await server.listen();browser=await chromium.launch()
  for(const viewport of carouselOnly?[{width:1728,height:906}]:[{width:1440,height:1000},{width:390,height:844}]){
   const context=await browser.newContext({viewport});let cloud={'nalu-chats':JSON.stringify(initial)}
+  await context.addInitScript(enableFixtureLocalAI)
   const swarmState={version:1,mode:'live',projects:[],tasks:[],messages:[],turns:[]},swarmRequests=[];let swarmRevision=1
   await context.addInitScript(initial=>{if(window!==top)return;if(sessionStorage.getItem('shell-seeded'))return;sessionStorage.setItem('shell-seeded','1');localStorage.setItem('nalu-token','offline-shell');localStorage.setItem('nalu-data-owner','offline-shell');localStorage.setItem('nalu-view','studio');localStorage.setItem('nalu-chats',JSON.stringify(initial))},initial)
   await context.route('**/*',async route=>{
    const req=route.request(),url=new URL(req.url())
    if(url.origin!==origin){if(['http:','https:'].includes(url.protocol)){report.blocked.push(url.hostname);return route.abort()}return route.continue()}
+   if(url.pathname==='/__fixture-local-model'){
+    const request=req.postDataJSON(),instructions=request.messages[0].content
+    report.requests.push({path:url.pathname,width:viewport.width})
+    const completion=/Classify the user/.test(instructions)?JSON.stringify({kind:'chat',mode:'chat',additionalKinds:[]}):/Ask at most three questions/.test(instructions)?JSON.stringify({questions:[]}):'Offline ordinary chat response.'
+    return route.fulfill({json:{completion}})
+   }
    if(!url.pathname.startsWith('/api/'))return route.continue()
    const body=req.method()==='POST'?req.postDataJSON()||{}:{};report.requests.push({path:url.pathname,action:body.action,width:viewport.width})
    if(url.pathname==='/api/auth')return route.fulfill({json:{ok:true,user:{id:'offline-shell',displayName:'Shell review'}}})

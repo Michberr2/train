@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 // Reviewed executable suites, not filename heuristics: browser-image-cost and
 // synthetic website-runtime tests do not launch a browser and must still run.
 export const BROWSER_EXECUTING_SCRIPTS = Object.freeze([
+  'cursor-build-browser-regressions.mjs',
+  'local-swarm-browser-regressions.mjs',
   'logo-generation-controls-regressions.mjs',
   'attachment-extraction-regressions.mjs',
   'catalogue-browser-regressions.mjs',

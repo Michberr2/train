@@ -1,0 +1,190 @@
+import assert from 'node:assert/strict'
+import { build } from 'esbuild'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { prebuiltAppConfig } from '@mlc-ai/web-llm'
+
+// Synthetic engine tests exercise orchestration; they do not claim model quality.
+const directory = await mkdtemp(join(tmpdir(), 'nalu-local-ai-'))
+const control = { reloads: [], inputs: [], unloaded: 0, resets: 0, terminated: 0, interrupts: 0, next: ['4'], responses: [], reason: 'stop', holdReload: null, holdToken: null }
+globalThis.__localAIEngineTest = control
+globalThis.window = new EventTarget()
+window.isSecureContext = true
+const storage = new Map([['nalu-token', 'account-a']])
+globalThis.localStorage = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) }
+const gpu = { requestAdapter: async () => ({ features: new Set(['shader-f16']), limits: { maxStorageBufferBindingSize: 1024 ** 3 } }) }
+Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { gpu } })
+globalThis.Worker = class { terminate() { control.terminated++ } }
+const realFetch = globalThis.fetch
+globalThis.fetch = () => { throw new Error('Unexpected cloud/network request in local inference') }
+const fake = `export const prebuiltAppConfig = ${JSON.stringify(prebuiltAppConfig)};
+export class WebWorkerMLCEngine {
+  constructor(_worker, options) { this.options = options; this.chat = { completions: { create: async request => { globalThis.__localAIEngineTest.inputs.push(request); return this.tokens(request.extra_body?.enable_thinking); } } }; }
+  async reload(id, config) { const c = globalThis.__localAIEngineTest; c.reloads.push(id); c.lastConfig = config; this.options.initProgressCallback({ progress: .5, text: 'Synthetic preparation' }); if (c.holdReload) await c.holdReload; }
+  async unload() { globalThis.__localAIEngineTest.unloaded++; }
+  async resetChat() { globalThis.__localAIEngineTest.resets++; }
+  interruptGenerate() { globalThis.__localAIEngineTest.interrupts++; }
+  async *tokens(thinking) { const c = globalThis.__localAIEngineTest; const tokens = c.responses.length ? c.responses.shift() : [...c.next]; const reason = c.reason; if (c.holdToken) await c.holdToken; if(thinking) yield { choices: [{delta:{content:'Private fixture assessment.</think>\\n\\n'}}] }; for (const content of tokens) yield { choices: [{ delta: { content } }] }; yield { choices: [{ delta: {}, finish_reason: reason }] }; }
+}`
+await build({ entryPoints: ['client/src/lib/localAI.ts', 'client/src/lib/localAIProtocol.ts', 'client/src/components/workspace/chatStream.ts', 'client/src/components/workspace/chatRequest.ts'], outdir: directory, bundle: true, format: 'esm', platform: 'browser', write: true, outExtension: { '.js': '.mjs' }, plugins: [{ name: 'synthetic-browser-engine', setup(build) { build.onResolve({ filter: /^@mlc-ai\/web-llm$/ }, () => ({ path: 'engine', namespace: 'fixture' })); build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: fake, loader: 'js' })) } }] })
+// Bundle a single entry so the request adapter and runtime share session state.
+const entry = join(directory, 'entry.ts')
+await writeFile(entry, ['client/src/lib/localAI.ts', 'client/src/lib/localAIProtocol.ts', 'client/src/lib/localAIRequests.ts', 'client/src/lib/localArtifactPlans.ts', 'client/src/lib/localArtifactFidelity.ts', 'client/src/components/workspace/chatStream.ts', 'client/src/components/workspace/chatRequest.ts'].map(path => `export * from ${JSON.stringify(join(process.cwd(), path))};`).join('\n'))
+await build({ entryPoints: [entry], outfile: join(directory, 'test.mjs'), bundle: true, format: 'esm', platform: 'browser', plugins: [{ name: 'synthetic-browser-engine', setup(build) { build.onResolve({ filter: /^@mlc-ai\/web-llm$/ }, () => ({ path: 'engine', namespace: 'fixture' })); build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: fake, loader: 'js' })) } }] })
+const local = await import(pathToFileURL(join(directory, 'test.mjs')))
+const request = (content = 'Hello', extra = {}) => ({ messages: [{ role: 'user', content }], ...extra })
+const answer = async (value, signal) => local.readChatStream(local.requestLocalChat(value, signal).body, { signal })
+const tool = { type: 'function', function: { name: 'sum', description: 'Add two numbers', parameters: { type: 'object', properties: { a: { type: 'number' }, b: { type: 'number' } }, required: ['a', 'b'], additionalProperties: false } } }
+const tick = () => new Promise(resolve => setImmediate(resolve))
+const check = name => console.log(`PASS ${name}`)
+try {
+  for (const role of Object.keys(local.LOCAL_CREW)) for (const profile of ['compact', 'balanced']) for (const half of [true, false]) {
+    assert.ok(prebuiltAppConfig.model_list.some(model => model.model_id === local.localModelId(role, profile, half)), `Published model must exist for ${role}/${profile}/${half}`)
+  }
+  check('Every crew and GPU precision variant exists in the installed model catalogue')
+  assert.equal(local.routeLocalTask(request('Debug my TypeScript component')), 'code')
+  assert.equal(local.routeLocalTask(request('Write a letter')), 'writing')
+  assert.equal(local.routeLocalTask(request('Solve this equation')), 'reasoning')
+  assert.equal(local.routeLocalTask(request('Hello')), 'conversation')
+  assert.match(local.prepareLocalMessages(request('Hello', { assistantName: 'Rocky' }))[0].content, /^You are Rocky,/)
+  const structuredPrompt = local.prepareLocalMessages(request('Write a letter', { jsonSchema: { type: 'object' }, deliberate: true }))[0].content
+  assert.doesNotMatch(structuredPrompt, /You are Nalu/)
+  assert.match(structuredPrompt, /sender identity supplied/)
+  assert.match(structuredPrompt, /matching this schema/)
+  assert.throws(() => local.prepareLocalMessages(request([{ type: 'image_url', image_url: { url: 'data:image/png;base64,fixture' } }])), /vision model/)
+  check('Task routing and explicit unsupported-input errors')
+  await assert.rejects(local.requestChat(JSON.stringify(request())), /Set up your on-device/)
+  assert.equal(control.reloads.length, 0)
+  check('Default chat requires device setup and never falls back to cloud')
+  local.setLocalPreferences({ enabled: true, profile: 'balanced' })
+  const normal = await answer(request())
+  assert.equal(normal.text, '4'); assert.equal(normal.error, undefined); assert.equal(control.resets, 1)
+  control.next = ['<th', 'ink>', '\n', '</thi', 'nk>', '\n4']
+  assert.equal((await answer(request())).text, '4')
+  check('Real SSE contract, clean template output, and cleared conversation cache')
+  const template = new local.LocalTextFilter()
+  assert.equal(template.push('<thi'), ''); assert.equal(template.push('nk>unfinished'), '')
+  assert.throws(() => template.push('', true), /stopped before/)
+  const prefixed = new local.LocalTextFilter(true)
+  assert.equal(prefixed.push('private assessment'), '')
+  assert.equal(prefixed.push('</thi'), '')
+  assert.equal(prefixed.push('nk>\n\n{"passed":true}'), '{"passed":true}')
+  control.next = [JSON.stringify({ message: '', actions: [{ name: 'sum', arguments: { a: 2, b: 3 } }] })]
+  const called = await answer(request('Add two numbers', { tools: [tool] }))
+  assert.equal(called.toolCalls.length, 1); assert.deepEqual(JSON.parse(called.toolCalls[0].function.arguments), { a: 2, b: 3 })
+  control.next = [JSON.stringify({ message: '', actions: [{ name: 'sum', arguments: { a: '2', b: 3 } }] })]
+  const malformed = await answer(request('Add two numbers', { tools: [tool] }))
+  assert.equal(malformed.toolCalls.length, 0); assert.match(malformed.error, /invalid action arguments/)
+  control.next = [JSON.stringify({ message: '', actions: [{ name: 'not_allowed', arguments: {} }] })]
+  assert.equal((await answer(request('Add two numbers', { tools: [tool] }))).toolCalls.length, 0)
+  control.reason = 'length'; control.next = ['{"message":"","actions":[']
+  assert.equal((await answer(request('Add two numbers', { tools: [tool] }))).toolCalls.length, 0)
+  control.reason = 'stop'
+  check('Only complete, allowlisted, schema-valid local actions reach the agent loop')
+  const webTool = { ...tool, function: { ...tool.function, name: 'web_search' } }
+  control.next = [JSON.stringify({ message: '', actions: [{ name: 'web_search', arguments: { a: 1, b: 2 } }] })]
+  const disabledWeb = await answer(request('Search the web', { tools: [webTool, tool], webSearch: false }))
+  assert.equal(disabledWeb.toolCalls.length, 0)
+  assert.match(disabledWeb.error, /invalid action arguments/)
+  assert.ok(!JSON.stringify(control.inputs.at(-1)).includes('web_search'))
+  check('Turning web search off removes network tools from both model context and executable actions')
+  control.next = ['Done']
+  await answer(request('Hello'))
+  await answer(request('Write a letter'))
+  assert.match(control.reloads.at(-1), /Qwen3.5-4B/)
+  const loadedWriter = control.reloads.length
+  await answer(request('Solve this equation'))
+  assert.equal(control.reloads.length, loadedWriter, 'Writer and thinker share one GPU load, with separate cleared contexts')
+  await answer(request('Debug this TypeScript code'))
+  assert.match(control.reloads.at(-1), /Qwen2.5-Coder-3B/); assert.ok(control.unloaded > 0)
+  check('Specialist switches unload the previous GPU model')
+  let release
+  control.holdToken = new Promise(resolve => { release = resolve })
+  const abort = new AbortController(), held = answer(request('Hello'), abort.signal)
+  await tick(); await tick(); abort.abort()
+  await Promise.race([held, new Promise((_, reject) => setTimeout(() => reject(new Error('Cancellation stalled')), 1000))])
+  control.holdToken = null; release()
+  assert.ok(control.terminated > 0)
+  assert.equal((await answer(request('Hello'))).text, 'Done')
+  check('Cancellation interrupts a stalled model and the next session still works')
+  const originalTimeout = AbortSignal.timeout, deadline = new AbortController()
+  try {
+    AbortSignal.timeout = duration => duration === 180000 ? deadline.signal : originalTimeout(duration)
+    control.holdToken = new Promise(resolve => { release = resolve })
+    const stalled = answer(request('A stalled local generation'))
+    await tick(); await tick(); deadline.abort(new DOMException('Timed out', 'TimeoutError'))
+    const timed = await Promise.race([stalled, new Promise((_, reject) => setTimeout(() => reject(new Error('Generation deadline stalled')), 1000))])
+    assert.match(timed.error, /took too long/); assert.equal(timed.toolCalls.length, 0)
+  } finally { AbortSignal.timeout = originalTimeout; control.holdToken = null; release() }
+  assert.equal((await answer(request('Hello after timeout'))).text, 'Done')
+  check('Generation deadlines stop stalled GPU work and leave the next request usable')
+  control.holdToken = new Promise(resolve => { release = resolve })
+  const oldAccount = answer(request('Private account A text'))
+  await tick(); await tick(); storage.set('nalu-token', 'account-b'); local.resetLocalAI()
+  const stale = await oldAccount
+  assert.equal(stale.text, ''); assert.equal(stale.toolCalls.length, 0)
+  control.holdToken = null; release()
+  assert.equal((await answer(request('Hello account B'))).text, 'Done')
+  check('Account changes suppress stale output, clear GPU state, and unblock new work')
+  const document = { title: 'Thank you', subtitle: '', cover: '', blocks: [{ type: 'paragraph', text: 'Dear Jordan, thank you for hosting the design review.' }] }
+  control.responses = [[JSON.stringify(document)], [JSON.stringify({ assessment: "The draft matches the supplied facts and instructions.", issues: [], passed: true })]]
+  const doc = await local.handleLocalAIRequest('/api/doc', JSON.stringify({ prompt: 'Thank Jordan', token: 'do-not-pass-to-model' }))
+  assert.equal(doc.status, 200); assert.deepEqual((await doc.json()).blocks, document.blocks)
+  assert.ok(!JSON.stringify(control.inputs.at(-1)).includes('do-not-pass-to-model'))
+  assert.equal(control.inputs.at(-1).extra_body.enable_thinking, false)
+  assert.equal(control.inputs.at(-1).response_format.type, 'json_object')
+  assert.equal(control.lastConfig.conv_config.role_empty_sep, '\n<think>\n')
+  assert.deepEqual(control.lastConfig.conv_config.stop_token_ids, [248046, 248044], 'Template adjustment retains the published Qwen3.5 stop-token correction')
+  control.next = ['{"blocks":[]}']
+  const badDoc = await local.handleLocalAIRequest('/api/doc', JSON.stringify({ prompt: 'Edit this letter', prevDoc: JSON.stringify(document) }))
+  assert.equal(badDoc.status, 503); assert.equal((await badDoc.json()).previousWorkPreserved, true)
+  check('Local artifact generation validates formats, omits credentials, and preserves prior work on failure')
+  const email = { to: '', subject: 'Thank you', body: 'Dear Jordan, thank you for hosting yesterday’s design review.' }
+  const badEmail = { ...email, body: email.body + ' I look forward to planning our next meeting.' }
+  const issue = { quote: 'I look forward to planning our next meeting.', reason: 'The request forbids invented next steps.' }
+  const brief = { prompt: 'Write a short thank-you email to Jordan for hosting yesterday’s design review. Do not invent any next steps.' }
+  assert.ok(local.artifactFidelityIssues(brief, badEmail).length)
+  assert.ok(local.artifactFidelityIssues(brief, { ...email, to: 'invented@example.test' }).some(issue => /recipient/.test(issue.reason)))
+  assert.equal(local.artifactFidelityIssues({ prompt: 'Email dana@example.test' }, { ...email, to: 'dana@example.test' }).length, 0)
+  const branded = { ...email, body: email.body + '\nBest regards,\nNalu' }
+  assert.ok(local.artifactFidelityIssues(brief, branded).some(issue => /branding/.test(issue.reason)))
+  assert.equal(local.artifactFidelityIssues({ prompt: 'Write an announcement about Nalu' }, branded).length, 0)
+  assert.equal(local.artifactFidelityIssues({ prompt: 'Shorten this email', prevEmail: branded }, branded).length, 0, 'Existing sender identity must survive revisions')
+  assert.throws(() => local.checkedAudit({ passed: true, issues: [issue] }, badEmail), /inconsistent/)
+  assert.throws(() => local.checkedAudit({ passed: false, issues: [{ quote: 'not in the artifact', reason: 'invented review' }] }, email), /inconsistent/)
+  control.responses = [[JSON.stringify(badEmail)], [JSON.stringify({ assessment: "The draft adds an unsupported future meeting.", issues: [issue], passed: false })], [JSON.stringify(email)], [JSON.stringify({ assessment: "The draft matches the supplied facts and instructions.", issues: [], passed: true })]]
+  const corrected = await local.handleLocalAIRequest('/api/email', JSON.stringify(brief))
+  assert.equal(corrected.status, 200); assert.equal((await corrected.json()).body, email.body)
+  assert.equal(control.responses.length, 0)
+  assert.equal(control.inputs.at(-1).extra_body.enable_thinking, false, 'Correction checks use bounded schema-constrained review')
+  assert.equal(control.inputs.at(-1).response_format.type, 'json_object')
+  control.responses = [[JSON.stringify(badEmail)], [JSON.stringify({ assessment: "The draft adds an unsupported future meeting.", issues: [issue], passed: false })], [JSON.stringify(badEmail)]]
+  const refused = await local.handleLocalAIRequest('/api/email', JSON.stringify(brief))
+  assert.equal(refused.status, 503); assert.equal((await refused.json()).previousWorkPreserved, true)
+  check('Independent quote-checked reviews correct observed instruction violations and reject a still-invalid revision')
+
+  for (const endpoint of ['/api/image', '/api/video', '/api/tts', '/api/transcribe']) {
+    const media = await local.handleLocalAIRequest(endpoint, '{}')
+    assert.equal(media.status, 503); assert.match((await media.json()).error, /cloud provider/)
+  }
+  assert.equal(local.needsLocalAI('/api/web', 'POST', '{"action":"search"}'), false)
+  assert.equal(local.needsLocalAI('/api/web', 'POST', '{"action":"research"}'), false)
+  assert.equal(local.needsLocalAI('/api/web', 'POST', '{"action":"intent"}'), true)
+  assert.equal(local.needsLocalAI('/api/data', 'POST', '{"action":"load"}'), false)
+  assert.equal(local.needsLocalAI('/api/data', 'POST', '{"action":"notes-analyze"}'), true)
+  assert.equal(local.needsLocalAI('/api/data', 'POST', '{"action":"flow-run","mode":"stop"}'), false)
+  assert.equal(local.needsLocalAI('/api/data', 'POST', '{"action":"flow-run","mode":"resume"}'), true)
+  assert.equal(local.needsLocalAI('/api/browser', 'POST', '{"action":"cancel"}'), false)
+  assert.equal(local.needsLocalAI('/api/browser', 'POST', '{"action":"run"}'), true)
+  check('Cloud generation is intercepted while storage, research, and cancellation keep their existing API')
+  navigator.gpu = undefined
+  await assert.rejects(local.checkLocalDevice(), /WebGPU/)
+  const failed = await answer(request('Hello'))
+  assert.match(failed.error, /WebGPU/); assert.equal(failed.toolCalls.length, 0)
+  check('Unsupported hardware fails explicitly without a network fallback')
+} finally {
+  local.resetLocalAI(); globalThis.fetch = realFetch
+  await rm(directory, { recursive: true, force: true })
+}

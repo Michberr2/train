@@ -243,5 +243,93 @@ await regression('ordinary group sends persist one real worker reply per teammat
   assert.equal((await teamRequest(targeted)).code, 200)
   assert.deepEqual((await store.read('carol')).jobs.filter(job => job.requestId.startsWith(`reply:${targeted.requestId}:`)).map(job => job.speaker), ['Milo'])
 })
+await regression('device jobs use no quota/provider wake, stay out of cloud claims, and complete through owner-scoped fenced receipts', async () => {
+  db.db.exec("INSERT INTO nalu_users VALUES('device-owner')")
+  const priorBackend = fixture.backend
+  fixture.backend = () => ({ ...priorBackend(), userId: async token => token === 'device-token' ? 'device-owner' : ({ 'alice-token': 'alice', 'bob-token': 'bob', 'carol-token': 'carol' })[token] || null })
+  const local = body => request({ ...body, executionMode: 'device' }, 'device-token')
+  const quota = fixture.reservations, wakes = fixture.wakes.length
+  const made = await local({ action: 'create', requestId: 'device-project-01', title: 'Local team', brief: 'Shared local brief.' })
+  assert.equal(made.code, 200)
+  const id = made.body.projectId
+  const sendLocal = (thread, requestId, content) => local({ action: 'send', projectId: id, thread, requestId, content })
+  fixture.quotaAllowed = false
+  assert.equal((await sendLocal('group', 'device-group-001', '@Nalu Shared launch fact.')).code, 200)
+  assert.equal(fixture.reservations, quota); assert.equal(fixture.wakes.length, wakes)
+  assert.equal(await store.claim('device-owner'), null)
+  assert.ok(!(await store.dueOwners(100)).includes('device-owner'), 'real SQLite scheduler excludes device-only queues')
+  const [one, two] = await Promise.all([local({ action: 'device-claim' }), local({ action: 'device-claim' })])
+  assert.equal(one.code, 200); assert.equal(two.code, 200)
+  const claims = [one.body.deviceJob, two.body.deviceJob].filter(Boolean)
+  assert.equal(claims.length, 1, 'two browsers cannot claim two GPU jobs for the same account')
+  const job = claims[0]
+  assert.ok(!JSON.stringify(one.body.state).includes('leaseToken'))
+  assert.equal(job.thread, 'group')
+  assert.ok(!JSON.stringify(job.context).includes('PRIVATE_CANARY'))
+  assert.equal((await sendLocal('Rocky', 'device-private-01', 'ROCKY_PRIVATE_CANARY')).code, 200)
+  assert.equal((await sendLocal('Milo', 'device-private-02', 'MILO_PRIVATE_CANARY')).code, 200)
+  const completed = { action: 'device-result', jobId: job.id, leaseToken: job.leaseToken, result: { status: 'done', summary: 'Local reply', content: 'A real local reply.' } }
+  assert.equal((await request({ ...completed, executionMode: 'device' }, 'bob-token')).code, 404)
+  assert.equal((await local({ ...completed, leaseToken: 'wrong-token' })).code, 409)
+  assert.equal((await local({ action: 'device-renew', jobId: job.id, leaseToken: job.leaseToken })).code, 200)
+  const saved = await local(completed)
+  assert.equal(saved.code, 200)
+  const repeated = await local(completed)
+  assert.equal(repeated.code, 200); assert.deepEqual(repeated.body, saved.body)
+  assert.equal(saved.body.state.messages.filter(message => message.content === 'A real local reply.').length, 1)
+  assert.equal((await local({ ...completed, result: { ...completed.result, content: 'Changed retry' } })).code, 409)
+  const privateClaim = (await local({ action: 'device-claim' })).body.deviceJob
+  assert.ok(['Rocky', 'Milo'].includes(privateClaim.thread))
+  assert.ok(JSON.stringify(privateClaim.context).includes(`${privateClaim.thread.toUpperCase()}_PRIVATE_CANARY`))
+  assert.ok(!JSON.stringify(privateClaim.context).includes(`${privateClaim.thread === 'Rocky' ? 'MILO' : 'ROCKY'}_PRIVATE_CANARY`))
+  let serverCalls = 0
+  const durable = (await store.read('device-owner')).jobs.find(item => item.id === privateClaim.id)
+  await assert.rejects(executeLeasedSwarmJob(store, 'device-owner', durable, { execute: async () => { serverCalls++; throw Error('must not run') } }), /cannot use a server model/)
+  assert.equal(serverCalls, 0)
+  await local({ action: 'stop', projectId: id, thread: privateClaim.thread })
+  assert.equal((await local({ ...completed, jobId: privateClaim.id, leaseToken: privateClaim.leaseToken })).code, 409)
+  assert.ok(!(await store.read('device-owner')).state.messages.some(message => message.thread === privateClaim.thread && message.content === 'A real local reply.'))
+  const last = (await local({ action: 'device-claim' })).body.deviceJob
+  await store.mutate('device-owner', draft => { draft.jobs.find(item => item.id === last.id).leaseUntil = Date.now() - 1 })
+  await store.claim('device-owner')
+  assert.equal((await store.read('device-owner')).jobs.find(item => item.id === last.id).status, 'running', 'cloud sweeps cannot mutate device leases')
+  assert.equal((await local({ action: 'device-claim' })).body.deviceJob, null)
+  assert.equal((await store.read('device-owner')).jobs.find(item => item.id === last.id).status, 'failed', 'an expired device attempt is not silently replayed')
+  assert.equal((await local({ ...completed, jobId: last.id, leaseToken: last.leaseToken })).code, 409)
+  const added = await local({ action: 'add-task', projectId: id, thread: 'Rocky', requestId: 'device-task-001', title: 'Write a complete checklist.', assignee: 'Rocky' })
+  const task = added.body.state.tasks.find(item => item.requestId === 'device-task-001')
+  await local({ action: 'start-task', projectId: id, taskId: task.id, requestId: 'device-start-001' })
+  const work = (await local({ action: 'device-claim' })).body.deviceJob
+  const text = '- Complete local checklist'
+  const workResult = { status: 'done', summary: 'Checklist ready.', content: text, artifact: { type: 'text', mime: 'text/markdown', filename: 'checklist.md', content: text } }
+  assert.equal((await local({ action: 'device-result', jobId: work.id, leaseToken: work.leaseToken, result: { ...workResult, artifact: { ...workResult.artifact, content: 'Incomplete mismatch' } } })).code, 400)
+  const finished = await local({ action: 'device-result', jobId: work.id, leaseToken: work.leaseToken, result: workResult })
+  assert.equal(finished.code, 200)
+  assert.equal(finished.body.state.tasks.find(item => item.id === task.id).status, 'done')
+  assert.equal(finished.body.state.tasks.find(item => item.id === task.id).progress, 1)
+  await local({ action: 'share-task', projectId: id, taskId: task.id })
+  assert.ok((await store.read('device-owner')).state.messages.some(message => message.thread === 'group' && message.content === text))
+  const docTaskResponse = await local({ action: 'add-task', projectId: id, thread: 'Milo', requestId: 'device-doc-task-01', title: 'Create a document about our launch.', assignee: 'Milo' })
+  const docTask = docTaskResponse.body.state.tasks.find(item => item.requestId === 'device-doc-task-01')
+  await local({ action: 'start-task', projectId: id, taskId: docTask.id, requestId: 'device-doc-start-01' })
+  const handoff = (await local({ action: 'device-claim' })).body.deviceJob
+  const reason = 'Create the document in Studio.'
+  assert.equal((await local({ action: 'device-result', jobId: handoff.id, leaseToken: handoff.leaseToken, result: { status: 'waiting', summary: reason, content: reason, artifact: { type: 'needs-workspace', workspace: 'studio', studioKind: 'document', prompt: handoff.input, reason } } })).code, 200)
+  assert.equal((await local({ action: 'continue-studio', projectId: id, taskId: docTask.id, sourceJobId: handoff.id, requestId: 'device-doc-continue-01' })).code, 200)
+  const studio = (await local({ action: 'device-claim' })).body.deviceJob
+  assert.equal(studio.studio.kind, 'document'); assert.equal(studio.studio.sourceJobId, handoff.id)
+  assert.ok(JSON.stringify(studio.context).includes('MILO_PRIVATE_CANARY'))
+  assert.ok(!JSON.stringify(studio.context).includes('ROCKY_PRIVATE_CANARY'))
+  const payload = { title: 'Launch document', subtitle: '', cover: '', blocks: [{ type: 'paragraph', text: 'A complete local launch document.' }] }
+  const studioSaved = await local({ action: 'device-result', jobId: studio.id, leaseToken: studio.leaseToken, result: { payload } })
+  assert.equal(studioSaved.code, 200)
+  const savedTask = studioSaved.body.state.tasks.find(item => item.id === docTask.id)
+  assert.equal(savedTask.status, 'done'); assert.equal(savedTask.artifact.executionId, studio.id)
+  const reopened = await local({ action: 'artifact', projectId: id, taskId: docTask.id, executionId: studio.id })
+  assert.equal(reopened.code, 200); assert.deepEqual(reopened.body.artifact.payload, payload)
+  assert.equal((await local({ action: 'device-result', jobId: studio.id, leaseToken: studio.leaseToken, result: { payload } })).code, 200)
+  assert.equal(fixture.reservations, quota); assert.equal(fixture.wakes.length, wakes)
+  fixture.quotaAllowed = true
+})
 if (failures.length) { console.error(`${failures.length} outstanding Swarm regression(s): ${failures.join('; ')}`); process.exitCode = 1 }
 delete globalThis.__swarmRoutes

@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@mlc-ai/web-llm": "0.2.87",
     "@types/three": "^0.184.1",
     "docx": "^9.7.1",
     "exceljs": "^4.4.0",

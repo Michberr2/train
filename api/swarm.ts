@@ -6,6 +6,7 @@ import { reserveDailyQuota, type QuotaResult } from './_limits'
 import { SwarmStore, SwarmStoreLimitError } from './_swarmStore'
 import { applySwarmAction, createdProjectId, readSwarmArtifact, SwarmError } from './_swarm'
 import { runSwarmOwner } from './_swarmWorker'
+import { DEVICE_SWARM_ACTIONS, runSwarmDeviceAction } from './_swarmDevice'
 
 export default async function handler(req: any, res: any) {
   if (cors(req, res)) return
@@ -14,14 +15,16 @@ export default async function handler(req: any, res: any) {
   const token = readToken(req)
   if (!token) return res.status(401).json({ error: 'Sign in to use Swarm.' })
   const body = (typeof req.body === 'string' ? safeJson(req.body) : req.body) || {}
-  if (Array.isArray(body) || typeof body !== 'object' || Buffer.byteLength(JSON.stringify(body)) > (body.action === 'update-artifact' ? 650000 : 32000)) return res.status(400).json({ error: 'Invalid Swarm request.' })
+  if (Array.isArray(body) || typeof body !== 'object' || Buffer.byteLength(JSON.stringify(body)) > (['update-artifact', 'device-result'].includes(body.action) ? 650000 : 32000)) return res.status(400).json({ error: 'Invalid Swarm request.' })
   let backend: ConnectionBackend | undefined
   let quota: QuotaResult | undefined
   try {
     backend = connectionBackend(); await backend.connect()
     const owner = await backend.userId(token)
     if (!owner) return res.status(401).json({ error: 'Sign in to use Swarm.' })
-    const store = new SwarmStore(backend.client), before = await store.read(owner)
+    const store = new SwarmStore(backend.client)
+    if (DEVICE_SWARM_ACTIONS.has(body.action)) return res.status(200).json(await runSwarmDeviceAction(store, owner, body))
+    const before = await store.read(owner)
     if (body.action === 'artifact') {
       const { artifact, revision } = readSwarmArtifact(before, body)
       return res.status(200).json({ artifact, revision })
@@ -31,7 +34,7 @@ export default async function handler(req: any, res: any) {
       const preview = structuredClone(before), acceptedAt = Date.now()
       applySwarmAction(preview, owner, body, acceptedAt)
       const priorJobs = new Set(before.jobs.map(job => job.id)), newJobs = preview.jobs.filter(job => !priorJobs.has(job.id))
-      if (newJobs.length) {
+      if (newJobs.length && body.executionMode !== 'device') {
         quota = await reserveDailyQuota(req, 'chat', { anonPerDay: 0, userPerDay: Number(process.env.NALU_CHAT_USER_PER_DAY ?? 6000) })
         if (!quota.ok) {
           // Newer quota providers distinguish a metering outage from a used-up
@@ -50,7 +53,7 @@ export default async function handler(req: any, res: any) {
       })
       if (quota && !created) await quota.release().catch(() => {})
     }
-    if (snapshot.jobs.some(job => job.status === 'queued' || (job.status === 'running' && (job.leaseUntil || 0) < Date.now()))) {
+    if (body.executionMode !== 'device' && snapshot.jobs.some(job => job.executionMode !== 'device' && (job.status === 'queued' || (job.status === 'running' && (job.leaseUntil || 0) < Date.now())))) {
       waitUntil(runSwarmOwner(owner).catch(() => { console.error('Swarm worker wake-up failed; durable work remains available to the scheduler.') }))
     }
     return res.status(200).json({ state: snapshot.state, revision: snapshot.revision, projectId: createdProjectId(owner, body) })

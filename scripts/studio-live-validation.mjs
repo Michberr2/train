@@ -1,7 +1,7 @@
 // Offline diagnostics for a generic memo that supplies no organizational
 // commitments. These are focused smoke checks, not a factual-grounding oracle.
 // A planning horizon ("priorities for the coming week") is not a deadline.
-import { memoCommitments } from '../api/_memoCommitments.ts'
+import { memoCommitments } from '../shared/memoCommitments.ts'
 
 export function memoCommitmentFindings(text) {
   const promisedActions = [...new Set(memoCommitments(String(text)).map((finding) => finding.text))]

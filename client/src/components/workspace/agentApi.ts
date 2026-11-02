@@ -373,8 +373,8 @@ export async function streamChat(
   let res: Response
   try {
     res = await requestChat(JSON.stringify({ messages, model, useMemory: !!wantMemory, ...(tools && tools.length ? { tools } : {}), ...(context || {}), ...(think && think > 0 ? { think: true, thinkLevel: think } : {}), ...(specialist ? { specialist } : {}), ...(() => { const s = getModelSettings(); return { reasoning: s.reasoning, maxTokens: s.maxTokens, webSearch: overrides?.webSearch ?? s.webSearch, ...(overrides?.researchPrompt !== undefined ? { researchPrompt: overrides.researchPrompt } : {}), ...(s.systemPrompt && s.systemPrompt.trim() ? { systemPrompt: s.systemPrompt } : {}) } })(), ...(wantMemory ? (() => { try { const mem = buildChatMemory(messages); return mem ? { memory: mem } : {} } catch { return {} } })() : {}) }), signal)
-  } catch {
-    const error = signal?.aborted ? undefined : 'Couldn’t reach Nalu — check your connection and try again.'
+  } catch (cause) {
+    const error = signal?.aborted ? undefined : cause instanceof Error ? cause.message : 'Nalu could not start the local model. Open Settings → On-device AI.'
     if (error) onError?.(error)
     return { text: '', reasoning: '', autoResearch: false, toolCalls: [], error }
   }

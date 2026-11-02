@@ -23,7 +23,7 @@ test('transport uses explicit account authorization and rejects fixture/malforme
   const result = await requestSwarm(account, { action: 'list' }, new AbortController().signal, () => account, async (url, options) => { captured = { url, options }; return response(base()) })
   assert.equal(captured.url, '/api/swarm')
   assert.equal(captured.options.headers.Authorization, 'Bearer token-one')
-  assert.deepEqual(JSON.parse(captured.options.body), { action: 'list' })
+  assert.deepEqual(JSON.parse(captured.options.body), { action: 'list', executionMode: 'device' })
   assert.equal(result.state.mode, 'live')
   assert.equal(isLiveSwarmState({ ...base(), mode: 'sample' }), false)
   assert.equal(isLiveSwarmState({ ...base(), tasks: [task('bad', { projectId: 'other-owner' })] }), false)

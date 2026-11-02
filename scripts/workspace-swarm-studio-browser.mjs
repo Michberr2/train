@@ -35,7 +35,7 @@ try {
  server = await createServer({ root:clientRoot, configFile:false, cacheDir:path.join(fixture,'vite-cache'), resolve:{dedupe:['react','react-dom']}, plugins:[react(),{name:'swarm-test-entry',configureServer(server){server.middlewares.use(async(req,res,next)=>{if(req.url!=='/__swarm-test')return next();res.setHeader('Content-Type','text/html');res.end(await server.transformIndexHtml('/__swarm-test',`<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"/></head><body><div id="root"></div><script type="module" src="/@fs/${entry}"></script></body></html>`))})}}],server:{host:'127.0.0.1',port:0,fs:{allow:[root,fixture,'/Users/michaelberryii/train/node_modules']}} })
  await server.listen(); console.log('Local fixture server ready'); const address=server.httpServer.address(), origin=`http://127.0.0.1:${address.port}`
  browser=await chromium.launch(); console.log('Chromium ready'); const context=await browser.newContext({viewport:{width:1280,height:900}})
- await context.addInitScript(()=>{if(window!==top)return;localStorage.setItem('nalu-token','browser-token');localStorage.setItem('nalu-data-owner','browser-owner')})
+ await context.addInitScript(()=>{if(window!==top)return;localStorage.setItem('nalu-token','browser-token');localStorage.setItem('nalu-data-owner','browser-owner');localStorage.setItem('device-local-ai-v1',JSON.stringify({enabled:true,profile:'balanced'}))})
  await context.route('**/*',async route=>{
   const request=route.request(),url=new URL(request.url())
   if(url.origin!==origin){if(url.protocol==='http:'||url.protocol==='https:')return route.abort();return route.continue()}

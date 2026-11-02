@@ -3,6 +3,7 @@ import { motion, useInView, useMotionValueEvent, useScroll, useSpring, useTransf
 import { ArrowDown, Braces, Check, FileText, Layers, Terminal } from 'lucide-react'
 import Scenery from '../Scenery'
 import NaluMark from './NaluMark'
+import BuildCopy from './BuildCopy'
 
 const steps = [
   { name: 'Ingest', description: 'Text, voice, and files become task input. Nalu selects relevant conversations, project data, and saved work from your account to assemble the context.', detail: 'Text + voice + files → account-scoped context', status: 'Input normalized / context assembled' },
@@ -114,7 +115,7 @@ export default function NeuralCore({ container, reduced }: { container: RefObjec
       <div className="nalu-scene"><Scenery src="/images/bg-sandy-beach.png" /></div><div className="nalu-scene-shade" /><div className="nalu-scene-grid" aria-hidden="true" />
       <div className="nalu-process-content">
         <div className="nalu-section-topline"><span>01 / SYSTEM ARCHITECTURE</span><span className="nalu-scroll-direction">{staticMode ? 'CHOOSE A STAGE TO EXPLORE' : 'SCROLL THROUGH THE RUNTIME'} <ArrowDown size={12} /></span></div>
-        <h2 id="nalu-process-title">The Nalu Core.</h2>
+        <h2 id="nalu-process-title"><BuildCopy text="The Nalu Core." /></h2>
         <div className="nalu-process-layout">
           <div className="nalu-process-steps">{steps.map((step, index) => <button key={step.name} className={`nalu-step ${active === index ? 'is-active' : ''}`} onClick={() => selectStep(index)} aria-current={active === index ? 'step' : undefined} aria-controls="nalu-step-detail"><span className="nalu-step-number">0{index + 1}</span><span>{step.name}</span>{active === index && <span className="nalu-step-description">{step.description}</span>}</button>)}</div>
           <div className="nalu-process-visual"><CoreDiagram active={active} onSelect={selectStep} progress={progress} reduced={staticMode} /><div id="nalu-step-detail" className="nalu-process-detail"><span>EXECUTION SEQUENCE</span><p>{steps[active].detail}</p><div className="nalu-process-progress" aria-hidden="true">{steps.map((step, index) => <i key={step.name} className={active >= index ? 'is-active' : ''} />)}</div><p className="nalu-process-mobile-description">{steps[active].description}</p></div></div>

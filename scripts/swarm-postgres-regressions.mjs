@@ -167,6 +167,27 @@ try {
   assert.equal((await admin.query("SELECT value FROM nalu_user_data WHERE user_id='alice' AND key='nalu-chats'")).rows[0].value, 'ordinary-chat-canary')
   check('actual Studio actions persist idempotent continuation and artifact CAS without changing ordinary chats')
 
+  await admin.query("INSERT INTO nalu_users VALUES('local-user')")
+  const localAction = body => store.mutate('local-user', draft => applySwarmAction(draft, 'local-user', { ...body, executionMode: 'device' }, Date.now()))
+  const localProject = (await localAction({ action: 'create', requestId: 'pg-local-project-01', title: 'Local team', brief: 'Local context' })).state.projects[0].id
+  await localAction({ action: 'send', projectId: localProject, thread: 'group', requestId: 'pg-local-send-001', content: '@Nalu @Rocky reply locally.' })
+  assert.ok(!(await store.dueOwners(100)).includes('local-user'))
+  assert.equal(await store.claim('local-user'), null)
+  const localClaims = (await Promise.all(stores.map(store => store.claim('local-user', undefined, 1, 'device')))).filter(Boolean)
+  assert.equal(localClaims.length, 1)
+  assert.equal(localClaims[0].executionMode, 'device')
+  await assert.rejects(store.mutate('local-user', draft => { draft.jobs[0].executionMode = 'cloud' }), /cannot be rewritten/)
+  await store.mutate('local-user', draft => { draft.jobs.find(job => job.id === localClaims[0].id).leaseUntil = Date.now() - 1 })
+  assert.equal(await store.claim('local-user'), null)
+  assert.equal((await store.read('local-user')).jobs.find(job => job.id === localClaims[0].id).status, 'running')
+  const nextLocal = await store.claim('local-user', undefined, 1, 'device')
+  assert.ok(nextLocal && nextLocal.id !== localClaims[0].id)
+  assert.equal((await store.read('local-user')).jobs.find(job => job.id === localClaims[0].id).status, 'failed')
+  await store.mutate('local-user', draft => applySwarmAction(draft, 'local-user', { action: 'send', projectId: localProject, thread: 'Milo', requestId: 'pg-legacy-send-01', content: 'Legacy caller transport.' }, Date.now()))
+  assert.ok((await store.dueOwners(100)).includes('local-user'))
+  assert.equal((await store.claim('local-user')).executionMode, undefined)
+  check('real PostgreSQL JSON scheduler filters and concurrent claims isolate device work, leases, immutable mode, and legacy callers')
+
   await admin.query('DELETE FROM nalu_users WHERE id=$1', ['alice'])
   for (const table of ['accounts', 'projects', 'rooms', 'messages', 'tasks', 'task_threads', 'turns', 'jobs']) {
     assert.equal(Number((await admin.query(`SELECT COUNT(*) AS n FROM nalu_swarm_${table} WHERE owner_id=$1`, ['alice'])).rows[0].n), 0)

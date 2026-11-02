@@ -25,14 +25,14 @@ export function isLiveSwarmState(value: unknown): value is SwarmState {
     return new Set(rows.map(row => row.id)).size === rows.length
   })
 }
-async function requestSwarmValue(account: SwarmAccount, body: Record<string, unknown>, signal: AbortSignal, readAccount: () => SwarmAccount | null, request: typeof fetch = fetch): Promise<unknown> {
+export async function requestSwarmValue(account: SwarmAccount, body: Record<string, unknown>, signal: AbortSignal, readAccount: () => SwarmAccount | null, request: typeof fetch = fetch): Promise<unknown> {
   const current = () => {
     if (!sameSwarmAccount(account, readAccount())) throw new SwarmSessionChanged()
     if (signal.aborted) throw new SwarmRequestError('The request was not confirmed. Please try again.', 0, true)
   }
   current()
   let response: Response
-  try { response = await request('/api/swarm', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${account.token}` }, body: JSON.stringify(body), signal }) }
+  try { response = await request('/api/swarm', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${account.token}` }, body: JSON.stringify({ ...body, executionMode: 'device' }), signal }) }
   catch { current(); throw new SwarmRequestError('The request was not confirmed. Check your connection and try again.', 0, true) }
   current()
   const value: unknown = await response.json().catch(() => null)

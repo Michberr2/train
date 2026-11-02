@@ -45,6 +45,8 @@ export class SwarmClient {
     this.snapshot = { ...emptySwarmSnapshot, state: emptyState(), preferences: readPreferences(options.storage, this.storageKey), sendingRooms: [], busyTaskIds: [] }
   }
   getSnapshot = () => this.snapshot
+  receiveDeviceUpdate = (response: SwarmResponse) => this.apply(response)
+  reportDeviceError = (error: string) => { if (this.isCurrent()) this.patch({ error }) }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   isCurrent = () => !this.disposed && sameSwarmAccount(this.account, this.options.readAccount())
   hasPendingRequests = () => this.writes.size > 0 || this.snapshot.preferences.intents.length > 0

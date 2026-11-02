@@ -34,7 +34,7 @@ type Company = { what?: string; mission?: string; notes?: string }
 type WorkCheckpoint = { fingerprint: string; outputs?: Array<string | null>; evidence?: string; scratch?: string[]; step?: number; action?: ReturnType<typeof parsePlannerActionSrv>; final?: string }
 type FlowRun = { status: 'running' | 'done' | 'error' | 'stuck' | 'stopped' | 'awaiting'; step?: number; total?: number; startedAt?: number; updatedAt?: number; heartbeat?: number; node?: string; nodeLabel?: string; error?: string; cutEdges?: string[]; yielded?: boolean; serverManaged?: boolean; remoteTaskId?: string; checkpoints?: Record<string, WorkCheckpoint>; pendingEffect?: { nodeId: string; startedAt: number } }
 type Flow = {
-  id: string; name?: string; nodes?: PNode[]; edges?: Edge[]
+  id: string; name?: string; nodes?: PNode[]; edges?: Edge[]; executionMode?: 'device' | 'cloud'
   schedule?: 'manual' | 'hourly' | 'daily' | 'weekly' | 'continuous' | 'members'
   time?: string; timeZone?: string; enabled?: boolean; lastRun?: number; results?: Record<string, string>; company?: Company; run?: FlowRun
   refDoc?: ReferenceDocument // user-attached reference doc for every agent
@@ -72,7 +72,7 @@ const ROLE_TITLES: Record<string, string> = {
 
 // Is this flow due to run right now?
 function isDue(f: Flow, now: number): boolean {
-  if (!f.enabled || f.schedule === 'manual' || !f.nodes?.length || f.run?.status === 'awaiting' || f.run?.pendingEffect) return false
+  if (f.executionMode === 'device' || !f.enabled || f.schedule === 'manual' || !f.nodes?.length || f.run?.status === 'awaiting' || f.run?.pendingEffect) return false
   return isScheduleDue(f.schedule || 'manual', f.time || '08:00', f.lastRun || 0, new Date(now), f.timeZone || 'UTC')
 }
 
@@ -619,6 +619,7 @@ async function runOneFlowUnlocked(
   const idx = flows.findIndex((f) => String(f.id) === String(flowId))
   if (idx < 0) return { ok: false, error: 'pipeline not found', code: 404 }
   const f = flows[idx]
+  if (f.executionMode === 'device' && mode !== 'stop') return { ok: false, error: 'This workflow runs on the user’s computer. Open Nalu in the browser to run or continue it; no cloud model was started.', code: 409 }
   if (source.worker) {
     const worker = await pipelineWorkerState(client, userId, flowId, source.worker)
     if (!worker || mode !== 'stop' && (worker.status !== 'running' || worker.mode !== mode)) return { ok: false, error: 'This worker no longer owns the pipeline task.', code: 409 }
@@ -720,7 +721,7 @@ async function runOneFlowUnlocked(
     if (f.run?.remoteTaskId && await pipelineTaskCancelled(client, userId, flowId, f.run.remoteTaskId)) return true
     if (client instanceof CloudflareStore && !await new CloudflareFlows(client).renew(userId, flowId, source.lease!)) return true
     const current = deepParseFlows(await readFlows(client, userId))?.find((flow) => String(flow.id) === String(flowId))
-    return !current || current.run?.status === 'stopped' || (!!current.run?.startedAt && current.run.startedAt !== startedAt)
+    return !current || current.executionMode === 'device' || current.run?.status === 'stopped' || (!!current.run?.startedAt && current.run.startedAt !== startedAt)
   }
   const budget = flowBudget(source.deadlineMs ?? Date.now() + RUN_WORK_MS)
   let outcome: Awaited<ReturnType<typeof runFlow>>
@@ -767,6 +768,7 @@ async function runDueWithinDeadline(client: MinimalClient, deadlineMs: number): 
     const value = cloudflare ? await scanWithinDeadline(deadlineMs, () => cloudflare.read(String(row.user_id))) : row.value
     usersChecked++
     for (const f of deepParseFlows(value) || []) {
+      if (f.executionMode === 'device') continue
       if (deadlineMs - Date.now() < 1000) return { usersChecked, flowsRan, deferred: true }
       if (!isDue(f, now) && !isOrphanedRun(f, now)) continue
       const result = await runOneFlow(client, String(row.user_id), f.id, 'run', false, { scheduledAt: now, deadlineMs })

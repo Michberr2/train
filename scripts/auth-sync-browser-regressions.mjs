@@ -45,7 +45,8 @@ async function setup(token = 'A', handler = async () => null) {
   const page = await context.newPage()
   page.on('pageerror', error => errors.push(error.message))
   await page.goto(`${base}/__auth-test`)
-  await page.waitForFunction(() => window.authFixture)
+  try { await page.waitForFunction(() => window.authFixture) }
+  catch (error) { throw new Error(`Auth fixture did not initialize: ${errors.join('; ') || 'no page errors captured'}`, { cause: error }) }
   return { context, page, calls, errors, current: page.getByLabel('Current user') }
 }
 async function signin(page, account) {

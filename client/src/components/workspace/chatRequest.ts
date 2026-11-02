@@ -1,5 +1,13 @@
 /** Retry one failed connection before any response bytes or tool calls are read. */
 export async function requestChat(body: string, signal?: AbortSignal): Promise<Response> {
+  const owner = localStorage.getItem('nalu-token')
+  const { requestLocalChat } = await import('../../lib/localAI')
+  if (signal?.aborted || owner !== localStorage.getItem('nalu-token')) throw new DOMException('Cancelled', 'AbortError')
+  return requestLocalChat(JSON.parse(body), signal)
+}
+
+/** Explicit legacy cloud transport, retained only for compatibility tests. */
+export async function requestCloudChat(body: string, signal?: AbortSignal): Promise<Response> {
   for (let attempt = 0; ; attempt++) {
     try {
       const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal })

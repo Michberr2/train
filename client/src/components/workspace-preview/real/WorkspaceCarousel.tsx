@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import BuildCopy from '../../landing/BuildCopy'
 import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react'
 import './workspace-carousel.css'
 import WorkspaceCoreVisual from './WorkspaceCoreVisual'
@@ -42,7 +43,7 @@ export default function WorkspaceCarousel({ onOpen, onClose, initialView = 'stud
         else move(event.key === 'ArrowLeft' ? -1 : 1)
       }
     }}>
-    <div className="workspace-carousel-heading"><span>YOUR NALU</span><h1>What would you like to do?</h1><p>From your first thought to your finished work.</p></div>
+    <div className="workspace-carousel-heading"><span>YOUR NALU</span><h1><BuildCopy text="What would you like to do?" /></h1><p><BuildCopy text="From your first thought to your finished work." /></p></div>
     <div className="workspace-carousel-stage" onPointerDown={event => { pointer.current = { x: event.clientX, y: event.clientY } }}
       onPointerCancel={() => { pointer.current = null }}
       onPointerUp={event => {
@@ -71,7 +72,7 @@ export default function WorkspaceCarousel({ onOpen, onClose, initialView = 'stud
               {space.view === 'map' ? <WorkspaceMapVisual active={active}/>
                 : space.view === 'agents' ? <WorkspaceCoreVisual view="agents" active={active}/>
                 : <WorkspaceExperienceVisual view={space.view} active={active}/>}
-              <h2>{space.title}</h2><p>{space.description}</p>
+              <h2><BuildCopy text={space.title} /></h2><p><BuildCopy text={space.description} /></p>
             </button>
             {active && <button type="button" className="workspace-carousel-open" onClick={() => { if (!suppressClick.current) onOpen(space.view) }}>
               {space.action}<ArrowRight size={17}/>
