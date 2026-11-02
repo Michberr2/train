@@ -18,7 +18,7 @@ const visit = node => {
 }
 visit(source)
 assert.ok(handler, 'MapPanel must expose its real search handler to the integration harness')
-const names = ['mapRef', 'ready', 'authErr', 'searchRequests', 'clearAIShapes', 'saveShapes', 'plot', 'infoRef', 'setResults', 'setSel', 'setLoading', 'setErr', 'setAnswer', 'setComparison', 'LAYER_KEYWORDS', 'LAYERS', 'CATEGORIES', 'enableLayer', 'legacySearch', 'fetch', 'drawAIShapes', 'runPlaces', 'moveGlobe', 'fitGlobe', 'geocodeTo']
+const names = ['workCallback', 'mapRef', 'ready', 'authErr', 'searchRequests', 'clearAIShapes', 'saveShapes', 'plot', 'infoRef', 'setResults', 'setSel', 'setLoading', 'setErr', 'setAnswer', 'setComparison', 'LAYER_KEYWORDS', 'LAYERS', 'CATEGORIES', 'enableLayer', 'legacySearch', 'fetch', 'drawAIShapes', 'runPlaces', 'moveGlobe', 'fitGlobe', 'geocodeTo']
 const temp = await mkdtemp(join(root, 'scripts', '.map-search-'))
 const flush = async () => { for (let i = 0; i < 100; i++) await Promise.resolve() }
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no }); return { promise, resolve, reject } }
@@ -34,10 +34,11 @@ try {
   const { createSearch, MapRequestScope } = await import(pathToFileURL(modulePath).href)
   const plan = { answer: 'Orlando map answer', layers: [], shapes: [], search: 'coffee in Orlando', center: { lat: 28.54, lng: -81.38 }, zoom: 12 }
   const make = (options = {}) => {
-    const state = { loading: false, answer: '', error: '', results: [], events: [] }
+    const state = { loading: false, answer: '', error: '', results: [], events: [], work: [] }
     const emit = (name, ...args) => state.events.push([name, ...args])
     const requests = new MapRequestScope()
     const context = {
+      workCallback: { current: message => state.work.push(message) },
       ready: true, authErr: false, searchRequests: { current: requests },
       mapRef: { current: { getCenter: () => ({ lat: () => 40, lng: () => -74 }), getZoom: () => 9, panTo: point => emit('pan', point), setZoom: zoom => emit('zoom', zoom), fitBounds: bounds => emit('bounds', bounds) } },
       clearAIShapes() {}, saveShapes() {}, plot() {}, infoRef: { current: { close() {} } },
@@ -58,7 +59,8 @@ try {
       moveGlobe: camera => emit('globe', camera), fitGlobe: bounds => emit('globeBounds', bounds),
       geocodeTo: async query => { emit('geocode', query); return true },
     }
-    return { state, requests, search: createSearch(context) }
+    const search = createSearch(context)
+    return { state, requests, search: (...args) => { const pending = search(...args); void pending.catch(() => {}); return pending } }
   }
 
   // Partial success: AI renders the camera and answer, while optional Places
@@ -69,11 +71,13 @@ try {
   await flush()
   assert.equal(fixture.state.answer, plan.answer)
   assert.equal(fixture.state.loading, true)
+  assert.equal(fixture.state.work.at(-1), 'Nalu is searching the map.')
   assert.deepEqual(fixture.state.events.slice(0, 2), [['pan', plan.center], ['zoom', 12]])
   assert.ok(fixture.state.events.findIndex(event => event[0] === 'pan') < fixture.state.events.findIndex(event => event[0] === 'places'))
   pins.reject(new Error('Place search timed out. Please try again.'))
   await pending
   assert.equal(fixture.state.loading, false)
+  assert.equal(fixture.state.work.at(-1), null)
   assert.equal(fixture.state.answer, plan.answer)
   assert.equal(fixture.state.error, '')
   assert.equal(fixture.state.events.some(event => event[0] === 'geocode'), false)
@@ -90,8 +94,10 @@ try {
   oldPins.reject(new Error('Old service failure')); await pending
   assert.equal(fixture.state.answer, 'new'); assert.equal(fixture.state.error, '')
   assert.equal(fixture.state.loading, true)
+  assert.equal(fixture.state.work.at(-1), 'Nalu is searching the map.', 'an obsolete request cannot clear current screen narration')
   newPins.resolve([{ name: 'Current cafe' }]); await latest
   assert.equal(fixture.state.answer, 'new'); assert.equal(fixture.state.loading, false)
+  assert.equal(fixture.state.work.at(-1), null)
   assert.deepEqual(fixture.state.results, [{ name: 'Current cafe' }])
 
   // With no planned center/shapes, real result bounds own framing; an extra
