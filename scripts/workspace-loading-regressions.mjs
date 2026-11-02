@@ -31,7 +31,7 @@ const { AppIcon } = await import(`data:text/javascript;base64,${Buffer.from(icon
 test('the branded opening screen and artifact activity never show the conversation globe', () => {
   const intro = opening()
   assert.match(intro, /nalu-opening-track/)
-  assert.match(intro, /A little help\. A little more possibility\./)
+  assert.match(intro, /Your AI\. At work on your screen\./)
   assert.doesNotMatch(intro, /class="nalu-globe/)
   for (const action of ['opening', 'creating']) {
     const html = media(action)

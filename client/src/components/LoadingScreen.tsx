@@ -9,7 +9,7 @@ export default function LoadingScreen({ onSkip }: { onSkip?: () => void }) {
     <div className="nalu-opening-center" role="status" aria-label="Opening Nalu">
       <NaluMark className="nalu-opening-logo" />
       <span className="nalu-opening-wordmark" aria-hidden="true">nalu</span>
-      <p className="nalu-opening-caption">A little help. A little more possibility.</p>
+      <p className="nalu-opening-caption">Your AI. At work on your screen.</p>
       <div className="nalu-opening-track" aria-hidden="true"><span /></div>
     </div>
     {onSkip && <button type="button" onClick={onSkip} className="nalu-opening-skip">Skip intro ↗</button>}
