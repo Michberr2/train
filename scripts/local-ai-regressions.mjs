@@ -31,7 +31,7 @@ export class WebWorkerMLCEngine {
 await build({ entryPoints: ['client/src/lib/localAI.ts', 'client/src/lib/localAIProtocol.ts', 'client/src/components/workspace/chatStream.ts', 'client/src/components/workspace/chatRequest.ts'], outdir: directory, bundle: true, format: 'esm', platform: 'browser', write: true, outExtension: { '.js': '.mjs' }, plugins: [{ name: 'synthetic-browser-engine', setup(build) { build.onResolve({ filter: /^@mlc-ai\/web-llm$/ }, () => ({ path: 'engine', namespace: 'fixture' })); build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: fake, loader: 'js' })) } }] })
 // Bundle a single entry so the request adapter and runtime share session state.
 const entry = join(directory, 'entry.ts')
-await writeFile(entry, ['client/src/lib/localAI.ts', 'client/src/lib/localAIProtocol.ts', 'client/src/lib/localAIRequests.ts', 'client/src/lib/localArtifactPlans.ts', 'client/src/lib/localArtifactFidelity.ts', 'client/src/components/workspace/chatStream.ts', 'client/src/components/workspace/chatRequest.ts'].map(path => `export * from ${JSON.stringify(join(process.cwd(), path))};`).join('\n'))
+await writeFile(entry, ['client/src/lib/localAI.ts', 'client/src/lib/localAIProtocol.ts', 'client/src/lib/localAIRequests.ts', 'client/src/lib/localArtifactPlans.ts', 'client/src/lib/localArtifactFidelity.ts', 'client/src/lib/localSwarmPlan.ts', 'client/src/components/workspace/chatStream.ts', 'client/src/components/workspace/chatRequest.ts'].map(path => `export * from ${JSON.stringify(join(process.cwd(), path))};`).join('\n'))
 await build({ entryPoints: [entry], outfile: join(directory, 'test.mjs'), bundle: true, format: 'esm', platform: 'browser', plugins: [{ name: 'synthetic-browser-engine', setup(build) { build.onResolve({ filter: /^@mlc-ai\/web-llm$/ }, () => ({ path: 'engine', namespace: 'fixture' })); build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: fake, loader: 'js' })) } }] })
 const local = await import(pathToFileURL(join(directory, 'test.mjs')))
 const request = (content = 'Hello', extra = {}) => ({ messages: [{ role: 'user', content }], ...extra })
@@ -222,6 +222,29 @@ try {
   assert.equal(local.needsLocalAI('/api/browser', 'POST', '{"action":"cancel"}'), false)
   assert.equal(local.needsLocalAI('/api/browser', 'POST', '{"action":"run"}'), true)
   check('Cloud generation is intercepted while storage, research, and cancellation keep their existing API')
+  assert.equal(local.isLocalSwarmRequest('Build a website and write a document for an unrelated project.'), true)
+  assert.equal(local.isLocalSwarmRequest('Build a website in the background.'), true)
+  assert.equal(local.isLocalSwarmRequest('Explain parallel processing.'), false)
+  assert.equal(local.isLocalSwarmRequest('Build a website with a logo.'), false)
+  const key = await local.localDelegationKey('saved-message', 'Build a site', 'Source facts')
+  assert.equal(await local.localDelegationKey('saved-message', 'Build a site', 'Source facts'), key)
+  assert.notEqual(await local.localDelegationKey('saved-message', 'Build a different site', 'Source facts'), key)
+  assert.notEqual(await local.localDelegationKey('saved-message', 'Build a site', 'Changed facts'), key)
+  const delegation = { version: 1, unhandledRequests: [], projects: [
+    { key: 'website', title: 'Acorn Coffee', brief: 'Coffee in Portland.', tasks: [{ key: 'site', kind: 'website', instructions: 'Build the Acorn Coffee website.' }] },
+    { key: 'data', title: 'Harbor Analytics', brief: 'A separate data analysis project.', tasks: [{ key: 'doc', kind: 'document', instructions: 'Explain CSV cleaning before statistical analysis.' }] },
+  ] }
+  control.responses = [[JSON.stringify(delegation)]]
+  const planned = await local.planLocalSwarmWork('Build the website and write the unrelated data document.')
+  assert.equal(planned.projects.length, 2)
+  assert.deepEqual(planned.projects.map(project => project.tasks[0].kind), ['website', 'document'])
+  assert.equal(control.inputs.at(-1).extra_body.enable_thinking, false)
+  assert.doesNotMatch(JSON.stringify(control.inputs.at(-1)), /account-a|token-one|Bearer/)
+  control.responses = [[JSON.stringify({ version: 1, projects: [], unhandledRequests: ['Publish the website'] })]]
+  await assert.rejects(local.planLocalSwarmWork('Publish the website'), /No part of this plan has been started/)
+  control.responses = [['{"version":1,']]
+  await assert.rejects(local.planLocalSwarmWork('Build the website'), /plan is incomplete/)
+  check('Local swarm planning keeps project manifests separate, preserves stable retries, and rejects unsupported or incomplete plans without starting jobs')
   navigator.gpu = undefined
   await assert.rejects(local.checkLocalDevice(), /WebGPU/)
   const failed = await answer(request('Hello'))

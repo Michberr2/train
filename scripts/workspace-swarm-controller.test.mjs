@@ -267,10 +267,11 @@ test('a delegation recovered after a lost acknowledgement keeps its batch receip
     throw new TypeError('Lost delegation acknowledgement')
   }
   const first = setup(request, { storage }); await first.refresh(); first.navigate('launch', 'Milo'); first.setDraft('Keep this conversation separate.')
-  await assert.rejects(first.delegateWork(plan)); first.dispose()
+  await assert.rejects(first.delegateWork(plan, 'chat:saved-request-0001')); first.dispose()
   const second = setup(request, { storage }); await second.refresh()
-  assert.deepEqual(await second.delegateWork(plan), ['delegated-0', 'delegated-1'])
+  assert.deepEqual(await second.delegateWork(plan, 'chat:saved-request-0001'), ['delegated-0', 'delegated-1'])
   assert.equal(writes.length, 1)
+  assert.equal(writes[0].requestId, 'chat:saved-request-0001')
   assert.equal(second.getSnapshot().preferences.activeProjectId, 'launch')
   assert.equal(second.getSnapshot().preferences.recipient, 'Milo')
   assert.equal(second.getSnapshot().preferences.drafts['launch::Milo'], 'Keep this conversation separate.')

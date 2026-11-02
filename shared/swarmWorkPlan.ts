@@ -16,6 +16,10 @@ function key(value: unknown): string {
 export function parseSwarmWorkPlan(input: unknown): SwarmWorkPlan {
   let value = input
   if (typeof value === 'string') { try { value = JSON.parse(value) } catch { throw Error('The delegated work plan is incomplete.') } }
+  if (record(value) && value.unhandledRequests !== undefined) {
+    if (!Array.isArray(value.unhandledRequests) || value.unhandledRequests.some(item => typeof item !== 'string' || item.length > 500)) throw Error('The delegation did not account for every requested action.')
+    if (value.unhandledRequests.length) throw Error(`This request still needs a connected local tool: ${value.unhandledRequests.join('; ')}. No part of this plan has been started.`)
+  }
   if (!record(value) || value.version !== 1 || !Array.isArray(value.projects) || !value.projects.length || value.projects.length > 12) throw Error('Choose between one and twelve project groups for this delegation.')
   const projectKeys = new Set<string>(); let tasks = 0
   const projects = value.projects.map(project => {

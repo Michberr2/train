@@ -135,11 +135,11 @@ export class SwarmClient {
     this.read = pending
     return pending
   }
-  private mutate(action: string, payload: Payload, extra: { originalDraft?: string; context?: string } = {}): Promise<SwarmResponse> {
+  private mutate(action: string, payload: Payload, extra: { originalDraft?: string; context?: string; requestId?: string } = {}): Promise<SwarmResponse> {
     if (!this.isCurrent()) return Promise.reject(new SwarmSessionChanged())
     // A newer poll may reveal an execution ID before its request receipt. Keep
     // the original start ID until the exact receipt is acknowledged.
-    const retained = this.snapshot.preferences.intents.find(item => item.action === action && intentKey(action, item.payload) === intentKey(action, payload))
+    const retained = this.snapshot.preferences.intents.find(item => item.action === action && (!extra.requestId || item.requestId === extra.requestId) && intentKey(action, item.payload) === intentKey(action, payload))
     const key = retained?.key ?? intentKey(action, payload, extra.context)
     const acknowledged = this.acknowledgedRetries.get(key)
     if (acknowledged) { this.acknowledgedRetries.delete(key); return Promise.resolve(acknowledged) }
@@ -147,7 +147,7 @@ export class SwarmClient {
     if (existing) return existing
     let intent = this.snapshot.preferences.intents.find(item => item.key === key)
     if (intentActions.has(action) && !intent) {
-      intent = { key, requestId: (this.options.uuid || (() => crypto.randomUUID()))(), action, payload, ...(extra.originalDraft !== undefined ? { originalDraft: extra.originalDraft } : {}) }
+      intent = { key, requestId: extra.requestId || (this.options.uuid || (() => crypto.randomUUID()))(), action, payload, ...(extra.originalDraft !== undefined ? { originalDraft: extra.originalDraft } : {}) }
       this.preferences({ ...this.snapshot.preferences, intents: [...this.snapshot.preferences.intents, intent].slice(-100) })
     }
     const captured = intent, generation = this.generation
@@ -203,9 +203,10 @@ export class SwarmClient {
       return id
     } catch { return null }
   }
-  delegateWork = async (input: SwarmWorkPlan): Promise<string[]> => {
+  delegateWork = async (input: SwarmWorkPlan, sourceRequestId?: string): Promise<string[]> => {
     const plan = parseSwarmWorkPlan(input)
-    const response = await this.mutate('delegate-work', { plan: JSON.stringify(plan) })
+    if (sourceRequestId && !/^[\w:-]{8,100}$/.test(sourceRequestId)) throw new Error('Invalid saved delegation request.')
+    const response = await this.mutate('delegate-work', { plan: JSON.stringify(plan) }, { requestId: sourceRequestId, context: sourceRequestId })
     const receipt = response.state.projects.find(project => project.id === response.projectId)?.delegation
     if (!receipt) throw new Error('The delegated work was not confirmed. Retry the same request; saved work is unchanged.')
     return response.state.projects.filter(project => project.delegation?.requestId === receipt.requestId).map(project => project.id)
