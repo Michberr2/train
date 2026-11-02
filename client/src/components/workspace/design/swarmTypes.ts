@@ -67,6 +67,7 @@ export interface SwarmController {
   /** Explicit user execution requests; the controller owns errors and results. */
   startTask?: (taskId: string) => void | Promise<void>
   stopTask?: (taskId: string) => void | Promise<void>
+  stopProjectTask?: (projectId: string, taskId: string) => void | Promise<void>
   shareTask?: (taskId: string) => void | Promise<void>
   continueStudio?: (taskId: string) => Promise<void>
   getArtifact?: (taskId: string, executionId: string, signal?: AbortSignal) => Promise<SwarmArtifactResponse>

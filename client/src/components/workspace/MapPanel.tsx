@@ -9,6 +9,7 @@ import { PARCEL_SVCS, parcelSvcFor, parcelFacts, permitSvcFor, queryPermitsNear,
 import { useTheme } from '../ThemeProvider'
 import { MapRequestScope, mapJson, mapPlaces, mapPlaceUrl, validMapPoint, mapHtml, savedMapLayers, type MapPlace as Place } from './mapRequests'
 import type { MapCameraRequest } from './MapGlobe3D'
+import { useAgentTyping } from './design/useAgentTyping'
 
 // Ploti-style real-estate map: AI/Places search, a stack of free open-source data
 // layers, multiple base maps, and drawing tools (polygons/areas/markers) you can
@@ -564,8 +565,10 @@ const MAP_KEYS = [
 const SHAPES_KEY = 'nalu-map-shapes'
 const ACTIVE_KEY = 'nalu-map-active-layers' // layers you turned on persist + reload with the map
 
-export default function MapPanel({ request }: { request?: { key: number; query: string } } = {}) {
+export default function MapPanel({ request, onWork }: { request?: { key: number; query: string }; onWork?: (message: string | null) => void } = {}) {
   const handledRequest = useRef<number>()
+  const [typedRequest, setTypedRequest] = useState<number>()
+  const workCallback = useRef(onWork); workCallback.current = onWork
   const { isDark } = useTheme()
   // Roadmap base ('dark'/'streets') follows the app theme; satellite/terrain
   // keep Google's native imagery.
@@ -580,6 +583,10 @@ export default function MapPanel({ request }: { request?: { key: number; query: 
   const shapesRef = useRef<GMaps[]>([])
   const aiShapesRef = useRef<GMaps[]>([]) // shapes drawn by the LAST AI answer (cleared on new search / cancel)
   const [query, setQuery] = useState('')
+  const agentTyping = useAgentTyping(request ? { key: request.key, text: request.query } : undefined, text => {
+    setQuery(text); workCallback.current?.('Nalu is typing your map search.')
+  }, key => { setTypedRequest(key); workCallback.current?.(null) })
+  useEffect(() => () => workCallback.current?.(null), [])
   const [results, setResults] = useState<Place[]>([])
   const [loading, setLoading] = useState(false)
   const searchRequests = useRef(new MapRequestScope())
@@ -1427,6 +1434,7 @@ export default function MapPanel({ request }: { request?: { key: number; query: 
 
   // Cancel / reset — clear the current answer so you can ask something new.
   const clearSearch = () => {
+    agentTyping.cancel(); workCallback.current?.(null)
     searchRequests.current.cancel()
     setLoading(false)
     setQuery('')
@@ -1443,6 +1451,7 @@ export default function MapPanel({ request }: { request?: { key: number; query: 
 
   const runSearch = async (q: string, aiMode = true) => {
     if (!q || !mapRef.current || !ready || authErr) return
+    workCallback.current?.('Nalu is searching the map.')
     const request = searchRequests.current.start()
     clearAIShapes(); saveShapes(); plot([]); infoRef.current?.close()
     setResults([]); setSel(null)
@@ -1538,16 +1547,15 @@ export default function MapPanel({ request }: { request?: { key: number; query: 
     } catch (e) {
       if (searchRequests.current.owns(request)) setErr(request.signal.aborted ? 'Map search took too long. Please try again.' : e instanceof Error ? e.message : 'Search failed')
     } finally {
-      if (searchRequests.current.owns(request)) { searchRequests.current.finish(request); setLoading(false) }
+      if (searchRequests.current.owns(request)) { searchRequests.current.finish(request); setLoading(false); workCallback.current?.(null) }
     }
   }
   useEffect(() => {
-    if (!request || handledRequest.current === request.key) return
-    setQuery(request.query)
+    if (!request || typedRequest !== request.key || handledRequest.current === request.key) return
     if (!ready || authErr) return
     handledRequest.current = request.key
     void runSearch(request.query)
-  }, [request?.key, ready, authErr])
+  }, [request?.key, typedRequest, ready, authErr])
   const search = () => void runSearch(query.trim())
   // One-tap category search — straight to Places (no AI round-trip needed).
   const searchCategory = (term: string) => { setQuery(term); void runSearch(term, false) }
@@ -1568,7 +1576,7 @@ export default function MapPanel({ request }: { request?: { key: number; query: 
           <p className="map-search-intro mb-3 text-xs leading-relaxed text-dim">Find a place, compare areas, or ask Nalu.</p>
           <div className="map-search-field flex items-center gap-1.5 rounded-xl border border-glass/[0.12] bg-glass/[0.04] px-2.5 py-2 focus-within:border-glass/25">
             <Search size={14} className="text-dim" />
-            <input aria-label="Map search" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void search() }}
+            <input aria-label="Map search" data-agent-typing={agentTyping.typing || undefined} value={query} onChange={(e) => { agentTyping.cancel(); handledRequest.current = request?.key; workCallback.current?.(null); setQuery(e.target.value) }} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void search() }}
               placeholder="Ask any map question…" className="w-full bg-transparent text-sm text-ink outline-none placeholder:text-dim" />
             {(query || answer || comparison) && (
               <button onClick={clearSearch} aria-label={loading ? 'Cancel map search' : 'Clear map search'} title={loading ? 'Cancel map search' : 'Clear — ask something else'}

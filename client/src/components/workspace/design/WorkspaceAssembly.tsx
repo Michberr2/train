@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 
 const pointer = 'M.9.35C-.15-.16-1.2.74-.88 1.87L4.45 21.2C4.77 22.38 6.36 22.51 6.88 21.4L10.35 13.97C10.49 13.66 10.74 13.41 11.05 13.27L18.74 9.82C19.87 9.32 19.79 7.69 18.65 7.15Z'
 const clamp = (value: number) => Math.max(0, Math.min(1, value))
@@ -8,11 +8,15 @@ const properties = ['opacity', 'translate', 'scale', 'min-width', 'min-height']
 
 /** Assemble actual mounted controls and copy, including artifacts that arrive
  * later. Model work and the saved workspace keep their normal lifecycle. */
-export default function WorkspaceAssembly({ target, request, active }: { target: RefObject<HTMLElement>; request: { key: number; label: string }; active: boolean }) {
+export default function WorkspaceAssembly({ target, request, active, activity }: { target: RefObject<HTMLElement>; request: { key: number; label: string }; active: boolean; activity?: string }) {
   const canvas = useRef<HTMLCanvasElement>(null)
+  const [narration, setNarration] = useState('')
+  const work = useRef(activity); work.current = activity
+  const wake = useRef<() => void>(() => {})
+  useEffect(() => { wake.current() }, [activity])
   useLayoutEffect(() => {
     const root = target.current, layer = canvas.current
-    if (!active || !request.key || !root || !layer || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (!active || !root || !layer || matchMedia('(prefers-reduced-motion: reduce)').matches) return
     const ctx = layer.getContext('2d')
     if (!ctx) return
     const shape = new Path2D(pointer), seen = new WeakSet<HTMLElement>(), jobs: Job[] = []
@@ -29,7 +33,7 @@ export default function WorkspaceAssembly({ target, request, active }: { target:
       frame = 0
       if (!alive) return
       ctx.clearRect(0, 0, innerWidth, innerHeight)
-      let working = false
+      let working = false, spoken = ''
       for (const job of jobs) {
         if (job.done) continue
         if (!job.element.isConnected || job.text && job.text.nodeValue !== job.last) { restore(job); continue }
@@ -43,13 +47,24 @@ export default function WorkspaceAssembly({ target, request, active }: { target:
         const arriving = ease((elapsed + .25) / .4), x = (job.id % 2 ? innerWidth + 30 : -30) * (1 - arriving) + destinationX * arriving
         const y = (box.top - 90) * (1 - arriving) + destinationY * arriving + Math.sin(arriving * Math.PI) * 30
         const label = job.text ? 'typing' : job.element.tagName === 'IMG' ? 'place image' : job.element.tagName === 'BUTTON' ? 'build button' : 'arrange controls'
+        if (!spoken && elapsed >= 0) spoken = job.text ? `Nalu is typing ${job.original.length > 55 ? 'the workspace text' : `“${job.original}”`}.` : `Nalu is ${job.element.tagName === 'IMG' ? 'placing an image' : job.element.tagName === 'BUTTON' ? 'building the controls' : 'arranging the workspace'}.`
         ctx.save(); ctx.globalAlpha = clamp(elapsed * 6 + .4) * clamp((job.duration + .35 - elapsed) / .3); ctx.translate(x, y)
         ctx.fillStyle = '#090b0d'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.6; ctx.lineJoin = 'round'; ctx.shadowColor = '#0005'; ctx.shadowBlur = 4; ctx.fill(shape); ctx.stroke(shape)
         ctx.shadowBlur = 0; ctx.font = '9px monospace'; const text = `Nalu · ${label}`, width = ctx.measureText(text).width + 12, left = x + width + 16 > innerWidth ? -width : 14
         ctx.fillRect(left, 22, width, 18); ctx.fillStyle = '#fff'; ctx.fillText(text, left + 6, 34); ctx.restore()
       }
+      if (!working && work.current) {
+        const candidate = root.querySelector<HTMLElement>('[data-agent-typing],textarea,input,[role="status"],button')
+        const visible = candidate && getComputedStyle(candidate).visibility !== 'hidden'
+        const destination = visible ? candidate : document.querySelector<HTMLElement>('.workspace-chat-popover textarea')
+        const box = destination?.getBoundingClientRect() || root.getBoundingClientRect()
+        const x = Math.min(innerWidth - 30, box.right - 12), y = Math.max(95, Math.min(innerHeight - 110, box.bottom + 9))
+        ctx.save(); ctx.translate(x, y); ctx.fillStyle = '#090b0d'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.6; ctx.lineJoin = 'round'; ctx.fill(shape); ctx.stroke(shape)
+        ctx.beginPath(); ctx.arc(9, 10, 21 + Math.sin(now / 700) * 2, 0, Math.PI * 2); ctx.strokeStyle = '#ffffff75'; ctx.stroke(); ctx.restore()
+      }
+      setNarration(previous => { const next = spoken || work.current || ''; return previous === next ? previous : next })
       layer.dataset.assembling = String(working)
-      if (working) frame = requestAnimationFrame(paint)
+      if (working || work.current) frame = requestAnimationFrame(paint)
     }
     const collect = () => {
       let discovered = 0
@@ -68,6 +83,7 @@ export default function WorkspaceAssembly({ target, request, active }: { target:
       layer.dataset.jobs = String(serial)
       if (discovered && !frame) frame = requestAnimationFrame(paint)
     }
+    wake.current = () => { if (alive && !frame) frame = requestAnimationFrame(paint) }
     const observer = new MutationObserver(collect)
     observer.observe(root, { childList: true, subtree: true })
     collect()
@@ -75,7 +91,7 @@ export default function WorkspaceAssembly({ target, request, active }: { target:
     const reduced = matchMedia('(prefers-reduced-motion: reduce)')
     const motion = () => { if (reduced.matches) { observer.disconnect(); stop() } }
     window.addEventListener('resize', stop); reduced.addEventListener('change', motion)
-    return () => { alive = false; observer.disconnect(); cancelAnimationFrame(frame); stop(); window.removeEventListener('resize', stop); reduced.removeEventListener('change', motion) }
+    return () => { alive = false; wake.current = () => {}; setNarration(''); observer.disconnect(); cancelAnimationFrame(frame); stop(); window.removeEventListener('resize', stop); reduced.removeEventListener('change', motion) }
   }, [target, request.key, active])
-  return <canvas ref={canvas} className="workspace-assembly-cursors" aria-hidden="true" aria-label={`Assembling ${request.label}`} />
+  return <><canvas ref={canvas} className="workspace-assembly-cursors" aria-hidden="true" aria-label={`Assembling ${request.label}`} />{(narration || activity) && active && <div className="workspace-agent-narration" role="status"><span aria-hidden="true" className="workspace-agent-narration-dot"/><span>{narration || activity}</span></div>}</>
 }

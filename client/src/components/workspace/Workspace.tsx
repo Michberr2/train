@@ -8,6 +8,7 @@ import NaluMark from '../landing/NaluMark'
 import NaluGlobe from '../NaluGlobe'
 import { workspaceForRequest } from './design/workspaceRequest'
 import WorkspaceAssembly from './design/WorkspaceAssembly'
+import WorkspaceWorkDrawer from './design/WorkspaceWorkDrawer'
 import { fallbackStudioIntent, parseStudioIntent, shouldClassifyStudio, studioKind as normalizeStudioKind, type StudioIntent } from '../../../../shared/studioIntent'
 import { buildChatMemory } from './crossChatMemory'
 import { mergeChatMessages } from '../../../../shared/chatMessages'
@@ -746,6 +747,9 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   const [launcherOpen, setLauncherOpen] = useState(() => previewLayout && new URLSearchParams(location.search).get('view') !== 'memory')
   const [mapRequest, setMapRequest] = useState<{ key: number; query: string }>()
   const [requestedStudioKind, setRequestedStudioKind] = useState<string>()
+  const [studioBriefRequest, setStudioBriefRequest] = useState<{ key: number; text: string }>()
+  const [mapActivity, setMapActivity] = useState<string | null>(null)
+  const [workDrawerOpen, setWorkDrawerOpen] = useState(false)
   const [assemblyRequest, setAssemblyRequest] = useState({ key: 0, label: '' })
   const [launcherSelection, setLauncherSelection] = useState<WorkspaceCarouselView>('studio')
   const [hasOpenedSpace, setHasOpenedSpace] = useState(!launcherOpen)
@@ -775,7 +779,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   // whose '__new__' sentinel cannot identify a newly created conversation.
   const [reviewActiveChats, setReviewActiveChats] = useState<string[]>([])
   const baseActivity = useLiveWorkspaceActivity({ chats, activeChatIds: reviewActiveChats, accountId: user?.id, enabled: reviewLayout && !previewLayout })
-  const liveSwarm = useSwarm({ accountId: user?.id, enabled: reviewLayout && !previewLayout, active: reviewChatOpen || agentScreensOpen || view === 'memory' })
+  const liveSwarm = useSwarm({ accountId: user?.id, enabled: reviewLayout && !previewLayout, active: reviewChatOpen || agentScreensOpen || workDrawerOpen || view === 'memory' })
   const liveActivity = withSwarmActivity({ ...baseActivity, error: [baseActivity.error, liveSwarm.error].filter(Boolean).join(' '), refresh: () => { baseActivity.refresh(); liveSwarm.refresh?.() } }, liveSwarm.state)
   const [swarmNavigationRequest, setSwarmNavigationRequest] = useState<(SwarmRoomReference & { key: number }) | undefined>()
   const [agentConversationRequest, setAgentConversationRequest] = useState<{ agent: string; key: number }>()
@@ -1291,6 +1295,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         setView(workspaceRequest.view); setReviewChatOpen(false)
         setAssemblyRequest(previous => ({ key: previous.key + 1, label: workspaceRequest.view }))
         if (workspaceRequest.studioKind) setRequestedStudioKind(workspaceRequest.studioKind)
+        if (workspaceRequest.view === 'studio') setStudioBriefRequest(previous => ({ key: (previous?.key || 0) + 1, text: content }))
         if (workspaceRequest.view === 'map') setMapRequest(previous => ({ key: (previous?.key || 0) + 1, query: content }))
         if (workspaceOnly) { sendingChatsRef.current.delete(guardKey); finishReviewActivity(); return }
       }
@@ -2732,6 +2737,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       className="nalu-workspace relative isolate h-[100dvh] w-screen flex text-ink overflow-hidden font-sans" data-workspace-theme={isDark ? 'dark' : 'light'}
       data-workspace-view={view} data-workspace-design-preview={reviewLayout || undefined}
       data-workspace-home={reviewLayout && ambientHome || undefined}
+      data-work-drawer={workDrawerOpen || undefined}
       data-workspace-launcher={reviewLayout && launcherOpen || undefined}
       data-agent-screens={reviewLayout && agentScreensOpen || undefined}
       onKeyDownCapture={reviewLayout && launcherOpen && !reviewChatOpen ? event => {
@@ -2953,6 +2959,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           <StudioPanel
             designEnabled={reviewLayout}
             requestedTool={requestedStudioKind}
+            requestedBrief={studioBriefRequest}
             creations={creations}
             onOpen={openCreation}
             streaming={streaming}
@@ -3030,7 +3037,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
             }}
           />
         )}
-        {view === 'map' && <MapPanel request={mapRequest} />}
+        {view === 'map' && <MapPanel request={mapRequest} onWork={setMapActivity} />}
         {view === 'memory' && IS_WEB_APP && (reviewLayout && WorkspaceLiveHub ? (
           <Suspense fallback={<div className="review-launcher-loading" role="status">Opening your work…</div>}>
             <WorkspaceLiveHub chats={chats} activeChatIds={reviewActiveChats} activity={liveActivity}
@@ -3059,7 +3066,17 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           </div>
         ) : <div ref={setChatInlineAnchor} className="workspace-chat-inline-slot" aria-hidden="true" />) : renderChatContent())}
       </main>
-      {reviewLayout && <WorkspaceAssembly target={reviewMainRef} request={assemblyRequest} active={!ambientHome && !launcherOpen && !agentScreensOpen} />}
+      {reviewLayout && <WorkspaceAssembly target={reviewMainRef} request={assemblyRequest} active={(!ambientHome || streaming) && !launcherOpen && !agentScreensOpen} activity={view === 'map' && mapActivity ? mapActivity : streaming ? view === 'studio' ? `Nalu is working on your ${requestedStudioKind || 'creation'}.` : `${routeName || 'Nalu'} is working on your request.` : undefined} />}
+      {reviewLayout && <button type="button" className="workspace-work-trigger" aria-label="Track all agent work" aria-expanded={workDrawerOpen} onClick={() => setWorkDrawerOpen(value => !value)}>Work <span>{liveActivity.items.filter(item => ['running', 'queued', 'waiting', 'failed'].includes(item.status)).length || '↗'}</span></button>}
+      {reviewLayout && workDrawerOpen && <WorkspaceWorkDrawer activity={liveActivity} onClose={() => setWorkDrawerOpen(false)} onOpen={item => {
+        if (innerWidth < 1000) setWorkDrawerOpen(false)
+        if (item.swarm) openSwarmActivity(item.swarm)
+        else if (item.chatId) { setActiveId(item.chatId); setReviewChatOpen(true) }
+        else { setWorkDrawerOpen(false); openAgentScreens(item.id) }
+      }} canStop={item => ['queued', 'running'].includes(item.status) && (Boolean(item.swarm?.taskId && liveSwarm.stopProjectTask) || Boolean(item.chatId && reviewActiveChats.includes(item.chatId)))} onStop={async item => {
+        if (item.swarm?.taskId) await liveSwarm.stopProjectTask?.(item.swarm.projectId, item.swarm.taskId)
+        else if (item.chatId && reviewActiveChats.includes(item.chatId)) stop()
+      }} />}
 
       {reviewLayout && agentScreensOpen && WorkspaceAgentScreens && <Suspense fallback={<div className="review-launcher-loading" role="status">Opening agent screens…</div>}>
         <WorkspaceAgentScreens chats={chats} activeChatIds={reviewActiveChats} activity={liveActivity} selectedItemId={selectedAgentItem}

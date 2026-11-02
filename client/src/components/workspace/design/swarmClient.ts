@@ -281,5 +281,9 @@ export class SwarmClient {
   assignTask = (taskId: string, assignee: SwarmAgentId) => { void this.taskAction('assign-task', taskId, { assignee }).catch(() => {}) }
   startTask = (taskId: string) => this.taskAction('start-task', taskId)
   stopTask = (taskId: string) => this.taskAction('stop-task', taskId)
+  stopProjectTask = async (projectId: string, taskId: string): Promise<void> => {
+    if (!this.snapshot.state.tasks.some(task => task.id === taskId && task.projectId === projectId)) throw new Error('This task is not available in that project.')
+    await this.mutate('stop-task', { projectId, taskId })
+  }
   shareTask = (taskId: string) => this.taskAction('share-task', taskId)
 }
