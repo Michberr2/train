@@ -1292,6 +1292,19 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       persistChats(checkpointChats, sessionToken)
       setActiveId(chatId)
       if (!keepCurrentView) setView('chat')
+      // An explicit map request mounts the existing map/search engine immediately.
+      // The map owns real place lookup, markers, progress and retry controls.
+      if (reviewLayout && !previewLayout && !opts?.studioKind && !opts?.studioTarget && !resuming && !existing?.attachments?.length && !opts?.attachments?.length &&
+          /\b(on\s+(?:a|the)\s+map|map\s+(?:of|for)|show\s+.*\bmap\b)/i.test(content)) {
+        const layout: GenerativeUi = { version: 1, title: 'Explore on the map', description: content, blocks: [{
+          id: `map-${assistantMessageId.slice(0, 12)}`, type: 'map', title: 'Places and results', width: 'full', query: content,
+        }] }
+        setChats(cs => cs.map(c => c.id === chatId ? { ...c, messages: c.messages.map(m => m.id === assistantMessageId
+          ? { ...m, generativeUi: layout, uiComplete: true, content: 'Your map is open. Place results and markers load in the workspace.', updatedAt: Date.now() } : m) } : c))
+        setView('chat'); setStreaming(false)
+        sendingChatsRef.current.delete(guardKey); finishReviewActivity()
+        return
+      }
       const ctrl = new AbortController()
       abortRef.current = ctrl
       setStreaming(true)

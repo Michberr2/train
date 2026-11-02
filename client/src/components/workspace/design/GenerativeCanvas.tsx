@@ -9,7 +9,7 @@ function Connections() {
   const [open, setOpen] = useState(true)
   return open ? <Suspense fallback={<p>Loading your connected accounts…</p>}><ConnectionManager embedded onClose={() => setOpen(false)} onChange={() => {}}/></Suspense> : <button className="generative-action" onClick={() => setOpen(true)}>Manage connected accounts</button>
 }
-import { calculate, type GenerativeUi, type UiBlock, type UiValues } from './generativeUi'
+import { calculate, mapRequestForQuery, type GenerativeUi, type UiBlock, type UiValues } from './generativeUi'
 
 function Block({ block, values, onChange, onAction, busy, agents }: { agents?: ReactNode; block: UiBlock; values: UiValues; onChange: (key: string, value: string | boolean) => void; onAction: (prompt: string) => void; busy: boolean }) {
   const key = (id: string) => `${block.id}:${id}`
@@ -24,7 +24,7 @@ function Block({ block, values, onChange, onAction, busy, agents }: { agents?: R
     case 'connections': content = <Connections/>; break
     case 'agents': content = <div className="generative-inline-agents">{agents}</div>; break
     case 'workflow': content = <div className="generative-inline-workflow"><Suspense fallback={<p>Opening your workflow…</p>}><WorkflowBuilder/></Suspense></div>; break
-    case 'map': content = <div className="generative-live-map"><Suspense fallback={<p>Opening your map…</p>}><MapPanel key={block.query} request={block.query ? { key: 1, query: block.query } : undefined}/></Suspense></div>; break
+    case 'map': content = <div className="generative-live-map"><Suspense fallback={<p>Opening your map…</p>}><MapPanel key={block.query} request={block.query ? mapRequestForQuery(block.query) : undefined}/></Suspense></div>; break
     case 'text': content = <Markdown>{block.text || ''}</Markdown>; break
     case 'metrics': content = <div className="generative-metrics">{block.items?.map(item => <div className="generative-metric" key={item.id}><small><BuildCopy text={item.label}/></small><strong><BuildCopy text={item.value || '—'}/></strong>{item.detail && <p>{item.detail}</p>}</div>)}</div>; break
     case 'table': {

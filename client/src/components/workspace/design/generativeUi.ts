@@ -108,3 +108,12 @@ export function workspaceText(text: string): string {
   return text.replace(ui ? /```(?:nalu_ui|json)\s*\n[\s\S]*?(?:```|$)/g : /```nalu_ui\s*\n[\s\S]*?(?:```|$)/g, '').trim()
 }
 export const STREAMING_UI_INSTRUCTION = `${GENERATIVE_UI_INSTRUCTION}\nFor progressive rendering, output the layout as a fenced nalu_ui JSON block, not a function call. Start with title, description, then blocks. The complete blocks render as their bytes arrive. This is a declarative display format; it never executes code or tools. Use the supplied real tools normally before composing the UI. The layout JSON must follow this schema: ${JSON.stringify(GENERATIVE_UI_TOOL.function.parameters)}. Do not output speculative data while research is running. A simple question can use a single text block. For editable numerical inputs, use calculator blocks with calculations, rather than a form that merely offers to recalculate. Forms append the current values automatically; do not put template placeholders in action prompts. Follow explicit user format requirements inside the appropriate block. Do not narrate JSON or describe the rendering system.`
+
+/** Explicit venue requests use the live Places path rather than a planning round-trip. */
+export function mapRequestForQuery(query: string) {
+  const places = /\b(restaurants?|places to eat|dining|cafes?|coffee|hotels?|bars?|parks?|groceries|gas stations?)\b/i.test(query)
+    && !/\b(compare|draw|polygon|route|zoning|demographics|population|boundaries)\b/i.test(query)
+  return { key: 1, mode: places ? 'places' as const : 'auto' as const, query: places ? query
+    .replace(/\bplaces to eat\b/gi, 'restaurants').replace(/^(?:show me|find me|show|find)\s+/i, '')
+    .replace(/\s+on (?:a|the) map[.!?]*$/i, '').trim() : query }
+}

@@ -34,3 +34,6 @@ const stale = { id: 'reply', role: 'assistant', content: 'Saved workspace', upda
 assert.deepEqual(api.mergeChatMessages([stale], [saved])[0], saved)
 assert.deepEqual(api.mergeChatMessages([{ ...stale, updatedAt: 30 }], [saved])[0].uiValues, saved.uiValues)
 console.log('PASS streamed complete-block assembly, partial JSON recovery, arithmetic without code execution, invalid-input handling, URL/type/size validation and cross-client retention of saved layout and edits')
+
+assert.deepEqual(api.mapRequestForQuery('show me best places to eat in dallas on a map'), { key: 1, mode: 'places', query: 'best restaurants in dallas' })
+assert.equal(api.mapRequestForQuery('compare parks in Dallas on a map').mode, 'auto')

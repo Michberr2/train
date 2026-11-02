@@ -158,3 +158,11 @@
 .generative-motion:disabled{opacity:.55;cursor:default;}
 .nalu-cursor-builders[data-workspace-cursors]{z-index:55;}
 .nalu-design-review[data-generative-workspace],.nalu-design-review[data-generative-workspace] button,.nalu-design-review[data-generative-workspace] a{cursor:url('/cursors/nalu-pointer.svg') 7 7,auto;}
+.nalu-design-review[data-generative-workspace] :is(input,textarea,button,a,select):focus-visible{outline:2px solid #35452d;outline-offset:3px;box-shadow:0 0 0 4px #f9f7ef;}
+.nalu-design-review[data-generative-workspace] :is(button,[role=tab])[aria-selected=true]{background:#35452d;color:#fff;}
+.generative-live-map>.map-workspace{height:100%!important;max-height:none;min-height:0;}
+.generative-live-map .map-search-field>button[aria-label="Search map"]{background:#35452d;color:#fff;}
+.generative-live-map .map-place-categories button:is(:hover,[aria-pressed=true]){background:#35452d;color:#fff;border-color:#35452d;}
+.nalu-design-review.workspace-design-surface[data-generative-workspace] .nalu-workspace .generative-live-map .map-workspace{--map-accent:#35452d;--map-ink:#283024;--map-muted:#68745e;}
+.nalu-design-review.workspace-design-surface[data-generative-workspace] .nalu-workspace .generative-live-map .map-search-field>button[aria-label="Search map"]{background:#35452d;color:#fff;}
+.nalu-design-review.workspace-design-surface[data-generative-workspace] .nalu-workspace .generative-live-map .text-gold{color:#35452d;}

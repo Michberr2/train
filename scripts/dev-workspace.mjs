@@ -1,8 +1,17 @@
 // Live-reloading local UI, connected to the existing Nalu account/skill API.
 // No preview accounts, sample outputs, or production publication.
-import { createServer } from 'vite'
+import { createServer, loadEnv } from 'vite'
+import https from 'node:https'
+import { execFileSync } from 'node:child_process'
+import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 const root = fileURLToPath(new URL('../client', import.meta.url))
+// Read only the existing public browser map configuration; never copy secrets.
+const commonGitDir = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: root, encoding: 'utf8' }).trim()
+const sharedClient = process.env.NALU_DEV_ENV_DIR || resolve(dirname(commonGitDir), 'client')
+const publicMapEnv = loadEnv('development', sharedClient, 'VITE_GOOGLE_MAPS_KEY')
+for (const name of ['VITE_GOOGLE_MAPS_KEY', 'VITE_GOOGLE_MAPS_KEY2']) if (!process.env[name] && publicMapEnv[name]) process.env[name] = publicMapEnv[name]
+const apiAgent = new https.Agent({ keepAlive: false, family: 4 })
 process.chdir(root)
 const port = Number(process.env.NALU_DEV_PORT || 5197)
 const server = await createServer({
@@ -31,10 +40,10 @@ const server = await createServer({
   } }],
   server: {
     host: '127.0.0.1', port, strictPort: true,
-    proxy: { '/api': { target: 'https://n4lu.ai', changeOrigin: true, secure: true } },
+    proxy: { '/api': { target: 'https://n4lu.ai', changeOrigin: true, secure: true, agent: apiAgent, timeout: 330000, proxyTimeout: 330000 } },
   },
 })
 await server.listen()
 console.log(`Nalu local workspace: http://127.0.0.1:${port}`)
 console.log('Live local UI; sign in to use your existing Nalu account and skills.')
-for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => { await server.close(); process.exit(0) })
+for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => { await server.close(); apiAgent.destroy(); process.exit(0) })

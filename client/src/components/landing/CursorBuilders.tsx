@@ -91,8 +91,9 @@ export default function CursorBuilders({ container, reduced, active, workspace =
       ctx.restore()
     }
     const selection = (x: number, y: number, w: number, h: number, alpha: number, id: number) => {
-      ctx.save(); ctx.globalAlpha = clamp(alpha); ctx.strokeStyle = colors[id % colors.length]; ctx.lineWidth = 1
+      ctx.save(); ctx.globalAlpha = clamp(workspace ? Math.max(.8, alpha) : alpha); ctx.strokeStyle = workspace ? '#f9f7ef' : colors[id % colors.length]; ctx.lineWidth = workspace ? 3 : 1
       ctx.strokeRect(x, y, w, h)
+      if (workspace) { ctx.strokeStyle = '#283024'; ctx.lineWidth = 1.4; ctx.strokeRect(x, y, w, h); ctx.strokeStyle = '#f9f7ef' }
       for (const [dx, dy] of [[0, 0], [w / 2, 0], [w, 0], [w, h / 2], [w, h], [w / 2, h], [0, h], [0, h / 2]]) { ctx.fillStyle = '#24443d'; ctx.fillRect(x + dx - 3, y + dy - 3, 6, 6); ctx.strokeRect(x + dx - 3, y + dy - 3, 6, 6) }
       ctx.restore()
     }
@@ -168,7 +169,7 @@ export default function CursorBuilders({ container, reduced, active, workspace =
               let position = elapsed < .55 ? point(entrance(agentId, initial), initial, elapsed / .55, agentId) : target
               if (elapsed > clock + .2) position = point(target, { x: target.x + 28, y: target.y + 34 }, (elapsed - clock - .2) / .4, agentId)
               cursor(agentId, position, clamp(elapsed * 8) * clamp((clock + .6 - elapsed) * 5), elapsed < .72 ? 'set text' : 'typing', true, elapsed - .58)
-              if (elapsed >= .72 && !finished) { ctx.save(); ctx.fillStyle = '#ffffff'; ctx.fillRect(target.x, r.top - hostTop + 2, 1.3, r.height); ctx.restore() }
+              if (elapsed >= .72 && !finished) { ctx.save(); ctx.fillStyle = workspace ? '#283024' : '#ffffff'; ctx.fillRect(target.x, r.top - hostTop + 2, 1.3, r.height); ctx.restore() }
             }
             words.forEach((word, wordIndex) => {
               const local = elapsed - wordEnds[wordIndex] + .35

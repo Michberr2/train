@@ -564,8 +564,10 @@ const MAP_KEYS = [
 const SHAPES_KEY = 'nalu-map-shapes'
 const ACTIVE_KEY = 'nalu-map-active-layers' // layers you turned on persist + reload with the map
 
-export default function MapPanel({ request }: { request?: { key: number; query: string } } = {}) {
+export default function MapPanel({ request }: { request?: { key: number; query: string; mode?: 'places' | 'auto' } } = {}) {
   const handledRequest = useRef<number>()
+  const displayKey = request?.mode === 'places' ? 'nalu-map-display-places' : 'nalu-map-display'
+  const activeLayersKey = request?.mode === 'places' ? `${ACTIVE_KEY}-places` : ACTIVE_KEY
   const { isDark } = useTheme()
   // Roadmap base ('dark'/'streets') follows the app theme; satellite/terrain
   // keep Google's native imagery.
@@ -589,7 +591,7 @@ export default function MapPanel({ request }: { request?: { key: number; query: 
   const [ready, setReady] = useState(false)
   const [authErr, setAuthErr] = useState(false)
   const [sel, setSel] = useState<string | null>(null)
-  const initialDisplay = useRef(readMapDisplay())
+  const initialDisplay = useRef(readMapDisplay(displayKey))
   const [base, setBase] = useState(initialDisplay.current.base)
   const [opacity, setOpacity] = useState(initialDisplay.current.opacity)
   const opacityRef = useRef(opacity)
@@ -603,7 +605,7 @@ export default function MapPanel({ request }: { request?: { key: number; query: 
   const activeRef = useRef<Record<string, boolean>>({})
   const initialLayersRef = useRef<string[] | null>(null)
   if (initialLayersRef.current === null) {
-    try { initialLayersRef.current = savedMapLayers(localStorage, ACTIVE_KEY, LAYERS.map((layer) => layer.key)) } catch { initialLayersRef.current = [] }
+    try { initialLayersRef.current = savedMapLayers(localStorage, activeLayersKey, LAYERS.map((layer) => layer.key)) } catch { initialLayersRef.current = [] }
   }
   const setLayerActive = (lk: string, on: boolean) => {
     activeRef.current = { ...activeRef.current, [lk]: on }
@@ -667,7 +669,8 @@ export default function MapPanel({ request }: { request?: { key: number; query: 
     if (!key) { setErr('Map key not configured (VITE_GOOGLE_MAPS_KEY).'); return }
     let alive = true
     let sdk: GMaps
-    setErr(''); setReady(false); setAuthErr(false)
+    handledRequest.current = undefined
+    setLoading(false); setErr(''); setReady(false); setAuthErr(false)
     loadMaps(key).then((g) => {
       if (!alive || !mapEl.current) return
       sdk = g
@@ -693,6 +696,8 @@ export default function MapPanel({ request }: { request?: { key: number; query: 
     return () => {
       alive = false
       searchRequests.current.cancel()
+      handledRequest.current = undefined
+      setLoading(false)
       Object.values(layerRequests.current).forEach((scope) => scope.cancel())
       Object.values(layerIdleTimers.current).forEach(clearTimeout); layerIdleTimers.current = {}
       ++permitLoadRef.current; ++parcelLoadRef.current
@@ -712,7 +717,7 @@ export default function MapPanel({ request }: { request?: { key: number; query: 
   }, [key, mapAttempt])
 
   const saveDisplay = () => {
-    try { localStorage.setItem('nalu-map-display', JSON.stringify({ ...initialDisplay.current, opacity: opacityRef.current })) } catch { /* Preferences remain usable for this session. */ }
+    try { localStorage.setItem(displayKey, JSON.stringify({ ...initialDisplay.current, opacity: opacityRef.current })) } catch { /* Preferences remain usable for this session. */ }
   }
   useEffect(() => { initialDisplay.current.base = base; saveDisplay() }, [base, opacity])
   useEffect(() => {
@@ -1009,7 +1014,7 @@ export default function MapPanel({ request }: { request?: { key: number; query: 
   // stays built — "store it and call it" without re-asking. ----
   useEffect(() => {
     if (!restoredLayersRef.current) return
-    try { localStorage.setItem(ACTIVE_KEY, JSON.stringify(Object.keys(active).filter((k) => active[k]))) } catch { /* */ }
+    try { localStorage.setItem(activeLayersKey, JSON.stringify(Object.keys(active).filter((k) => active[k]))) } catch { /* */ }
   }, [active])
   const restoredLayersRef = useRef(false)
   useEffect(() => {
@@ -1373,11 +1378,16 @@ export default function MapPanel({ request }: { request?: { key: number; query: 
     // Bias the search to WHERE THE QUESTION IS ABOUT (the AI's center), not the
     // stale current view — otherwise "korean food in Orlando" searches the old spot.
     const c = mapRef.current?.getCenter?.()
-    const bias = biasAt && typeof biasAt.lat === 'number' ? biasAt : (c ? { lat: c.lat(), lng: c.lng() } : {})
-    const r = await fetch('/api/web', { method: 'POST', signal: request.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'places', query: q, ...bias }) })
+    const explicitArea = /\bin\s+([^?!]+?)[.!?]*$/i.exec(q)
+    const near = explicitArea?.[1]?.trim()
+    const placeQuery = near ? q.slice(0, explicitArea!.index).trim() : q
+    // An explicitly named city wins over a stale saved camera in the OSM fallback too.
+    const bias = biasAt && typeof biasAt.lat === 'number' ? biasAt : near ? {} : (c ? { lat: c.lat(), lng: c.lng() } : {})
+    const r = await fetch('/api/web', { method: 'POST', signal: request.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'places', query: placeQuery, ...(near ? { near } : {}), ...bias }) })
     const d = await mapJson(r)
     searchRequests.current.check(request)
     const res = mapPlaces(d.results)
+    if (request && d.source === 'osm') setAnswer('Live locations from OpenStreetMap. Ratings are unavailable, so these results are not a ranked best-of list.')
     setResults(res); plot(res, fit)
     return res
   }
@@ -1546,7 +1556,7 @@ export default function MapPanel({ request }: { request?: { key: number; query: 
     setQuery(request.query)
     if (!ready || authErr) return
     handledRequest.current = request.key
-    void runSearch(request.query)
+    void runSearch(request.query, request.mode !== 'places')
   }, [request?.key, ready, authErr])
   const search = () => void runSearch(query.trim())
   // One-tap category search — straight to Places (no AI round-trip needed).
