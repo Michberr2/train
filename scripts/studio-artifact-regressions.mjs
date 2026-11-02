@@ -88,10 +88,14 @@ try {
   }
   const galleryButton = title => page.getByRole('button').filter({ has: page.getByText(title, { exact: true }) }).last()
   const selectStudio = async () => {
-    // The authenticated app opens its space picker even with a saved view.
+    // The authenticated app starts with scenery even with a saved view.
     // Wait for that shell before checking lazy navigation, then enter Studio
-    // through the same carousel control a returning account uses.
+    // through the account menu's workspace picker, preserving the scenic home.
     await page.locator('.nalu-workspace').waitFor()
+    if (await page.locator('.nalu-workspace[data-workspace-home=true]').count()) {
+      await page.getByRole('button', { name: 'Account options', exact: true }).click()
+      await page.getByRole('button', { name: 'All workspaces', exact: true }).click()
+    }
     if (await page.locator('.nalu-workspace[data-workspace-launcher=true]').count()) {
       const carousel = page.getByRole('region', { name: 'Choose a workspace', exact: true })
       await carousel.waitFor()
@@ -103,8 +107,17 @@ try {
     const dock = page.getByRole('navigation', { name: 'Workspace navigation', exact: true })
     if (await dock.count()) await dock.getByRole('button', { name: 'Studio', exact: true }).click()
     else if (await page.locator('.nalu-workspace').getAttribute('data-workspace-view') !== 'studio') {
-      await page.getByRole('button', { name: 'Chats', exact: true }).click()
-      await page.getByRole('button', { name: 'Studio', exact: true }).click()
+      if (await page.getByRole('button', { name: 'Account options', exact: true }).count()) {
+        await page.getByRole('button', { name: 'Account options', exact: true }).click()
+        await page.getByRole('button', { name: 'All workspaces', exact: true }).click()
+        const carousel = page.getByRole('region', { name: 'Choose a workspace', exact: true })
+        await carousel.getByRole('button', { name: 'Show Studio', exact: true }).click()
+        await carousel.getByRole('button', { name: 'Open Studio', exact: true }).press('Enter')
+        await expect(carousel).toHaveCount(0)
+      } else {
+        await page.getByRole('button', { name: 'Chats', exact: true }).click()
+        await page.getByRole('button', { name: 'Studio', exact: true }).click()
+      }
     }
   }
   const showLibrary = async () => {

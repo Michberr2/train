@@ -1,7 +1,7 @@
 // Real application, account lifecycle and stream decoder; isolated transport only.
 import assert from 'node:assert/strict'
 import { chromium, expect } from '@playwright/test'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { createServer } from 'vite'
 import { fileURLToPath } from 'node:url'
 let base = process.env.GENERATIVE_TEST_URL, server
@@ -64,8 +64,9 @@ await context.route('**/*', async route => {
  else if (url.pathname === '/api/community') json = { rooms: [] }
  return route.fulfill({ json })
 })
+let page
 try {
- const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message))
+ page = await context.newPage(); page.on('pageerror', e => errors.push(e.message))
  await page.goto(base)
  await page.getByRole('button', { name: 'Enter local workspace' }).click()
  const home = page.getByRole('region', { name: 'Your generative workspace' })
@@ -157,4 +158,4 @@ try {
  assert.deepEqual(errors, [])
  assert.deepEqual(remote, [])
  console.log('PASS cursor coverage across text/layout/controls, dynamic registration and Motion pause/resume without lost edits; progressive UI before stream completion; live calculation, checklist and sorting edits; reload restoration; follow-up preservation; form continuation; Stop; full-page conversation; mobile layout; new capability/library navigation and settings; no legacy carousel, floating icons or remote fixture traffic')
-} finally { await context.close(); await browser.close(); await server?.close() }
+} catch(error) { await page?.screenshot({path: output+'/failure.png'}).catch(()=>{}); await writeFile(output+'/failure.json',JSON.stringify({errors,text:await page?.locator('body').innerText()},null,2)); throw error } finally { await context.close(); await browser.close(); await server?.close() }

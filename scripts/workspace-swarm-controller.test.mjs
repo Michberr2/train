@@ -238,3 +238,16 @@ test('live task instructions preserve their full text and reject excess text ins
   await assert.rejects(client.addTask('x'.repeat(2001), 'Rocky'), /2,000 characters/)
   assert.equal(writes.length, 1); client.dispose()
 })
+
+test('the global work drawer stops the selected project task without navigating away from the current conversation', async () => {
+  const state = { ...base(), tasks: [task('launch-work', { status: 'running' }), task('travel-work', { projectId: 'travel', status: 'running' })] }, writes = []
+  const client = setup(async (_url, options) => { const body = JSON.parse(options.body); if (body.action !== 'list') writes.push(body); return response(state, writes.length + 1) })
+  await client.refresh(); client.navigate('launch', 'Milo'); client.setDraft('Keep this private draft.')
+  await client.stopProjectTask('travel', 'travel-work')
+  assert.equal(writes.length, 1); assert.equal(writes[0].action, 'stop-task'); assert.equal(writes[0].projectId, 'travel'); assert.equal(writes[0].taskId, 'travel-work')
+  assert.equal(client.getSnapshot().preferences.activeProjectId, 'launch')
+  assert.equal(client.getSnapshot().preferences.recipient, 'Milo')
+  assert.equal(client.getSnapshot().preferences.drafts['launch::Milo'], 'Keep this private draft.')
+  await assert.rejects(client.stopProjectTask('travel', 'launch-work'), /not available in that project/)
+  assert.equal(writes.length, 1); client.dispose()
+})

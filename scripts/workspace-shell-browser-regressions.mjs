@@ -1,7 +1,9 @@
 // Actual combined App, dock, Memory, connectors, settings and ordinary chat.
 // Every API is synthetic; no provider/OAuth/account is contacted.
 import assert from 'node:assert/strict'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'vite'
 import tailwindcss from 'tailwindcss'
@@ -10,11 +12,28 @@ import tailwindConfig from '../client/tailwind.config.js'
 import { chromium, expect } from '@playwright/test'
 const root=fileURLToPath(new URL('../client/',import.meta.url)),out=process.env.OUTPUT_DIR||'/private/tmp/nalu-workspace-shell-browser-review'
 await mkdir(out,{recursive:true})
-const server=await createServer({root,configFile:root+'vite.config.ts',cacheDir:out+'/vite-cache',css:{postcss:{plugins:[tailwindcss({...tailwindConfig,content:[root+'src/**/*.{ts,tsx}']}),autoprefixer()]}},server:{host:'127.0.0.1',port:5198,strictPort:true,hmr:false}})
-const origin='http://127.0.0.1:5198',report={checks:[],errors:[],requests:[],blocked:[]}
+const cacheDir=await mkdtemp(join(tmpdir(),'nalu-shell-browser-'))
+const server=await createServer({root,configFile:root+'vite.config.ts',cacheDir,css:{postcss:{plugins:[tailwindcss({...tailwindConfig,content:[root+'src/**/*.{ts,tsx}']}),autoprefixer()]}},server:{host:'127.0.0.1',port:0,strictPort:false,hmr:false}})
+let origin
+const report={checks:[],errors:[],requests:[],blocked:[]}
 const carouselOnly=process.env.CAROUSEL_ONLY==='1'
 let browser, lastPage
 const initial=[{id:'planning-chat',title:'Planning conversation',createdAt:1,messages:[{id:'user-one',role:'user',content:'Remember the launch plans.'},{id:'answer-one',role:'assistant',content:'The launch plan is saved here.'}]}]
+async function showSpaces(page) {
+ const all=page.getByRole('button',{name:'All workspaces',exact:true})
+ if(!await all.isVisible())await page.getByRole('button',{name:'Account options',exact:true}).click()
+ await all.click()
+ await expect(page.getByRole('region',{name:'Choose a workspace',exact:true})).toBeVisible()
+}
+async function openSpace(page,name) {
+ await showSpaces(page)
+ const picker=page.getByRole('region',{name:'Choose a workspace',exact:true})
+ await picker.getByRole('button',{name:`Show ${name}`,exact:true}).click()
+ await expect(picker.getByRole('button',{name:`${name}, selected`,exact:true})).toBeVisible()
+ // Exercise keyboard activation as well as the pointer-open path below.
+ await picker.getByRole('button',{name:name==='Skills'?'Choose your skills':`Open ${name}`,exact:true}).press('Enter')
+ await expect(picker).toHaveCount(0)
+}
 async function checkCarouselFit(page){
  const originalViewport=page.viewportSize(),carousel=page.getByRole('region',{name:'Choose a workspace',exact:true})
  await page.emulateMedia({reducedMotion:'reduce'})
@@ -69,7 +88,7 @@ async function checkCarouselFit(page){
  console.log('PASS carousel fit: six selections at five desktop/mobile viewport sizes')
 }
 try{
- await server.listen();browser=await chromium.launch()
+ await server.listen();origin=`http://127.0.0.1:${server.httpServer.address().port}`;browser=await chromium.launch()
  for(const viewport of carouselOnly?[{width:1728,height:906}]:[{width:1440,height:1000},{width:390,height:844}]){
   const context=await browser.newContext({viewport});let cloud={'nalu-chats':JSON.stringify(initial)}
   const swarmState={version:1,mode:'live',projects:[],tasks:[],messages:[],turns:[]},swarmRequests=[];let swarmRevision=1
@@ -116,21 +135,27 @@ try{
    return route.fulfill({json:{ok:true,connections:[],providers:[],results:[],items:[],tasks:[],outputs:[],runs:[],members:[]}})
   })
   const page=await context.newPage();lastPage=page;page.setDefaultTimeout(20000);page.on('pageerror',error=>report.errors.push({width:viewport.width,error:error.message,stack:error.stack}))
+  page.on('console',message=>{if(message.type()==='error'||/reload|optimiz|outdated/i.test(message.text()))(report.console??=[]).push(message.text())})
+  page.on('framenavigated',frame=>{if(frame===page.mainFrame())(report.navigations??=[]).push({url:frame.url(),at:report.requests.length})})
   await page.goto(origin,{waitUntil:'domcontentloaded'})
   const dock=page.getByRole('navigation',{name:'Workspace navigation',exact:true})
-  await expect(dock).toBeVisible({timeout:60000})
+  await expect(page.locator('[data-workspace-home=true]')).toHaveCount(1,{timeout:60000})
+  await expect(dock).toHaveCount(0)
   const carousel=page.getByRole('region',{name:'Choose a workspace',exact:true})
-  await expect(carousel).toBeVisible()
+  await expect(carousel).toHaveCount(0)
+  await expect(page.getByRole('button',{name:'Open Nalu chat',exact:true})).toBeVisible()
+  report.checks.push(`${viewport.width}: the authenticated screen starts with scenery and a connected chat lip, without apps or a carousel`)
+  await showSpaces(page)
   await expect(carousel.getByRole('heading',{name:'What would you like to do?',exact:true})).toBeVisible()
   if(viewport.width>950)await checkCarouselFit(page)
   if(carouselOnly){await context.close();continue}
   assert.equal(await page.evaluate(()=>localStorage.getItem('nalu-view')),'studio')
   if(viewport.width>950){
-   const frame=await page.evaluate(()=>{const scene=document.querySelector('.review-desktop-scene'),dock=document.querySelector('.workspace-app-dock'),brand=document.querySelector('.review-header-brand');return{sceneTop:scene.getBoundingClientRect().top,shoulderTop:dock.getBoundingClientRect().top+parseFloat(getComputedStyle(dock,'::before').top),brandBottom:brand.getBoundingClientRect().bottom}})
-   assert.ok(Math.abs(frame.sceneTop-frame.shoulderTop)<=1,'The scenic top edge aligns with the dock shoulders')
+   const frame=await page.evaluate(()=>{const scene=document.querySelector('.review-desktop-scene'),lip=document.querySelector('.workspace-chat-trigger'),brand=document.querySelector('.review-header-brand');return{sceneTop:scene.getBoundingClientRect().top,lipBase:lip.getBoundingClientRect().top+44,sceneBottom:scene.getBoundingClientRect().bottom,brandBottom:brand.getBoundingClientRect().bottom}})
+   assert.ok(Math.abs(frame.sceneBottom-frame.lipBase)<=1,'The chat lip connects to the scenic bottom edge')
    assert.equal(frame.sceneTop,40,'Production keeps the approved 40px white top frame without a preview banner')
    assert.ok(frame.brandBottom<=frame.sceneTop+1,'The Nalu wordmark fits inside the top white frame')
-   report.checks.push(`${viewport.width}: top white frame aligns with dock shoulders and contains the wordmark`)
+   report.checks.push(`${viewport.width}: white frame connects to the chat lip and contains the wordmark`)
   }
   await page.screenshot({path:`${out}/${viewport.width}-carousel.png`})
   const assertNaturalScene = async () => {
@@ -142,21 +167,24 @@ try{
   await expect(carousel).toHaveCount(0)
   await expect(page.getByLabel('Studio tool',{exact:true})).toBeVisible()
   await page.reload({waitUntil:'domcontentloaded'})
-  await expect(carousel).toBeVisible({timeout:60000})
+  await expect(page.locator('[data-workspace-home=true]')).toHaveCount(1,{timeout:60000})
+  await expect(carousel).toHaveCount(0)
+  await showSpaces(page)
+  await carousel.getByRole('button',{name:'Show Studio',exact:true}).click()
   assert.ok((await page.evaluate(()=>JSON.parse(localStorage.getItem('nalu-chats')||'[]'))).some(chat=>chat.id==='planning-chat'))
   await carousel.getByRole('button',{name:'Open Studio',exact:true}).click()
   await expect(carousel).toHaveCount(0)
-  report.checks.push(`${viewport.width}: saved tool does not bypass the initial or returning carousel; opening Studio preserves saved chats`)
+  report.checks.push(`${viewport.width}: saved tool does not bypass the initial or returning scenery; manually opening Studio preserves saved chats`)
   await expect(page.getByText('Local preview',{exact:true})).toHaveCount(0)
   await expect(page.getByText(/Real workspace\s*·\s*sample work\s*·\s*no account changes/i)).toHaveCount(0)
   await expect(page.getByText('Sample activity',{exact:true})).toHaveCount(0)
   report.checks.push(`${viewport.width}: authenticated App contains no local-preview or sample-activity banner`)
-  for(const label of ['Studio','Autopilot','Map','Memory','Skills']){const box=await dock.getByRole('button',{name:label,exact:true}).boundingBox();assert.ok(box&&box.x>=0&&box.x+box.width<=viewport.width+1,`${label} dock control fits ${viewport.width}`)}
-  await dock.getByRole('button',{name:'Studio',exact:true}).click()
+  await expect(dock).toHaveCount(0)
+  await openSpace(page,'Studio')
   await expect(page.getByLabel('Studio tool',{exact:true})).toBeVisible();assert.ok(await page.getByLabel('Studio tool',{exact:true}).locator('option').count()>=17)
   await page.getByLabel('Studio tool',{exact:true}).selectOption({label:'Website'});await expect(page.getByLabel('Your idea',{exact:true})).toBeVisible()
-  report.checks.push(`${viewport.width}: dock controls fit and ordinary Studio tool selection works`)
-  await dock.getByRole('button',{name:'Memory',exact:true}).click()
+  report.checks.push(`${viewport.width}: manual workspace navigation and ordinary Studio tool selection work`)
+  await openSpace(page,'Memory')
   await expect(page.getByRole('heading',{name:'Memory',exact:true})).toBeVisible()
   await page.getByRole('tab',{name:'Saved context',exact:true}).click()
   await page.getByRole('textbox',{name:'Search saved work',exact:true}).fill('Planning conversation')
@@ -164,7 +192,7 @@ try{
   await expect(page.locator('#memory-review-details')).toBeVisible()
   await page.getByRole('button',{name:'Zoom memory graph in',exact:true}).click();await page.getByRole('button',{name:'Fit all memory connections',exact:true}).click()
   await page.screenshot({path:`${out}/${viewport.width}-memory.png`});report.checks.push(`${viewport.width}: saved Memory search, details, real graph and zoom/fit controls`)
-  await dock.getByRole('button',{name:'Skills',exact:true}).click();await page.getByRole('button',{name:'Connections & Chrome',exact:true}).click()
+  await openSpace(page,'Skills');await page.getByRole('button',{name:'Connections & Chrome',exact:true}).click()
   const gmail=page.getByRole('region',{name:'Gmail connection',exact:true});await expect(gmail).toBeVisible();await gmail.getByRole('button',{name:'Set up connection',exact:true}).click()
   const connection=page.getByRole('dialog',{name:'App connections',exact:true});await expect(connection).toBeVisible();await expect(connection.getByRole('textbox',{name:'Connection name',exact:true})).toBeVisible()
   const bounds=await connection.boundingBox();assert.ok(bounds.x>=0&&bounds.x+bounds.width<=viewport.width+1&&bounds.y>=0&&bounds.y+bounds.height<=viewport.height+1)
@@ -217,8 +245,8 @@ try{
   await chat.getByRole('navigation',{name:'Quick conversations',exact:true}).getByRole('button',{name:'Planning conversation',exact:true}).click()
   await expect(chat.getByText('Offline ordinary chat response.',{exact:true})).toBeVisible()
   report.checks.push(`${viewport.width}: idle Rocky and Milo are selectable, create/open real private group branches, render their own replies and preserve ordinary chat`)
-  await page.reload({waitUntil:'domcontentloaded'});await expect(carousel).toBeVisible({timeout:60000})
-  await carousel.getByRole('button',{name:'Open Studio',exact:true}).click()
+  await page.reload({waitUntil:'domcontentloaded'});await expect(page.locator('[data-workspace-home=true]')).toHaveCount(1,{timeout:60000})
+  await openSpace(page,'Studio')
   await chooseAgent('Rocky')
   await expect(chat.getByRole('log',{name:'Rocky direct conversation',exact:true}).getByText('Rocky is working with you on Launch with the pack.',{exact:true})).toBeVisible()
   await expect(chat.getByRole('log',{name:'Rocky direct conversation',exact:true}).getByText('MILO_PRIVATE: Help with the launch brief.',{exact:true})).toHaveCount(0)
@@ -246,4 +274,4 @@ try{
  await signedOut.close()
  }
  assert.deepEqual(report.errors,[])
-}catch(error){report.failure=error.message;report.stack=error.stack;if(lastPage&&!lastPage.isClosed()){await lastPage.screenshot({path:out+'/failure.png'}).catch(()=>{});await writeFile(out+'/failure-body.txt',await lastPage.locator('body').innerText().catch(()=>''))}throw error}finally{await writeFile(out+'/report.json',JSON.stringify(report,null,2));await browser?.close();await server.close()}
+}catch(error){report.failure=error.message;report.stack=error.stack;if(lastPage&&!lastPage.isClosed()){await lastPage.screenshot({path:out+'/failure.png'}).catch(()=>{});await writeFile(out+'/failure-body.txt',await lastPage.locator('body').innerText().catch(()=>''))}throw error}finally{await writeFile(out+'/report.json',JSON.stringify(report,null,2));await browser?.close();await server.close();await rm(cacheDir,{recursive:true,force:true})}

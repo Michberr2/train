@@ -20,10 +20,11 @@ import './workspace-window-theme.css'
 import './workspace-studio-theme.css'
 import './workspace-glass.css'
 import './workspace-tool-typography.css'
-import './generative-workspace.css'
 import './workspace-studio-interior.css'
 import './workspace-map-memory-interior.css'
 import './workspace-utility-interior.css'
+import './workspace-adaptive.css'
+import './generative-workspace.css'
 
 /** Shared visual surface only. Authentication, storage and network access stay
  * with the caller; importing this component never initializes sample data. */

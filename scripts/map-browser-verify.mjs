@@ -1,6 +1,9 @@
 // Deterministic Map UI regression checks. Local component + fake Google SDK only;
 // provider availability/geographic accuracy require separate live verification.
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from 'tailwindcss'
@@ -35,7 +38,9 @@ function App() { const [shown, show] = React.useState(true); return React.create
   React.createElement('button', { onClick: () => show(!shown) }, shown ? 'Unmount map' : 'Mount map'),
   React.createElement('div', { style: { display: 'flex', height: '90vh' } }, shown ? React.createElement(MapPanel) : null)); }
 createRoot(document.getElementById('root')).render(React.createElement(React.StrictMode, null, React.createElement(App)));`
+const cacheDir = await mkdtemp(join(tmpdir(), 'nalu-map-browser-'))
 const server = await createServer({
+  cacheDir,
   configFile: false,
   root: fileURLToPath(new URL('../client', import.meta.url)),
   define: { 'import.meta.env.VITE_GOOGLE_MAPS_KEY': JSON.stringify('map-regression-test') },
@@ -55,11 +60,12 @@ const server = await createServer({
       })
     },
   }],
-  server: { host: '127.0.0.1', port: 5183, strictPort: true },
+  server: { host: '127.0.0.1', port: 0, strictPort: false },
 })
 let browser
 try {
   await server.listen()
+  const origin = `http://127.0.0.1:${server.httpServer.address().port}`
   browser = await chromium.launch({ headless: true })
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   const errors = []
@@ -185,7 +191,7 @@ try {
     ] } })
     return route.fulfill({ json: { results: [place(payload.query)] } })
   })
-  await page.goto('http://127.0.0.1:5183/__map-test')
+  await page.goto(origin + '/__map-test')
   await page.getByRole('button', { name: /^Layers/ }).waitFor()
   if (comparisonCheck) {
     const input = page.getByRole('textbox', { name: 'Map search', exact: true })
@@ -485,4 +491,5 @@ try {
 } finally {
   await browser?.close()
   await server.close()
+  await rm(cacheDir, { recursive: true, force: true })
 }

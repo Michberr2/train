@@ -102,6 +102,7 @@ export default function useSwarm({ accountId, enabled = true, active = false }: 
     recentRooms: prefs.recentRooms, busyTaskIds: snapshot.busyTaskIds,
     startTask: id => client ? mutate(() => client.startTask(id)) : undefined,
     stopTask: id => client ? mutate(() => client.stopTask(id)) : undefined,
+    stopProjectTask: (projectId, taskId) => client ? mutate(() => client.stopProjectTask(projectId, taskId)) : undefined,
     shareTask: id => client ? mutate(() => client.shareTask(id)) : undefined,
     continueStudio: client ? id => mutate(() => client.continueStudio(id)) : undefined,
     getArtifact: client?.getArtifact,
