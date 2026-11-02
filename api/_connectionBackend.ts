@@ -1,3 +1,4 @@
+import { loginAllowed } from './_loginAccess'
 import { getClient, userIdForToken } from './_db'
 import { CloudflareStore } from './_cloudflareStore'
 import type { ConnectionClient } from './_connectionStore'
@@ -12,7 +13,7 @@ export function connectionBackend(): ConnectionBackend {
     return { client, async connect() {}, async close() {}, async userId(token) {
       if (!token) return null
       const result = await client.query('SELECT u.id FROM nalu_sessions s JOIN nalu_users u ON u.id=s.user_id WHERE s.token=?', [token])
-      return result.results[0] ? String(result.results[0].id) : null
+      return result.results[0] && loginAllowed(result.results[0].id) ? String(result.results[0].id) : null
     } }
   }
   const client = getClient()

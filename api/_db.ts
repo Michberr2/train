@@ -1,3 +1,4 @@
+import { loginAllowed } from './_loginAccess'
 import { CloudflareStore, CloudflareConflict } from './_cloudflareStore'
 import { CloudflareDataStore } from './_cloudflareDataStore'
 import { profileText } from './_profileText'
@@ -135,7 +136,8 @@ export function safeJson(s: string): Record<string, unknown> {
 export async function userIdForToken(client: Client, token: string | null): Promise<string | null> {
   if (!token) return null
   const r = await client.query('SELECT user_id FROM nalu_sessions WHERE token = $1', [token])
-  return r.rows[0]?.user_id ?? null
+  const id = r.rows[0]?.user_id
+  return id && loginAllowed(id) ? id : null
 }
 
 // ---- Phone numbers (E.164) for the phone-call feature -----------------------
@@ -190,7 +192,7 @@ export async function identityForRequest(req: { headers: Record<string, unknown>
       const store = new CloudflareStore()
       const result = await store.query('SELECT u.id,u.display_name FROM nalu_sessions s JOIN nalu_users u ON u.id=s.user_id WHERE s.token=?', [token])
       const user = result.results[0]
-      if (!user) return null
+      if (!user || !loginAllowed(user.id)) return null
       const id = String(user.id), saved = await store.readDocuments(id, ['nalu-ai-profile'])
       const value = saved.entries[0] ? JSON.parse(saved.entries[0].value) : ''
       return { id, name: String(user.display_name || id.split('@')[0]), profile: (typeof value === 'string' ? value : JSON.stringify(value)).slice(0, 2000) }
@@ -204,7 +206,7 @@ export async function identityForRequest(req: { headers: Record<string, unknown>
       `SELECT u.id, u.display_name FROM nalu_sessions s JOIN nalu_users u ON u.id = s.user_id WHERE s.token = $1`,
       [token],
     )
-    if (!u.rows.length) return null
+    if (!u.rows.length || !loginAllowed(u.rows[0].id)) return null
     const id = String(u.rows[0].id)
     const name = String(u.rows[0].display_name || id.split('@')[0])
     let profile = ''
