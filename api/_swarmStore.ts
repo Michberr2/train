@@ -16,7 +16,10 @@ export interface SwarmJob {
   quotaCleanupPending?: boolean
   artifact?: { type: string; [key: string]: unknown }
 }
-export interface SwarmSnapshot { state: SwarmState; jobs: SwarmJob[]; revision: number }
+export interface SwarmDelegationCommand {
+  id: string; status: 'accepted' | 'cancelled'; hash?: string; createdAt: number; updatedAt: number
+}
+export interface SwarmSnapshot { state: SwarmState; jobs: SwarmJob[]; revision: number; delegations?: SwarmDelegationCommand[] }
 export type SwarmMutation = (draft: SwarmSnapshot) => SwarmSnapshot | void
 export const SWARM_LEASE_MS = 120_000
 export const SWARM_MAX_STATE_BYTES = 3_000_000
@@ -35,7 +38,7 @@ function validAgent(project: SwarmState['projects'][number], member: string): bo
     && !!profile.appearance && [profile.appearance.coat, profile.appearance.ears, profile.appearance.markings, profile.appearance.eyes].every((value, index) => Number.isInteger(value) && value >= 0 && value < [8, 4, 6, 4][index])
 }
 const STATUSES = new Set(['queued', 'running', 'waiting', 'done', 'failed', 'cancelled'])
-const TABLES = ['projects', 'rooms', 'messages', 'tasks', 'task_threads', 'turns', 'jobs'] as const
+const TABLES = ['projects', 'rooms', 'messages', 'tasks', 'task_threads', 'turns', 'jobs', 'delegations'] as const
 type Table = typeof TABLES[number]
 type RecordRow = { id: string; projectId?: string; thread?: string; status?: string; requestId?: string; leaseUntil?: number; updatedAt?: number; [key: string]: unknown }
 type Records = Record<Table, RecordRow[]>
@@ -67,11 +70,23 @@ function records(snapshot: SwarmSnapshot): Records {
   const { state } = snapshot
   const rooms = state.projects.flatMap(project => (['group', ...project.members] as SwarmThread[]).map(thread => ({ id: JSON.stringify([project.id, thread]), projectId: project.id, thread })))
   const links = state.tasks.flatMap(task => (task.threads || []).map(thread => ({ id: JSON.stringify([task.id, thread]), projectId: task.projectId, taskId: task.id, thread })))
-  return { projects: state.projects, rooms, messages: state.messages, tasks: state.tasks, task_threads: links, turns: state.turns, jobs: snapshot.jobs } as unknown as Records
+  return { projects: state.projects, rooms, messages: state.messages, tasks: state.tasks, task_threads: links, turns: state.turns, jobs: snapshot.jobs, delegations: snapshot.delegations || [] } as unknown as Records
 }
 
 function assertSnapshot(value: SwarmSnapshot, previous?: SwarmSnapshot): void {
   const state = value.state
+  const commands = value.delegations || []
+  if (commands.length > 1000 || new Set(commands.map(command => command.id)).size !== commands.length) throw new Error('Invalid delegation command history.')
+  for (const command of commands) {
+    if (!/^[\w:-]{8,100}$/.test(command.id) || !['accepted', 'cancelled'].includes(command.status)
+      || (command.hash !== undefined && !/^[a-f0-9]{64}$/.test(command.hash)) || command.status === 'accepted' && !command.hash
+      || !timestamp(command.createdAt) || !timestamp(command.updatedAt) || command.updatedAt < command.createdAt) throw new Error('Invalid delegation command.')
+  }
+  for (const prior of previous?.delegations || []) {
+    const current = commands.find(command => command.id === prior.id)
+    if (!current || current.hash !== prior.hash || current.createdAt !== prior.createdAt || current.updatedAt < prior.updatedAt
+      || prior.status === 'cancelled' && current.status !== 'cancelled') throw new Error('A saved delegation command cannot be removed or restarted.')
+  }
   if (state.version !== 1 || state.mode !== 'live') throw new Error('Only real Swarm state can be saved.')
   const projectMap = new Map(state.projects.map(project => [project.id, project]))
   const room = (projectId: string, thread: string) => {
@@ -158,6 +173,7 @@ function assemble(revision: unknown, data: Partial<Record<Table, RecordRow[]>>):
   snapshot.state.tasks = (data.tasks || []) as unknown as SwarmState['tasks']
   snapshot.state.turns = (data.turns || []) as unknown as SwarmState['turns']
   snapshot.jobs = (data.jobs || []) as unknown as SwarmJob[]
+  snapshot.delegations = (data.delegations || []) as unknown as SwarmDelegationCommand[]
   snapshot.state.messages.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
   snapshot.jobs.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
   assertSnapshot(snapshot)

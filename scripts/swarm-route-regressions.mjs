@@ -32,7 +32,7 @@ class LocalD1 extends CloudflareStore {
   }
   async query(sql, params = []) { await this.tail; return { results: this.db.prepare(sql).all(...params) } }
 }
-const db = new LocalD1(await readFile('cloudflare/nalu-data/migrations/0016_swarm.sql', 'utf8'))
+const db = new LocalD1((await Promise.all(['0016_swarm.sql', '0019_swarm_delegations.sql'].map(name => readFile('cloudflare/nalu-data/migrations/' + name, 'utf8')))).join('\n'))
 const store = new SwarmStore(db)
 const fixture = globalThis.__swarmRoutes = { background: [], wakes: [], crons: 0, connects: 0, closes: 0, reservations: 0, releases: 0, quotaAllowed: true, quotaStatus: 429,
   backend() { return { client: db, connect: async () => { fixture.connects++ }, close: async () => { fixture.closes++ }, userId: async token => ({ 'alice-token': 'alice', 'bob-token': 'bob', 'carol-token': 'carol' })[token] || null } },
@@ -391,6 +391,33 @@ await regression('one local delegation atomically queues unrelated website and d
     else { assert.equal(job.studio.kind, 'document'); assert.match(JSON.stringify(job), /DOC_PRIVATE_BRIEF/); assert.doesNotMatch(JSON.stringify(job), /ACORN_PUBLIC_BRIEF/) }
   }
   assert.equal(fixture.reservations, quota); assert.equal(fixture.wakes.length, wakes)
+})
+await regression('durable delegation stops win before scheduling, after leasing, across reloads and without touching other owners', async () => {
+  const local = body => request({ ...body, executionMode: 'device' }, 'delegated-token')
+  const plan = { version: 1, projects: [{ key: 'stop-check', title: 'Stop check', brief: 'Independent job', tasks: [{ key: 'write', instructions: 'Write a short checklist.', kind: 'text' }] }] }
+  const blocked = { action: 'delegate-work', requestId: 'cancel-before-acceptance-01', plan: JSON.stringify(plan) }
+  assert.equal((await local({ action: 'stop-delegation', requestId: blocked.requestId })).code, 200)
+  assert.equal((await local(blocked)).code, 409, 'a delayed scheduling request cannot undo Stop')
+  const reloaded = new SwarmStore(db)
+  assert.equal((await reloaded.read('delegated-owner')).delegations.find(command => command.id === blocked.requestId).status, 'cancelled')
+  const body = { ...blocked, requestId: 'cancel-after-lease-01' }
+  assert.equal((await local(body)).code, 200)
+  // Drain the existing unrelated jobs before claiming the new text task.
+  let claim
+  for (let index = 0; index < 4; index++) {
+    const response = await local({ action: 'device-claim' })
+    if (response.body.deviceJob?.input === 'Write a short checklist.') { claim = response.body.deviceJob; break }
+  }
+  assert.ok(claim)
+  const other = await store.read('alice')
+  assert.equal((await local({ action: 'stop-delegation', requestId: body.requestId })).code, 200)
+  assert.equal((await local({ action: 'stop-delegation', requestId: body.requestId })).code, 200, 'repeated stops are idempotent')
+  const saved = await reloaded.read('delegated-owner')
+  assert.equal(saved.jobs.find(job => job.id === claim.id).status, 'cancelled')
+  assert.equal(saved.state.tasks.find(task => task.executionId === claim.id).status, 'cancelled')
+  assert.equal((await local({ action: 'device-result', jobId: claim.id, leaseToken: claim.leaseToken, result: { status: 'done', content: 'Late', summary: 'Late', artifact: { type: 'text', mime: 'text/markdown', filename: 'late.md', content: 'Late' } } })).code, 409)
+  assert.equal((await local(body)).code, 409)
+  assert.deepEqual((await store.read('alice')), other)
 })
 if (failures.length) { console.error(`${failures.length} outstanding Swarm regression(s): ${failures.join('; ')}`); process.exitCode = 1 }
 delete globalThis.__swarmRoutes

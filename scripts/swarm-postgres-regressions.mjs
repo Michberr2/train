@@ -188,8 +188,25 @@ try {
   assert.equal((await store.claim('local-user')).executionMode, undefined)
   check('real PostgreSQL JSON scheduler filters and concurrent claims isolate device work, leases, immutable mode, and legacy callers')
 
+  await admin.query("INSERT INTO nalu_users VALUES('delegation-user')")
+  const delegationAction = (body, target = stores[0]) => action({ ...body, executionMode: 'device' }, target, 'delegation-user')
+  const manifest = { version: 1, projects: [{ key: 'guide', title: 'Analysis guide', brief: 'Clean a CSV.', tasks: [{ key: 'write', kind: 'text', instructions: 'Write a CSV cleaning checklist.' }] }] }
+  const batch = { action: 'delegate-work', requestId: 'pg-delegation-accept-01', plan: JSON.stringify(manifest) }
+  await delegationAction({ action: 'stop-delegation', requestId: 'pg-delegation-preempt-01' }, stores[1])
+  await assert.rejects(delegationAction({ ...batch, requestId: 'pg-delegation-preempt-01' }), /was stopped/)
+  await delegationAction(batch)
+  const delegatedLease = await stores[2].claim('delegation-user', undefined, 1, 'device')
+  assert.ok(delegatedLease)
+  await delegationAction({ action: 'stop-delegation', requestId: batch.requestId }, stores[3])
+  const cancelledBatch = await stores[1].read('delegation-user')
+  assert.equal(cancelledBatch.delegations.find(command => command.id === batch.requestId).status, 'cancelled')
+  assert.equal(cancelledBatch.jobs.find(job => job.id === delegatedLease.id).status, 'cancelled')
+  await assert.rejects(delegationAction(batch), /was stopped/)
+  assert.deepEqual(await stores[1].read('bob'), bobBefore)
+  check('real PostgreSQL persists delegation cancellation across independent connections before acceptance and after a leased job')
+
   await admin.query('DELETE FROM nalu_users WHERE id=$1', ['alice'])
-  for (const table of ['accounts', 'projects', 'rooms', 'messages', 'tasks', 'task_threads', 'turns', 'jobs']) {
+  for (const table of ['accounts', 'projects', 'rooms', 'messages', 'tasks', 'task_threads', 'turns', 'jobs', 'delegations']) {
     assert.equal(Number((await admin.query(`SELECT COUNT(*) AS n FROM nalu_swarm_${table} WHERE owner_id=$1`, ['alice'])).rows[0].n), 0)
   }
   assert.deepEqual(await stores[1].read('bob'), bobBefore)

@@ -120,6 +120,10 @@ import SkillsPanel from './SkillsPanel'
 import AutomationsPanel from './AutomationsPanel'
 import SettingsPanel from './SettingsPanel'
 import LocalAIControl from './LocalAIControl'
+import { getLocalPreferences } from '../../lib/localAI'
+import { isLocalSwarmRequest, localDelegationKey, planLocalSwarmWork } from '../../lib/localSwarmPlan'
+import { parseSwarmWorkPlan } from '../../../../shared/swarmWorkPlan'
+import DelegatedWorkCard, { type SavedDelegation } from './design/DelegatedWorkCard'
 import { pushChatsFull, sessionWasCleared, getSyncState, retrySync } from '../../lib/sync'
 import { idbGetChats, idbSetChats } from '../../lib/chatStore'
 import { getToken } from '../../lib/localAuth'
@@ -136,6 +140,7 @@ interface Msg {
   updatedAt?: number
   role: 'user' | 'assistant'
   content: string
+  delegation?: SavedDelegation
   reasoning?: string // chain-of-thought (plain English) when Deep think is on
   sheet?: SheetDoc
   doc?: DocDoc
@@ -1240,10 +1245,11 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   )
 
   const send = useCallback(
-    async (text: string, opts?: { keepView?: boolean; userMessageId?: string; assistantMessageId?: string; studioKind?: string; studioTarget?: Creation; movieSeconds?: number; attachments?: Attachment[] }) => {
+    async (text: string, opts?: { keepView?: boolean; userMessageId?: string; assistantMessageId?: string; studioKind?: string; studioTarget?: Creation; movieSeconds?: number; attachments?: Attachment[]; delegation?: SavedDelegation }) => {
       const content = text.trim()
       if (!content || streaming) return
-      const workspaceRequest = reviewLayout && !opts?.keepView && !opts?.studioKind && dismissedIntent !== content ? workspaceForRequest(content) : null
+      const delegateRequest = reviewLayout && !previewLayout && !opts?.studioKind && !opts?.studioTarget && dismissedIntent !== content && (Boolean(opts?.delegation) || isLocalSwarmRequest(content))
+      const workspaceRequest = !delegateRequest && reviewLayout && !opts?.keepView && !opts?.studioKind && dismissedIntent !== content ? workspaceForRequest(content) : null
       // A floating conversation keeps its original space, including after async attachment work.
       const keepCurrentView = opts?.keepView || reviewChatOpenRef.current || workspaceRequest?.view === 'studio'
       // Per-target re-entry guard (see sendingChatsRef): block a second fire into
@@ -1281,12 +1287,12 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       const existing = (chatsRef.current.find((c) => c.id === chatId)) || chats.find((c) => c.id === chatId)
       const assistantMessageId = opts?.assistantMessageId || uid()
       if (opts?.keepView || workspaceRequest?.view === 'studio') setStudioTurn({ chatId, messageId: assistantMessageId })
-      const history: Msg[] = [...(existing?.messages ?? []).map(m => m.clarify && !m.clarify.answered ? { ...m, updatedAt: Date.now(), clarify: { ...m.clarify, answered: true } } : m), { id: opts?.userMessageId || uid(), updatedAt: Date.now(), role: 'user', content }]
+      const history: Msg[] = [...(existing?.messages ?? []).map(m => m.clarify && !m.clarify.answered ? { ...m, updatedAt: Date.now(), clarify: { ...m.clarify, answered: true } } : m), { id: opts?.userMessageId || uid(), updatedAt: Date.now(), role: 'user', content, ...(opts?.delegation ? { delegation: opts.delegation } : {}) }]
 
       // Commit the user's request before attachments or any network operation.
       // A refresh immediately after Send must not lose the new conversation.
       const workspaceOnly = workspaceRequest && workspaceRequest.view !== 'studio'
-      const checkpoint: Chat = { ...(existing || { id: chatId, title: content.length > 40 ? content.slice(0, 40) + '…' : content, createdAt: Date.now() }), messages: [...history, { id: assistantMessageId, updatedAt: Date.now(), role: 'assistant', content: workspaceOnly ? `I’ve opened ${workspaceRequest.view === 'agents' ? 'Autopilot' : workspaceRequest.view === 'map' ? 'Map with your request' : 'your saved work'}.` : '' }] }
+      const checkpoint: Chat = { ...(existing || { id: chatId, title: content.length > 40 ? content.slice(0, 40) + '…' : content, createdAt: Date.now() }), messages: [...history, { id: assistantMessageId, updatedAt: Date.now(), role: 'assistant', ...(opts?.delegation ? { delegation: opts.delegation } : {}), content: workspaceOnly ? `I’ve opened ${workspaceRequest.view === 'agents' ? 'Autopilot' : workspaceRequest.view === 'map' ? 'Map with your request' : 'your saved work'}.` : '' }] }
       const checkpointChats = [checkpoint, ...chatsRef.current.filter(c => c.id !== chatId)]
       chatsRef.current = checkpointChats; setChats(checkpointChats)
       persistChats(checkpointChats, sessionToken)
@@ -1370,6 +1376,60 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       const withCtx = (prompt: string) => buildPreamble + (ctxBlock ? prompt + ctxBlock : prompt)
       const writingBrief = { messages: history.map(m => ({ role: m.role, content: m.content })), material: ctxParts.join('\n\n'), memory: buildChatMemory(history) }
       const writingPrompt = buildPreamble + content
+
+      // A multi-output request belongs to the real account Swarm, rather than
+      // whichever single Studio keyword happens to match first.
+      if (delegateRequest && !plain && !resuming) {
+        const patchDelegation = (message: string, saved?: SavedDelegation) => {
+          if (getToken() !== sessionToken || sessionWasCleared()) return
+          const next = chatsRef.current.map(chat => chat.id !== chatId ? chat : { ...chat, messages: chat.messages.map(item => item.id === assistantMessageId
+            ? { ...item, content: message, updatedAt: Date.now(), ...(saved ? { delegation: saved } : {}) }
+            : item.id === history[history.length - 1].id ? { ...item, attachments: sentAttachments, ...(saved ? { delegation: saved } : {}) } : item) })
+          chatsRef.current = next; setChats(next); persistChats(next, sessionToken)
+        }
+        let saved: SavedDelegation | undefined = opts?.delegation
+        let stopResult: Promise<{ ok: boolean; error?: string }> | undefined
+        let scheduling = false
+        const cancel = () => {
+          if (scheduling && saved && liveSwarm.stopDelegation && !stopResult) stopResult = liveSwarm.stopDelegation(saved.requestId).then(() => ({ ok: true }), reason => ({ ok: false, error: reason instanceof Error ? reason.message : 'Stop has not been confirmed.' }))
+        }
+        ctrl.signal.addEventListener('abort', cancel)
+        setRouteName('Nalu swarm')
+        try {
+          if (!getLocalPreferences().enabled) { window.dispatchEvent(new Event('nalu-local-ai-setup')); throw Error('Enable local AI to run these agents on your computer. No work was started.') }
+          if (!liveSwarm.delegateWork || !liveSwarm.stopDelegation) throw Error('Your agent connection is not ready. No work was started; retry once your account is connected.')
+          if (imageAtts.length || imageLoadError) throw Error('The local swarm cannot inspect attached images yet. No work was started; use a written brief for these jobs.')
+          const requestId = await localDelegationKey(history[history.length - 1].id!, content, ctxParts.join('\n\n'))
+          ctrl.signal.throwIfAborted()
+          if (opts?.delegation && opts.delegation.requestId !== requestId) throw Error('The source material changed since this plan was saved. Send a new message so the agents can plan from the updated material.')
+          const plan = opts?.delegation ? parseSwarmWorkPlan(opts.delegation.plan) : await planLocalSwarmWork(content, history.slice(0, -1).map(message => ({ role: message.role, content: message.content })), ctxParts.join('\n\n'), ctrl.signal, stage => patchDelegation(stage))
+          ctrl.signal.throwIfAborted()
+          saved = { requestId, plan }
+          // Save the exact validated plan BEFORE enqueueing. Retry and reload
+          // must use this same manifest and identity, never a fresh model plan.
+          patchDelegation('I’m assigning your projects to their agents.', saved)
+          scheduling = true
+          const ids = await liveSwarm.delegateWork(plan, requestId)
+          if (!ids.length) throw Error('Scheduling was not confirmed. Retry this saved request to check it without creating duplicate work.')
+          if (ctrl.signal.aborted) {
+            cancel(); const result = await stopResult
+            patchDelegation(result?.ok ? 'Stopped these agents. Any work already finished is saved.' : `Stop is not confirmed yet. ${result?.error || 'Check the work drawer before starting again.'}`, saved)
+          } else {
+            patchDelegation(`I’ve queued ${plan.projects.reduce((count, project) => count + project.tasks.length, 0)} jobs across ${plan.projects.length} ${plan.projects.length === 1 ? 'project' : 'projects'} on your computer. You can keep chatting while they work.`, saved)
+            setWorkDrawerOpen(true)
+          }
+        } catch (reason) {
+          if (ctrl.signal.aborted) {
+            cancel(); const result = await stopResult
+            patchDelegation(!scheduling ? 'Stopped before any jobs were scheduled.' : result?.ok ? 'Stopped these agents. Any work already finished is saved.' : `Stop is not confirmed yet. ${result?.error || 'Check the work drawer.'}`, saved)
+          } else patchDelegation(reason instanceof Error ? reason.message : 'The agents could not be scheduled. Retry this saved request.', saved)
+        } finally {
+          ctrl.signal.removeEventListener('abort', cancel)
+          if (abortRef.current === ctrl) { setStreaming(false); abortRef.current = null; setRouteName('Nalu') }
+          sendingChatsRef.current.delete(guardKey); finishReviewActivity()
+        }
+        return
+      }
 
       // Two agents on one artifact: run the matching domain specialist first
       // (via forced routing) and hand its expert brief to the artifact engine.
@@ -2356,7 +2416,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         finishReviewActivity()
       }
     },
-    [activeId, chats, streaming, model, activeRepo, dismissedIntent, thinkLevel, reviewLayout],
+    [activeId, chats, streaming, model, activeRepo, dismissedIntent, thinkLevel, reviewLayout, previewLayout, liveSwarm],
   )
 
   const stop = useCallback(() => {
@@ -2391,7 +2451,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     const nextChats = chatsRef.current.map((c) => (c.id === activeId ? { ...c, messages: sliced } : c))
     chatsRef.current = nextChats
     setChats(nextChats)
-    void send(prompt, { userMessageId: msgs[userIdx].id, assistantMessageId: msgs[i]?.id, attachments: msgs[userIdx].attachments })
+    void send(prompt, { userMessageId: msgs[userIdx].id, assistantMessageId: msgs[i]?.id, attachments: msgs[userIdx].attachments, delegation: msgs[i]?.delegation || msgs[userIdx].delegation })
   }, [streaming, activeId, send])
 
   // User answered the interactive clarifying questions → compose their tapped
@@ -2586,6 +2646,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
                         <span>Thinking with you…</span>
                       </div>
                     ) : null}
+                    {m.delegation && <DelegatedWorkCard saved={m.delegation} swarm={liveSwarm} onOpen={openSwarmActivity} onTrack={() => setWorkDrawerOpen(true)}/>}
                     <div
                       className={i === messages.length - 1 && (m.sheet || m.doc || m.deck || m.design || m.cad || m.video) ? 'nalu-materialize' : undefined}
                       onAnimationEnd={(e) => e.currentTarget.classList.remove('nalu-materialize')}

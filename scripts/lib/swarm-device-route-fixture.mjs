@@ -34,7 +34,7 @@ export async function swarmDeviceRouteFixture() {
     }
     async query(sql, params = []) { await this.tail; return { results: this.db.prepare(sql).all(...params) } }
   }
-  const db = new LocalStore(await readFile('cloudflare/nalu-data/migrations/0016_swarm.sql', 'utf8'))
+  const db = new LocalStore((await Promise.all(['0016_swarm.sql', '0019_swarm_delegations.sql'].map(name => readFile('cloudflare/nalu-data/migrations/' + name, 'utf8')))).join('\n'))
   const state = globalThis.__deviceSwarmAPI = { quota: 0, cloud: 0, background: [], calls: [], backend: () => ({ client: db, connect: async () => {}, close: async () => {}, userId: async token => ({ 'browser-token': 'browser-owner', 'other-token': 'other-owner' })[token] || null }) }
   return { state, store: new SwarmStore(db), async call(body, token = 'browser-token') {
     state.calls.push({ action: body.action, executionMode: body.executionMode, token })

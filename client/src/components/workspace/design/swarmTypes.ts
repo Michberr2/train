@@ -61,6 +61,7 @@ export interface SwarmController {
   stop: () => void
   createProject: (title: string, brief: string) => string | null | Promise<string | null>
   delegateWork?: (plan: SwarmWorkPlan, sourceRequestId?: string) => Promise<string[]>
+  stopDelegation?: (sourceRequestId: string) => Promise<void>
   addAgent?: (name: string, personality: string, appearance: SwarmDogAppearance) => void | Promise<void>
   addTask: (title: string, assignee: SwarmAgentId) => void | Promise<void>
   /** Manual tracking in sample mode. Live execution status is read-only in UI. */

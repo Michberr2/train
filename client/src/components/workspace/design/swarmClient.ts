@@ -12,7 +12,7 @@ const emptyPreferences = (): Preferences => ({ activeProjectId: '', recipient: '
 export const emptySwarmSnapshot: SwarmSnapshot = { state: emptyState(), revision: -1, preferences: emptyPreferences(), creating: false, loading: true, error: '', sendingRooms: [], busyTaskIds: [] }
 const roomThread = (value: unknown): value is SwarmThread => typeof value === 'string' && value.length > 0 && value.length <= 48
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
-const intentActions = new Set(['delegate-work', 'create', 'send', 'add-agent', 'add-task', 'start-task', 'continue-studio'])
+const intentActions = new Set(['delegate-work', 'stop-delegation', 'create', 'send', 'add-agent', 'add-task', 'start-task', 'continue-studio'])
 const intentKey = (action: string, payload: Payload, context = '') => JSON.stringify([action, Object.entries(payload).sort(([a], [b]) => a.localeCompare(b)), context])
 function readPreferences(storage: Options['storage'], key: string): Preferences {
   try {
@@ -65,7 +65,7 @@ export class SwarmClient {
     return { ...prefs, activeProjectId, recipient: isSwarmRoom(state, activeProjectId, prefs.recipient) ? prefs.recipient : 'group', recentRooms: prefs.recentRooms.filter(room => isSwarmRoom(state, room.projectId, room.thread)) }
   }
   private acknowledge(intent: Intent, prefs: Preferences): Preferences {
-    let next = { ...prefs, intents: prefs.intents.filter(item => item.requestId !== intent.requestId) }
+    let next = { ...prefs, intents: prefs.intents.filter(item => item.requestId !== intent.requestId || item.action !== intent.action) }
     if (intent.action === 'send') {
       const room = swarmRoomId(intent.payload.projectId, intent.payload.thread as SwarmThread)
       if (prefs.drafts[room] === intent.originalDraft) next = { ...next, drafts: { ...prefs.drafts, [room]: '' } }
@@ -126,7 +126,12 @@ export class SwarmClient {
   refresh = (): Promise<void> => {
     if (this.read) return this.read
     const generation = this.generation
-    const pending = this.call({ action: 'list' }).then(() => undefined).catch(error => {
+    const pending = this.call({ action: 'list' }).then(async () => {
+      // Stop is a durable user instruction, including after a lost response or
+      // reload. Replay only cancellation automatically, never new model work.
+      const stops = this.snapshot.preferences.intents.filter(intent => intent.action === 'stop-delegation')
+      await Promise.all(stops.map(intent => this.mutate('stop-delegation', intent.payload, { requestId: intent.requestId, context: intent.requestId })))
+    }).catch(error => {
       if (this.isCurrent() && generation === this.generation && !(error instanceof SwarmSessionChanged)) {
         this.readError = error instanceof Error ? error.message : 'Swarm updates are unavailable. Please try again.'
         this.patch({ loading: false, error: this.readError })
@@ -161,8 +166,8 @@ export class SwarmClient {
       if (this.isCurrent() && generation === this.generation && !(error instanceof SwarmSessionChanged)) {
         // A concurrent poll can confirm the exact request before its original
         // connection fails. Do not turn that acknowledged send into an error.
-        if (captured && !this.snapshot.preferences.intents.some(item => item.requestId === captured.requestId)) return { state: this.snapshot.state, revision: this.snapshot.revision, projectId: captured.action === 'create' ? this.snapshot.state.projects.find(project => project.requestId === captured.requestId)?.id : captured.action === 'delegate-work' ? this.snapshot.state.projects.find(project => project.delegation?.requestId === captured.requestId)?.id : undefined }
-        if (captured && error instanceof SwarmRequestError && !error.uncertain) this.preferences({ ...this.snapshot.preferences, intents: this.snapshot.preferences.intents.filter(item => item.requestId !== captured.requestId) })
+        if (captured && !this.snapshot.preferences.intents.some(item => item.requestId === captured.requestId && item.action === captured.action)) return { state: this.snapshot.state, revision: this.snapshot.revision, projectId: captured.action === 'create' ? this.snapshot.state.projects.find(project => project.requestId === captured.requestId)?.id : captured.action === 'delegate-work' ? this.snapshot.state.projects.find(project => project.delegation?.requestId === captured.requestId)?.id : undefined }
+        if (captured && error instanceof SwarmRequestError && !error.uncertain) this.preferences({ ...this.snapshot.preferences, intents: this.snapshot.preferences.intents.filter(item => item.requestId !== captured.requestId || item.action !== captured.action) })
         this.patch({ error: error instanceof Error ? error.message : 'That request could not be completed. Please try again.' })
       }
       throw error
@@ -210,6 +215,10 @@ export class SwarmClient {
     const receipt = response.state.projects.find(project => project.id === response.projectId)?.delegation
     if (!receipt) throw new Error('The delegated work was not confirmed. Retry the same request; saved work is unchanged.')
     return response.state.projects.filter(project => project.delegation?.requestId === receipt.requestId).map(project => project.id)
+  }
+  stopDelegation = async (sourceRequestId: string): Promise<void> => {
+    if (!/^[\w:-]{8,100}$/.test(sourceRequestId)) throw new Error('Invalid saved delegation request.')
+    await this.mutate('stop-delegation', { requestId: sourceRequestId }, { requestId: sourceRequestId, context: sourceRequestId })
   }
   addTask = async (title: string, assignee: SwarmAgentId): Promise<void> => {
     const { activeProjectId: projectId, recipient: thread } = this.snapshot.preferences

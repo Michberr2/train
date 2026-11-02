@@ -25,7 +25,7 @@ new Function('require', 'module', 'exports', bundled.outputFiles[0].text)(create
 const { SwarmStore, CloudflareStore, worker, withStorageDeadline } = module.exports
 const db = new DatabaseSync(':memory:')
 db.exec("PRAGMA foreign_keys=ON; CREATE TABLE nalu_users(id TEXT PRIMARY KEY); INSERT INTO nalu_users VALUES('alice'),('bob');")
-db.exec(await readFile('cloudflare/nalu-data/migrations/0016_swarm.sql', 'utf8'))
+db.exec((await Promise.all(['0016_swarm.sql', '0019_swarm_delegations.sql'].map(name => readFile('cloudflare/nalu-data/migrations/' + name, 'utf8')))).join('\n'))
 const secret = 'local-swarm-http-contract-fixture-only'
 const env = { NALU_DATA_SECRET: secret, DB: {
   prepare(sql) { return { bind(...params) { return { all: async () => ({ results: db.prepare(sql).all(...params) }) } } } },

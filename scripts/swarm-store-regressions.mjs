@@ -10,7 +10,7 @@ new Function('require', 'module', 'exports', bundled.outputFiles[0].text)(create
 const { SwarmStore, CloudflareStore, SWARM_MAX_STATE_BYTES, SWARM_MAX_SNAPSHOT_BYTES, SwarmStoreLimitError } = mod.exports
 const clone = value => JSON.parse(JSON.stringify(value))
 const tables = ['projects', 'rooms', 'messages', 'tasks', 'task_threads', 'turns', 'jobs']
-const migration = await readFile('cloudflare/nalu-data/migrations/0016_swarm.sql', 'utf8')
+const migration = (await Promise.all(['0016_swarm.sql', '0019_swarm_delegations.sql'].map(name => readFile('cloudflare/nalu-data/migrations/' + name, 'utf8')))).join('\n')
 
 class SQLiteD1 extends CloudflareStore {
   constructor() {

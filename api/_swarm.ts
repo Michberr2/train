@@ -78,15 +78,33 @@ export function applySwarmAction(snapshot: SwarmSnapshot, owner: string, body: R
 
 function applyAction(snapshot: SwarmSnapshot, owner: string, body: Record<string, unknown>, now: number): void {
   const { state } = snapshot
+  if (body.action === 'stop-delegation') {
+    const request = requestId(body)
+    const commands = snapshot.delegations ||= []
+    let command = commands.find(item => item.id === request)
+    if (!command) {
+      if (commands.length >= 1000) throw new SwarmError('This account has reached its saved delegation limit.', 429)
+      commands.push(command = { id: request, status: 'cancelled', createdAt: now, updatedAt: now })
+    } else if (command.status !== 'cancelled') { command.status = 'cancelled'; command.updatedAt = Math.max(now, command.updatedAt) }
+    const projects = new Set(state.projects.filter(project => project.delegation?.requestId === request).map(project => project.id))
+    for (const job of snapshot.jobs) if (projects.has(job.projectId)) cancelJob(snapshot, job, now)
+    return
+  }
   if (body.action === 'delegate-work') {
     if (body.executionMode !== 'device') throw new SwarmError('Delegated work needs the local device executor. No cloud worker was started.')
     const request = requestId(body)
+    const commands = snapshot.delegations ||= []
+    const command = commands.find(item => item.id === request)
+    if (command?.status === 'cancelled') throw new SwarmError('This delegation was stopped. Send a new request to start new work.', 409)
     let plan
     try { plan = parseSwarmWorkPlan(body.plan) } catch (reason) { throw new SwarmError(reason instanceof Error ? reason.message : 'Invalid delegated work plan.') }
     const hash = createHash('sha256').update(JSON.stringify(plan)).digest('hex')
+    if (command && command.hash !== hash) throw new SwarmError('This delegation request already belongs to a different work plan.', 409)
+    if (!command && commands.length >= 1000) throw new SwarmError('This account has reached its saved delegation limit.', 429)
     const previous = state.projects.filter(project => project.delegation?.requestId === request)
     if (previous.length) {
       if (previous.length !== plan.projects.length || previous.some(project => project.delegation?.hash !== hash)) throw new SwarmError('This delegation request already belongs to a different work plan.', 409)
+      if (!command) commands.push({ id: request, hash, status: 'accepted', createdAt: now, updatedAt: now })
       return
     }
     const childRequest = (key: string) => delegatedRequest(request, key)
@@ -115,6 +133,7 @@ function applyAction(snapshot: SwarmSnapshot, owner: string, body: Record<string
         }
       }
     }
+    commands.push({ id: request, hash, status: 'accepted', createdAt: now, updatedAt: now })
     return
   }
   if (body.action === 'create') {

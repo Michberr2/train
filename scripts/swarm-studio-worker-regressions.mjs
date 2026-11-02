@@ -39,7 +39,7 @@ class LocalD1 extends CloudflareStore {
   }
   async query(sql, params=[]) { await this.tail; return {results:this.db.prepare(sql).all(...params)} }
 }
-const db = new LocalD1(await readFile('cloudflare/nalu-data/migrations/0016_swarm.sql','utf8'))
+const db = new LocalD1((await Promise.all(['0016_swarm.sql', '0019_swarm_delegations.sql'].map(name => readFile('cloudflare/nalu-data/migrations/' + name, 'utf8')))).join('\n'))
 const store = new SwarmStore(db)
 const fixture = globalThis.__studioWorker = { background:[], calls:[], refunds:0, refundAttempts:0, refundError:false, generate:async()=>{} }
 const mutate = body => store.mutate('owner', draft => applySwarmAction(draft,'owner',body,Date.now()))
