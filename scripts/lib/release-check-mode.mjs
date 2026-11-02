@@ -16,6 +16,7 @@ export const BROWSER_EXECUTING_SCRIPTS = Object.freeze([
   'studio-artifact-regressions.mjs',
   'autopilot-output-browser-regressions.mjs',
   'map-browser-verify.mjs',
+  'map-fallback-browser-regressions.mjs',
   'workspace-shell-browser-regressions.mjs',
   'generative-workspace-browser-regressions.mjs',
   'flow-cross-client-integration.mjs',

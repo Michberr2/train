@@ -265,3 +265,17 @@ The authenticated surface shares the login page’s cursor construction engine.
 It discovers newly streamed elements and builds text, controls, tables, charts,
 and layout as they arrive. Motion can be paused; reduced-motion preferences show
 complete usable content immediately. Cursor animation never submits user actions.
+
+Maps automatically switch to a key-free, WebGL-free street map when the primary
+SDK, credentials or street tiles fail. Place searches retry twice at most, then
+recover matching saved results for the current account. The eight most recent
+successful searches are retained locally, with a saved timestamp displayed during
+an outage. Reconnecting refreshes the backup map's current search. Loaded street
+tiles remain visible offline; if tiles cannot load, pins, coordinates, directions
+links and camera controls remain usable. New searches and uncached streets still
+require an internet connection. Advanced map layers remain available through the
+full map, with a retry control in the backup view.
+
+Map resilience checks: `node scripts/map-reliability-regressions.mjs` and
+`node scripts/map-fallback-browser-regressions.mjs` cover account isolation,
+provider failures, failed tiles, offline use and reconnection using isolated data.

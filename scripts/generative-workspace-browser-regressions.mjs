@@ -47,6 +47,7 @@ await context.addInitScript(({ layouts }) => {
 }, { layouts })
 await context.route('**/*', async route => {
  const request = route.request(), url = new URL(request.url())
+ if (url.hostname === 'tile.openstreetmap.org') return route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7QAAAABJRU5ErkJggg==', 'base64') })
  if (url.origin === 'http://127.0.0.1:8834' && /health/.test(url.pathname)) return route.fulfill({ status: 503, json: { error: 'Local GPU fixture is offline.' } })
  if (url.origin !== base && !['data:', 'blob:'].includes(url.protocol)) { if (url.hostname !== 'fonts.googleapis.com' && url.hostname !== 'fonts.gstatic.com') remote.push(url.origin); return route.abort() }
  if (url.pathname === '/__nalu_local_entry') return route.fulfill({ json: { ok: true, token: 'isolated-generative-test', user: { id: 'isolated-generative-owner', displayName: 'Local test' } } })
@@ -57,6 +58,7 @@ await context.route('**/*', async route => {
  else if (url.pathname === '/api/data') json = body.action === 'load' ? { data: {} } : { ok: true, items: [], tasks: [] }
  else if (url.pathname === '/api/swarm') json = { state: { version: 1, mode: 'live', projects: [], tasks: [], messages: [], turns: [] }, revision: 1 }
  else if (url.pathname === '/api/web' && body.action === 'intent') json = { kind: 'chat', mode: 'chat', additionalKinds: [] }
+ else if (url.pathname === '/api/web' && body.action === 'places') json = { source: 'osm', results: [{ name: 'Fixture Dallas restaurant', address: 'Dallas, Texas', lat: 32.78, lng: -96.8 }] }
  else if (url.pathname === '/api/team') json = { members: [], teams: [], invites: [] }
  else if (url.pathname === '/api/artifacts') json = { outputs: [] }
  else if (url.pathname === '/api/community') json = { rooms: [] }
