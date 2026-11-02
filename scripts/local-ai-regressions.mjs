@@ -55,6 +55,7 @@ try {
   assert.doesNotMatch(structuredPrompt, /You are Nalu/)
   assert.match(structuredPrompt, /sender identity supplied/)
   assert.match(structuredPrompt, /matching this schema/)
+  assert.match(local.prepareLocalMessages(request('Plan supported work', { jsonSchema: { type: 'object', properties: { unhandledRequests: { type: 'array', items: { type: 'string' } } } } }))[0].content, /unhandledRequests/)
   assert.throws(() => local.prepareLocalMessages(request([{ type: 'image_url', image_url: { url: 'data:image/png;base64,fixture' } }])), /vision model/)
   check('Task routing and explicit unsupported-input errors')
   await assert.rejects(local.requestChat(JSON.stringify(request())), /Set up your on-device/)
