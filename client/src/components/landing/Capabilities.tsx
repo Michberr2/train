@@ -6,11 +6,11 @@ import Scenery from '../Scenery'
 import BuildCopy from './BuildCopy'
 
 const capabilities = [
-  { name: 'Data Engineering', title: 'Data Engineering', description: 'Bring your data together. Clean it up, shape it, and turn scattered files and sources into something you can actually work with.', tags: 'DATA · PIPELINES · TRANSFORMATIONS' },
-  { name: 'AI Engineering', title: 'AI Engineering', description: 'Build AI around the way you work. From models and agents to useful tools, Nalu helps you go from an idea to a working system.', tags: 'MODELS · AGENTS · TRAINING · EVALUATION' },
+  { name: 'Screen control', title: 'Watch your AI work.', description: 'Screen control is the center of Nalu. Follow the cursors, see the tools take shape, and watch the work happen in front of you. Tell Nalu what to change as you go.', tags: 'VISIBLE ACTIONS · LIVE WORK · YOUR DIRECTION' },
+  { name: 'Agent swarms', title: 'One chat. Your swarm.', description: 'Talk to your agents, give each project its own conversation, and follow what everyone is working on. Keep the people, context, and saved work with the right project.', tags: 'AGENTS · PROJECTS · CONVERSATIONS' },
   { name: 'Autopilot', title: 'Autopilot', description: 'Give Nalu the goal. Connect agents, tools, and actions into a workflow, follow each run, and pick up where you left off. Less moving work around. More getting it done.', tags: 'AGENTS · WORKFLOWS · TOOLS · RUNS' },
   { name: 'Studio', title: 'Studio', description: 'Turn an idea into something you can open, edit, and share. Build documents, presentations, spreadsheets, images, and video with your context already in the conversation.', tags: 'DOCUMENTS · SLIDES · DATA · MEDIA' },
-  { name: 'Workspace', title: 'Workspace', description: 'Your conversations, files, projects, and tasks, together. Keep the context with the work and continue with Nalu across the web, desktop, and mobile.', tags: 'PROJECTS · CONTEXT · TASKS · SYNC' },
+  { name: 'Maps & research', title: 'Ask. Explore. See it.', description: 'Ask about a place, search the map, compare what you find, and keep the research with your work. Your conversation gives Nalu the direction.', tags: 'MAPS · PLACES · RESEARCH · SOURCES' },
 ]
 
 export default function Capabilities({ container, reduced }: { container: RefObject<HTMLDivElement>; reduced: boolean }) {

@@ -9,6 +9,8 @@
 .nalu-skip-link:focus { top: 10px; }
 .nalu-landing-header { position: fixed; inset: 0 0 auto; height: 88px; padding: 0 5.5vw; z-index: 50; display: flex; align-items: center; justify-content: space-between; gap: 30px; border-bottom: 1px solid #ffffff1a; background: #173d3940; isolation: isolate; }
 .nalu-brand { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; color: #fff; }
+.nalu-brand-lockup { display:flex; flex-direction:column; justify-content:center; gap:5px; flex-shrink:0; }
+.nalu-brand-promise { color:#fff; font:10px/1.3 Inter,Arial,sans-serif; letter-spacing:.01em; }
 .nalu-brand svg { width: 36px; height: 34px; }
 .nalu-brand span { font-size: 33px; line-height: 1; letter-spacing: -.065em; font-weight: 500; padding-bottom: 3px; }
 .nalu-desktop-navigation { display: flex; align-items: center; gap: 35px; margin-left: auto; margin-right: auto; }
@@ -212,6 +214,8 @@
   .nalu-brand { gap: 5px; }
   .nalu-brand svg { width: 28px; height: 27px; }
   .nalu-brand span { font-size: 28px; }
+  .nalu-brand-lockup { gap:3px; }
+  .nalu-brand-promise { font-size:8px; }
   .nalu-header-actions { gap: 14px; }
   .nalu-motion-toggle { gap: 7px; font-size: 6px; min-height: 38px; }
   .nalu-motion-toggle > svg { display: none; }
