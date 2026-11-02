@@ -1,0 +1,16 @@
+.nalu-landing { background: #496d68; }
+.nalu-landing, .nalu-landing button, .nalu-landing a { cursor: url('/cursors/nalu-pointer.svg') 7 7, auto; }
+.nalu-build-opening { position: relative; height: 225svh; }
+.nalu-build-opening > .nalu-hero { position: sticky; top: 0; min-height: 0; height: 100svh; }
+.nalu-build-word { position: relative; display: inline-block; white-space: pre; }
+.nalu-build-measure { visibility: hidden; }
+.nalu-build-written { position: absolute; left: 0; top: 0; white-space: pre; }
+.nalu-build-copy { position: relative; }
+.nalu-cursor-builders { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 40; pointer-events: none; }
+.nalu-build-scroll { position: absolute; top: 110px; right: 5.5vw; z-index: 3; font: 9px 'Nalu Mono', monospace; letter-spacing: .12em; opacity: .7; }
+.nalu-build-scroll button { display: flex; align-items: center; gap: 12px; min-height: 44px; }
+.nalu-landing[data-motion='reduced'] .nalu-build-opening { height: auto; }
+.nalu-landing[data-motion='reduced'] .nalu-build-opening > .nalu-hero { position: relative; min-height: 700px; }
+@media (max-width: 600px) { .nalu-build-scroll { top: 88px; font-size: 8px; } }
+
+.nalu-build-space { white-space: pre-wrap; }

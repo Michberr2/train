@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import { build } from 'esbuild'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { resolve } from 'node:path'
 async function load(path) {
   const directory = await fs.mkdtemp(fileURLToPath(new URL('./.payload-check-', import.meta.url)))
   try {
@@ -12,7 +13,10 @@ async function load(path) {
 }
 const { syncBodies } = await load('client/src/lib/syncPayload.ts')
 // A missing sibling checkout is a verification failure, never a skipped pass.
-const { syncBodies: desktopSyncBodies } = await load(fileURLToPath(new URL('../../naludesktop/src/lib/syncPayload.ts', import.meta.url)))
+const desktopPayload = process.env.NALU_REPOS_ROOT
+  ? resolve(process.env.NALU_REPOS_ROOT, 'naludesktop/src/lib/syncPayload.ts')
+  : fileURLToPath(new URL('../../naludesktop/src/lib/syncPayload.ts', import.meta.url))
+const { syncBodies: desktopSyncBodies } = await load(desktopPayload)
 const { syncEntries } = await load('api/_syncPayload.ts')
 const { mergeChatMessages } = await load('shared/chatMessages.ts')
 const { createWebsiteBehaviorContractV2, parseWebsiteBehaviorContract } = await load('api/_websiteBehavior.ts')

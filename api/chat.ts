@@ -25,12 +25,13 @@ import { fallbackProvider, emergencyProvider, chatComplete, repairByteLevelBpe, 
 import { reserveDailyQuota } from './_limits'
 import { identityForRequest, identityBlock, saveProfile } from './_db'
 import { type Specialist, SPECIALISTS, VISION, GENERAL, DS, MODEL_REASONING, hasImage, scoreSpecialistEx, pickSpecialist, pickSpecialistsMulti, classifierSystem, classifierUser, normalizeKind, DECISIVE_FINANCE } from './_specialists'
-import { allowsChatAppendix, chatVerificationRecord, CHAT_VERIFIER_PROMPT } from './_chatVerification'
+import { allowsChatAppendix, allowsChatProseExpansion, chatVerificationRecord, CHAT_VERIFIER_PROMPT } from './_chatVerification'
 import { supportsImageInput, configuredImageSupport } from './_modelCapabilities'
 import { budgetChatContext, ChatContextError } from './_chatBudget'
 import { abortableWork, fetchChatStream } from './_chatTransport'
 import { createToolCallBuffer } from './_chatTools'
 import { explicitWordContract, wordContractPrompt } from './_chatLength'
+import { completeChatProtocol, isChatResponseProtocol } from './_chatProtocol'
 
 interface ToolCall {
   id?: string
@@ -479,6 +480,21 @@ async function handleChat(req: any, res: any, clientAbort: AbortController, dead
     return
   }
 
+  // Explicit machine protocols are opt-in. Older web/mobile/CLI callers retain
+  // the existing chat path and cannot accidentally enable a desktop executor.
+  const responseProtocol = body.responseProtocol
+  if (responseProtocol !== undefined && (!isChatResponseProtocol(responseProtocol)
+    || body.cli === true || body.tools !== undefined || body.tool_choice !== undefined
+    || typeof body.systemPrompt !== 'string' || !body.systemPrompt.trim() || body.systemPrompt.length > 24000
+    || body.specialist !== undefined && !['code','vision'].includes(String(body.specialist))
+    || !Array.isArray(body.messages) || !body.messages.length || body.messages.some(message =>
+      !message || typeof message !== 'object' || !['user','assistant'].includes(message.role)
+      || message.tool_calls !== undefined || message.tool_call_id !== undefined
+      || typeof message.content !== 'string' && !Array.isArray(message.content)))) {
+    res.status(400).json({ error: 'Invalid responseProtocol request.' })
+    return
+  }
+
   const { messages, repo, githubConnected, origin, branch, tools: toolsRaw, tool_choice, think, specialist, cli, cwd, projectDoc, reasoning, maxTokens, webSearch, systemPrompt, memory } = body as {
     messages?: ChatMessage[]
     repo?: string
@@ -587,8 +603,9 @@ async function handleChat(req: any, res: any, clientAbort: AbortController, dead
 
   // Agent pipelines target a specialist DIRECTLY (no keyword routing): pass
   // body.specialist = 'finance' | 'studio' | 'general' | … to force the route.
-  const forced =
-    typeof specialist === 'string' && specialist
+  const forced = responseProtocol
+    ? specialist === 'vision' || imageRequest ? VISION : SPECIALISTS.find(s => s.kind === 'code')!
+    : typeof specialist === 'string' && specialist
       ? specialist === 'general'
         ? GENERAL
         : specialist === 'vision'
@@ -668,6 +685,44 @@ async function handleChat(req: any, res: any, clientAbort: AbortController, dead
       res.end()
       return
     }
+  }
+
+  if (isChatResponseProtocol(responseProtocol)) {
+    try {
+      send('route', { name: backend.name, kind: backend.kind, responseProtocol })
+      const result = await completeChatProtocol({
+        protocol: responseProtocol, instructions: String(systemPrompt),
+        messages: messages as Array<{ role: 'user' | 'assistant'; content: string | unknown[] }>,
+        providers: [
+          { ...backend, label: 'primary', responseFormat: env(`NALU_${backend.kind.toUpperCase()}_RESPONSE_FORMAT`) || env('NALU_DEFAULT_RESPONSE_FORMAT') },
+          ...[fallbackProvider(), emergencyProvider()].filter((provider): provider is NonNullable<typeof provider> => !!provider && (!imageRequest || supportsImageInput(provider)))
+            .map(provider => ({ ...provider, responseFormat: env(`NALU_${provider.label.toUpperCase()}_RESPONSE_FORMAT`) })),
+        ],
+        maxTokens: Math.min(userMaxTokens || 4096, 8192), reasoning: reasoningEffort,
+        deadlineMs, signal: clientAbort.signal,
+        onDiagnostic: event => console.info('[chat] protocol', JSON.stringify({ protocol: responseProtocol, ...event })),
+      })
+      if (clientAbort.signal.aborted) return
+      if (!result.text) {
+        await quota.release().catch(() => {})
+        send('error', { code: result.code || 'PROTOCOL_UNAVAILABLE', retryable: true,
+          message: result.code === 'PROTOCOL_INVALID_OUTPUT' ? 'The agent returned an invalid decision format. No action from this response was run. Retry the task.' : 'The agent service could not return a complete decision. No action from this response was run. Please retry.' })
+      } else {
+        send('delta', { text: result.text })
+        send('finish', { reason: 'stop' })
+        send('done', { ok: true })
+      }
+    } catch (error) {
+      if (!clientAbort.signal.aborted) {
+        await quota.release().catch(() => {})
+        send('error', { code: error instanceof ChatContextError ? error.code : 'PROTOCOL_UNAVAILABLE', retryable: !(error instanceof ChatContextError),
+          message: error instanceof ChatContextError ? error.message : 'The agent service could not finish this decision. No action from this response was run. Please retry.' })
+      }
+    } finally {
+      stopHeartbeat()
+      res.end()
+    }
+    return
   }
 
   const sysBase = buildSystemPrompt(
@@ -1227,8 +1282,10 @@ async function handleChat(req: any, res: any, clientAbort: AbortController, dead
     // explicitly requested a longer answer. One bounded prose-only continuation
     // gives the model a chance to add the missing explanation without padding
     // structured output, code, or answers that already satisfy the contract.
-    if (!refinedAnswer && wordContract && deliveredWordCount(answerSoFar) < wordContract.min &&
-      !/^\s*(?:```|[\[{])/.test(answerSoFar) && !clientAbort.signal.aborted) {
+    // A native tool request is an intermediate step, not an undersized answer.
+    // The client must execute it and return the evidence before any prose repair.
+    if (!refinedAnswer && !sawToolCalls && lastFinish === 'stop' && wordContract && deliveredWordCount(answerSoFar) < wordContract.min &&
+      allowsChatProseExpansion(answerSoFar, fullMessages.slice(1), typeof systemPrompt === 'string' ? systemPrompt : '') && !clientAbort.signal.aborted) {
       const beforeWords = deliveredWordCount(answerSoFar)
       try {
         const remaining = wordContract.min - beforeWords
@@ -1267,7 +1324,7 @@ async function handleChat(req: any, res: any, clientAbort: AbortController, dead
     // Append-only post-processing must respect exact output contracts. A Sources
     // footer or prose correction would corrupt already-streamed JSON/code.
     const conversationInstructions = typeof systemPrompt === 'string' ? systemPrompt.trim().slice(0, 12000) : ''
-    const canAppend = !wordContract && allowsChatAppendix(answerSoFar, fullMessages.slice(1), conversationInstructions)
+    const canAppend = !sawToolCalls && !wordContract && allowsChatAppendix(answerSoFar, fullMessages.slice(1), conversationInstructions)
     // For unconstrained prose, retain citations from research actually provided.
     if (canAppend && wantResearch && researchSources.length && !/https?:\/\//.test(answerSoFar)) {
       const list = '\n\n**Sources**\n' + researchSources.slice(0, 6).map((s) => `- [${s.title || s.url}](${s.url})`).join('\n')

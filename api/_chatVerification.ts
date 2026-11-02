@@ -3,22 +3,39 @@ type Message = { role: string; content?: unknown }
 const textOf = (value: unknown): string => typeof value === 'string' ? value : Array.isArray(value)
   ? value.filter(part => part && part.type === 'text' && typeof part.text === 'string').map(part => part.text).join('\n') : ''
 
+function isStructuredAnswer(answer: string): boolean {
+  const text = answer.trim()
+  try { JSON.parse(text); return true } catch { /* ordinary prose */ }
+  return /^```[^\n]*\n[\s\S]*\n```\s*$/.test(text)
+    || /^(?:<\?xml\b|<!doctype\s+html\b|<(?:html|svg)\b)/i.test(text)
+    || /^\|[^\n]+\|\r?\n\s*\|?[\s:|-]+\|?\r?\n/.test(text)
+}
+
+const structuredOutputContracts = [
+  /\b(?:json|csv|tsv|xml|yaml|code|sql)\s+only\b|\bnothing else\b/i,
+  /\b(?:as|in|using)\s+(?:(?:a|an|the)\s+)?(?:(?:valid|raw|plain)\s+)?(?:json|csv|tsv|xml|yaml|sql)\b/i,
+  /\b(?:return|output|write|provide|generate|produce|format)\b[^.!?\n]{0,100}\b(?:json|csv|tsv|xml|yaml|sql)\b|\b(?:json|csv|tsv|xml|yaml|sql)\s+format\b/i,
+]
+const instructionText = (messages: readonly Message[], instructions: string) =>
+  [instructions, ...messages.filter(message => message.role === 'user').map(message => textOf(message.content))].join('\n')
+
+/** A length repair can add prose to a completed prose answer, but must not
+ * turn a JSON string, CSV/YAML document or other requested format into prose. */
+export function allowsChatProseExpansion(answer: string, messages: readonly Message[], instructions = ''): boolean {
+  if (!answer.trim() || isStructuredAnswer(answer) || /^\s*(?:```|[\[{])/.test(answer)) return false
+  const contract = instructionText(messages, instructions)
+  return !structuredOutputContracts.some(pattern => pattern.test(contract))
+}
+
 /** The response already streamed. An optional appendix cannot safely rewrite a
  * machine-readable answer or violate the user's explicit output contract. */
 export function allowsChatAppendix(answer: string, messages: readonly Message[], instructions = ''): boolean {
-  const text = answer.trim()
-  if (!text) return false
-  try { JSON.parse(text); return false } catch { /* ordinary prose */ }
-  if (/^```[^\n]*\n[\s\S]*\n```\s*$/.test(text)) return false
-  if (/^(?:<\?xml\b|<!doctype\s+html\b|<(?:html|svg)\b)/i.test(text)) return false
-  if (/^\|[^\n]+\|\r?\n\s*\|?[\s:|-]+\|?\r?\n/.test(text)) return false
-  const contract = [instructions, ...messages.filter(message => message.role === 'user').map(message => textOf(message.content))].join('\n')
+  if (!answer.trim() || isStructuredAnswer(answer)) return false
+  const contract = instructionText(messages, instructions)
   const count = '(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten)'
   return ![
     /\b(?:return|respond|answer|output|print|repeat|write|provide)\b[^.!?\n]{0,100}\b(?:only|exactly|verbatim)\b/i,
-    /\b(?:json|csv|tsv|xml|yaml|code|sql)\s+only\b|\bnothing else\b/i,
-    /\b(?:as|in|using)\s+(?:(?:a|an|the)\s+)?(?:(?:valid|raw|plain)\s+)?(?:json|csv|tsv|xml|yaml|sql)\b/i,
-    /\b(?:return|output|write|provide|generate|produce|format)\b[^.!?\n]{0,100}\b(?:json|csv|tsv|xml|yaml|sql)\b|\b(?:json|csv|tsv|xml|yaml|sql)\s+format\b/i,
+    ...structuredOutputContracts,
     /\b(?:no|without)\s+(?:extra\s+|additional\s+)?(?:explanation|commentary|markdown|preamble|headings?)\b/i,
     new RegExp(`\\b(?:exactly|at most|no more than|no longer than|under|within)\\s+${count}\\s+(?:words?|characters?|sentences?|paragraphs?|lines?|bullets?)\\b`, 'i'),
     new RegExp(`\\b(?:in|use)\\s+(?:exactly\\s+)?${count}\\s+(?:words?|characters?|sentences?|paragraphs?|lines?|bullets?)\\b`, 'i'),

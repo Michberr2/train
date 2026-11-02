@@ -18,6 +18,7 @@ export function check() {
   }
   for (const name of names) verify(`${name} checkout available`, () => fs.existsSync(path.join(roots[name], '.git')))
   for (const file of ['nalu.mjs', 'install.sh']) verify(`published CLI ${file} matches desktop source`, () => hash(read('naludesktop', `cli/${file}`)) === hash(read('train', `client/public/${file}`)))
+  verify('desktop Agent argument contract matches shared API owner', () => hash(read('train', 'api/_agentActionContract.ts')) === hash(read('naludesktop', 'src/lib/agentActionContract.ts')))
   verify('mobile and desktop use the same production API', () => {
     const base = (repo, file) => read(repo, file).match(/export const API_BASE\s*=\s*['"]([^'"]+)/)?.[1]
     return base('nalumobile', 'src/api.ts') === 'https://n4lu.ai' && base('naludesktop', 'src/lib/naluApi.ts') === 'https://n4lu.ai'
