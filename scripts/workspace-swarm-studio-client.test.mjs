@@ -22,7 +22,7 @@ test('Studio continuation sends the exact waiting source and reconciles lost acc
   })
   await client.refresh(); client.navigate('launch', 'Milo')
   await assert.rejects(client.continueStudio('draft'))
-  assert.deepEqual(body, { action: 'continue-studio', projectId: 'launch', taskId: 'draft', sourceJobId: 'source-job', requestId: 'stable-id' })
+  assert.deepEqual(body, { action: 'continue-studio', projectId: 'launch', taskId: 'draft', sourceJobId: 'source-job', requestId: 'stable-id', executionMode: 'device' })
   assert.equal(client.getSnapshot().state.tasks[0].status, 'waiting')
   assert.equal(client.hasPendingRequests(), true)
   current = state([task({ status: 'queued', executionId: 'studio-job', executionRequestId: body.requestId })]); revision++
@@ -40,7 +40,7 @@ test('artifact reads require the current explicit room and exact execution; stal
   client.navigate('launch', 'Milo')
   await assert.rejects(client.getArtifact('draft', 'foreign-job'), /changed/)
   const read = client.getArtifact('draft', 'studio-job')
-  assert.deepEqual(body, { action: 'artifact', projectId: 'launch', taskId: 'draft', executionId: 'studio-job' })
+  assert.deepEqual(body, { action: 'artifact', projectId: 'launch', taskId: 'draft', executionId: 'studio-job', executionMode: 'device' })
   current = state([savedTask(2)]); revision++; await client.refresh()
   waiting.resolve(json({ artifact: artifact(), revision: 1 }))
   await assert.rejects(read, /newer creation/)
@@ -71,7 +71,7 @@ test('artifact saves include full payload and artifact revision, preserve metada
   await client.refresh(); client.navigate('launch', 'Milo')
   const payload = { ...artifact().payload, title: 'Edited title', diagnostics: { preserved: true } }
   assert.equal(await client.updateArtifact('draft', 'studio-job', 1, payload), 2)
-  assert.deepEqual(submitted, { action: 'update-artifact', projectId: 'launch', taskId: 'draft', executionId: 'studio-job', revision: 1, payload })
+  assert.deepEqual(submitted, { action: 'update-artifact', projectId: 'launch', taskId: 'draft', executionId: 'studio-job', revision: 1, payload, executionMode: 'device' })
   await assert.rejects(client.updateArtifact('draft', 'studio-job', 1, payload), /newer saved/)
   assert.equal(client.getSnapshot().state.tasks[0].chatId, undefined)
   client.dispose()
