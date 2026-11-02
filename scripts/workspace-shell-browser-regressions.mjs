@@ -1,7 +1,9 @@
 // Actual combined App, dock, Memory, connectors, settings and ordinary chat.
 // Every API is synthetic; no provider/OAuth/account is contacted.
 import assert from 'node:assert/strict'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'vite'
 import tailwindcss from 'tailwindcss'
@@ -10,8 +12,10 @@ import tailwindConfig from '../client/tailwind.config.js'
 import { chromium, expect } from '@playwright/test'
 const root=fileURLToPath(new URL('../client/',import.meta.url)),out=process.env.OUTPUT_DIR||'/private/tmp/nalu-workspace-shell-browser-review'
 await mkdir(out,{recursive:true})
-const server=await createServer({root,configFile:root+'vite.config.ts',cacheDir:out+'/vite-cache',css:{postcss:{plugins:[tailwindcss({...tailwindConfig,content:[root+'src/**/*.{ts,tsx}']}),autoprefixer()]}},server:{host:'127.0.0.1',port:5198,strictPort:true,hmr:false}})
-const origin='http://127.0.0.1:5198',report={checks:[],errors:[],requests:[],blocked:[]}
+const cacheDir=await mkdtemp(join(tmpdir(),'nalu-shell-browser-'))
+const server=await createServer({root,configFile:root+'vite.config.ts',cacheDir,css:{postcss:{plugins:[tailwindcss({...tailwindConfig,content:[root+'src/**/*.{ts,tsx}']}),autoprefixer()]}},server:{host:'127.0.0.1',port:0,strictPort:false,hmr:false}})
+let origin
+const report={checks:[],errors:[],requests:[],blocked:[]}
 const carouselOnly=process.env.CAROUSEL_ONLY==='1'
 let browser, lastPage
 const initial=[{id:'planning-chat',title:'Planning conversation',createdAt:1,messages:[{id:'user-one',role:'user',content:'Remember the launch plans.'},{id:'answer-one',role:'assistant',content:'The launch plan is saved here.'}]}]
@@ -84,7 +88,7 @@ async function checkCarouselFit(page){
  console.log('PASS carousel fit: six selections at five desktop/mobile viewport sizes')
 }
 try{
- await server.listen();browser=await chromium.launch()
+ await server.listen();origin=`http://127.0.0.1:${server.httpServer.address().port}`;browser=await chromium.launch()
  for(const viewport of carouselOnly?[{width:1728,height:906}]:[{width:1440,height:1000},{width:390,height:844}]){
   const context=await browser.newContext({viewport});let cloud={'nalu-chats':JSON.stringify(initial)}
   const swarmState={version:1,mode:'live',projects:[],tasks:[],messages:[],turns:[]},swarmRequests=[];let swarmRevision=1
@@ -270,4 +274,4 @@ try{
  await signedOut.close()
  }
  assert.deepEqual(report.errors,[])
-}catch(error){report.failure=error.message;report.stack=error.stack;if(lastPage&&!lastPage.isClosed()){await lastPage.screenshot({path:out+'/failure.png'}).catch(()=>{});await writeFile(out+'/failure-body.txt',await lastPage.locator('body').innerText().catch(()=>''))}throw error}finally{await writeFile(out+'/report.json',JSON.stringify(report,null,2));await browser?.close();await server.close()}
+}catch(error){report.failure=error.message;report.stack=error.stack;if(lastPage&&!lastPage.isClosed()){await lastPage.screenshot({path:out+'/failure.png'}).catch(()=>{});await writeFile(out+'/failure-body.txt',await lastPage.locator('body').innerText().catch(()=>''))}throw error}finally{await writeFile(out+'/report.json',JSON.stringify(report,null,2));await browser?.close();await server.close();await rm(cacheDir,{recursive:true,force:true})}

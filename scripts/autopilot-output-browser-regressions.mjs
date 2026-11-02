@@ -1,7 +1,9 @@
 // Current real AgentsPanel + real attachment HTTP handler, isolated in-memory
 // storage/model responses. No provider calls, user accounts, sends or publishes.
 import assert from 'node:assert/strict'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -24,14 +26,16 @@ const carousel = { kind: 'carousel', name: 'Fixture social', platform: 'Instagra
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==', 'base64')
 const frame = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
 const entry = `import React from'react';import{createRoot}from'react-dom/client';import AgentsPanel from'/src/components/workspace/AgentsPanel.tsx';import'/src/globals.css';createRoot(document.getElementById('root')).render(React.createElement(AgentsPanel));`
-const server = await createServer({ configFile: false, root, css: { postcss: { plugins: [tailwindcss({ ...tailwindConfig, content: [`${root}/src/**/*.{js,ts,jsx,tsx}`] })] } }, plugins: [react(), {
+const cacheDir = await mkdtemp(join(tmpdir(), 'nalu-autopilot-browser-'))
+const server = await createServer({ configFile: false, root, cacheDir, css: { postcss: { plugins: [tailwindcss({ ...tailwindConfig, content: [`${root}/src/**/*.{js,ts,jsx,tsx}`] })] } }, plugins: [react(), {
   name: 'autopilot-output-fixture', resolveId(id) { if (id === '/@output-fixture') return '\0output-fixture' }, load(id) { if (id === '\0output-fixture') return entry },
   configureServer(vite) { vite.middlewares.use('/__output-fixture', async (_, res) => { res.setHeader('Content-Type', 'text/html'); res.end(await vite.transformIndexHtml('/__output-fixture', '<!doctype html><html><body><main id="root" style="height:100vh"></main><script type="module" src="/@output-fixture"></script></body></html>')) }) },
-}], server: { host: '127.0.0.1', port: 5197, strictPort: true } })
-const origin = 'http://127.0.0.1:5197', report = { checks: [], findings: [], errors: [], calls: [], checksPassed: false }
+}], server: { host: '127.0.0.1', port: 0, strictPort: false } })
+let origin
+const report = { checks: [], findings: [], errors: [], calls: [], checksPassed: false }
 let browser
 try {
-  await server.listen(); browser = await chromium.launch()
+  await server.listen(); origin = `http://127.0.0.1:${server.httpServer.address().port}`; browser = await chromium.launch()
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
   page.on('pageerror', error => report.errors.push(error.message))
   page.on('console', message => { if (/download|disallowed|blocked/i.test(message.text())) report.findings.push(message.text()) })
@@ -145,4 +149,4 @@ try {
   report.checks.push('four non-text outputs reopen and download exact original bytes without rerunning', 'Gmail filter XML parses in the real browser')
   report.checksPassed = true
   console.log(JSON.stringify({ output, checks: report.checks, findings: report.findings }))
-} finally { await writeFile(`${output}/report.json`, JSON.stringify(report, null, 2)); await browser?.close(); await server.close() }
+} finally { await writeFile(`${output}/report.json`, JSON.stringify(report, null, 2)); await browser?.close(); await server.close(); await rm(cacheDir, { recursive: true, force: true }) }
