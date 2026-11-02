@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Cpu, Download, X } from 'lucide-react'
 import { checkLocalDevice, getLocalAIState, getLocalPreferences, prepareLocalCrew, resetLocalAI, setLocalPreferences, type LocalPreferences } from '../../lib/localAI'
 import { LOCAL_CREW } from '../../lib/localAIProtocol'
@@ -82,6 +83,6 @@ export default function LocalAIControl({ panel = false }: { panel?: boolean }) {
   if (panel) return content
   return <>
     <button ref={button} className="inline-flex items-center gap-1.5 rounded-lg border border-glass/20 px-2.5 py-1.5 text-xs" onClick={() => setOpen(true)} aria-label="On-device AI setup"><Cpu size={14} /><span>{state.phase === 'loading' ? `Loading ${Math.round(state.progress * 100)}%` : state.phase === 'generating' ? 'Thinking locally' : preferences.enabled ? 'On this device' : 'Set up local AI'}</span></button>
-    {open && <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={() => setOpen(false)}><div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="local-ai-dialog-title" tabIndex={-1} className="relative max-h-[90dvh] w-full max-w-xl overflow-y-auto rounded-2xl border border-glass/20 bg-panel p-6 text-ink shadow-2xl" onClick={event => event.stopPropagation()}><button aria-label="Close on-device AI setup" className="absolute right-3 top-3 p-2" onClick={() => setOpen(false)}><X size={18} /></button>{content}</div></div>}
+    {open && createPortal(<div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={() => setOpen(false)}><div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="local-ai-dialog-title" tabIndex={-1} className="relative max-h-[90dvh] w-full max-w-xl overflow-y-auto rounded-2xl border border-glass/20 bg-panel p-6 text-ink shadow-2xl" onClick={event => event.stopPropagation()}><button aria-label="Close on-device AI setup" className="absolute right-3 top-3 p-2" onClick={() => setOpen(false)}><X size={18} /></button>{content}</div></div>, document.body)}
   </>
 }

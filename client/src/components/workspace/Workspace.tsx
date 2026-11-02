@@ -2971,7 +2971,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
             {isDark ? <Sun size={14} /> : <Moon size={14} />}
             <span className="hidden sm:inline">{isDark ? 'Light' : 'Dark'}</span>
           </button>}
-          {view === 'chat' && renderChatTools()}
+          {view === 'chat' && !reviewLayout && renderChatTools()}
         </div>
 
         {showConnect && (
@@ -3165,7 +3165,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           onClose={() => setReviewChatOpen(false)}
           onNewChat={newChat} title={active?.title || 'A little space to think'}
           chatItems={chats.map(chat => ({ id: chat.id, title: chat.title }))} activeChatId={activeId} onSelectChat={selectChat}
-          chatTools={activeRepo || routeName !== 'Nalu' ? renderChatTools() : undefined}
+          chatTools={activeRepo || routeName !== 'Nalu' ? renderChatTools() : <LocalAIControl />}
           persistenceKey={previewLayout ? undefined : `workspace-chat-tabs:${encodeURIComponent(user?.id || 'account')}`}
           history={showChatDetails => reviewChatOpen ? <>
             <div className="workspace-chat-history-heading"><h3>All chats</h3><span>{chats.length}</span></div>
