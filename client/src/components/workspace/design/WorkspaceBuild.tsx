@@ -5,7 +5,7 @@ import './workspace-build.css'
 const clamp = (value: number) => Math.max(0, Math.min(1, value))
 const ease = (value: number) => { const t = clamp(value); return 1 - (1 - t) ** 3 }
 const pointerPath = 'M.9.35C-.15-.16-1.2.74-.88 1.87L4.45 21.2C4.77 22.38 6.36 22.51 6.88 21.4L10.35 13.97C10.49 13.66 10.74 13.41 11.05 13.27L18.74 9.82C19.87 9.32 19.79 7.69 18.65 7.15Z'
-const targets = '.review-desktop-scene,.review-header-brand,.workspace-account-menu,.workspace-app-dock,.workspace-app-dock button,.workspace-carousel-card[data-visible="true"],.workspace-carousel-heading,.workspace-carousel-controls,.workspace-agent-tray,.nalu-build-copy'
+const targets = '.review-desktop-scene,.review-header-brand,.workspace-account-menu,.workspace-app-dock,.workspace-app-dock button,.workspace-carousel-card[data-visible="true"],.workspace-carousel-heading,.workspace-carousel-controls,.workspace-agent-tray,.workspace-chat-trigger,.workspace-work-trigger,.nalu-build-copy'
 type Piece = { element: HTMLElement; original: string | null; box: DOMRect; start: number; duration: number; opacity: number; kind: 'photo' | 'copy' | 'place'; id: number }
 
 export function WorkspaceBuildLoading() {
@@ -102,7 +102,7 @@ export default function WorkspaceBuild({ children }: { children: ReactNode }) {
           actor(id, box.right + offset - 8, box.bottom + (1 - p) * 24 - 8, local, duration, element.tagName === 'BUTTON' ? 'place the button' : 'arrange the workspace')
         }
       }
-      if (time > 6.2 && (body.querySelector('.workspace-carousel-root') || time > 10)) { finish(); return }
+      if (time > 4.8 && (body.querySelector('.nalu-workspace') || time > 10)) { finish(); return }
       frame = requestAnimationFrame(paint)
     }
     const observer = new MutationObserver(discover)

@@ -21,6 +21,7 @@ import './workspace-tool-typography.css'
 import './workspace-studio-interior.css'
 import './workspace-map-memory-interior.css'
 import './workspace-utility-interior.css'
+import './workspace-adaptive.css'
 
 /** Shared visual surface only. Authentication, storage and network access stay
  * with the caller; importing this component never initializes sample data. */

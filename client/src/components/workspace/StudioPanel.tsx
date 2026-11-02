@@ -1,4 +1,5 @@
 import WorkspaceIntro from './WorkspaceIntro'
+import { useAgentTyping } from './design/useAgentTyping'
 import NaluAvatar from '../avatar/NaluAvatar'
 import NaluMark from '../landing/NaluMark'
 import { lazy, Suspense, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
@@ -72,6 +73,8 @@ export default function StudioPanel({
   onStop,
   designPreview = false,
   designEnabled = false,
+  requestedTool,
+  requestedBrief,
 }: {
   onGenerate: (prompt: string, toolKey: string, target?: Creation, movieSeconds?: number) => void
   creations?: Creation[]
@@ -85,14 +88,21 @@ export default function StudioPanel({
   onStop?: () => void
   designPreview?: boolean
   designEnabled?: boolean
+  requestedTool?: string
+  requestedBrief?: { key: number; text: string }
 }) {
   const reviewLayout = designEnabled || import.meta.env.DEV && designPreview
   const [toolKey, setToolKey] = useState('website')
+  useEffect(() => {
+    const next = requestedTool === 'slides' ? 'presentation' : requestedTool
+    if (next && TOOLS.some(tool => tool.key === next)) setToolKey(next)
+  }, [requestedTool])
   const [style, setStyle] = useState('none')
   const [studioView, setStudioView] = useState<'create' | 'library'>('create')
   const [showIdeas, setShowIdeas] = useState(false)
   const [mobilePreview, setMobilePreview] = useState(false)
   const [brief, setBrief] = useState('')
+  const agentTyping = useAgentTyping(requestedBrief, setBrief)
   const [movieSeconds, setMovieSeconds] = useState(10)
   const [preview, setPreview] = useState<Creation | null>(null)
   const [working, setWorking] = useState(false) // a generation kicked off here is in flight
@@ -294,10 +304,11 @@ export default function StudioPanel({
           <label className="ws-brief-label" htmlFor="studio-brief">Your idea</label>
 
           <textarea
+            data-agent-typing={agentTyping.typing || undefined}
             id="studio-brief"
             ref={taRef}
             value={brief}
-            onChange={(e) => setBrief(e.target.value)}
+            onChange={(e) => { agentTyping.cancel(); setBrief(e.target.value) }}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run() } }}
             rows={reviewLayout ? 2 : 5}
             placeholder={inline && toolKey !== 'movie' ? 'What would you like to change or add?' : `Describe your ${tool.name.toLowerCase()} — e.g. “${tool.ph}”`}
