@@ -40,6 +40,11 @@ try {
   const request=route.request(),url=new URL(request.url())
   if(url.origin!==origin){if(url.protocol==='http:'||url.protocol==='https:')return route.abort();return route.continue()}
   if(!url.pathname.startsWith('/api/'))return route.continue()
+  if(url.pathname==='/api/community'){
+   assert.equal(request.postDataJSON().action,'list')
+   assert.ok(['Bearer browser-token','Bearer other-token'].includes(request.headers().authorization))
+   return route.fulfill({json:{rooms:[]}})
+  }
   if(url.pathname!=='/api/swarm'){forbidden.push(url.pathname);return route.fulfill({status:501,json:{error:'Unexpected ordinary API call'}})}
   const body=request.postDataJSON();calls.push(body)
   assert.equal(request.headers().authorization,body.action==='list'&&request.headers().authorization==='Bearer other-token'?'Bearer other-token':'Bearer browser-token')
