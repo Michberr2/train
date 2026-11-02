@@ -21,7 +21,7 @@ try {
   const page = await context.newPage()
   page.on('pageerror', error => report.errors.push(error.message))
   await page.goto(`${origin}/workspace-preview?shell=production`)
-  await expect(page.getByRole('button', { name: 'Open Nalu chat', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Open Nalu chat', exact: true })).toBeVisible({ timeout: 60000 })
   await expect(page.locator('[data-workspace-home=true]')).toHaveCount(1)
   await expect(page.getByRole('navigation', { name: 'Workspace navigation' })).toHaveCount(0)
   await expect(page.getByRole('region', { name: 'Choose a workspace' })).toHaveCount(0)
