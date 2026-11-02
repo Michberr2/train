@@ -107,8 +107,17 @@ try {
     const dock = page.getByRole('navigation', { name: 'Workspace navigation', exact: true })
     if (await dock.count()) await dock.getByRole('button', { name: 'Studio', exact: true }).click()
     else if (await page.locator('.nalu-workspace').getAttribute('data-workspace-view') !== 'studio') {
-      await page.getByRole('button', { name: 'Chats', exact: true }).click()
-      await page.getByRole('button', { name: 'Studio', exact: true }).click()
+      if (await page.getByRole('button', { name: 'Account options', exact: true }).count()) {
+        await page.getByRole('button', { name: 'Account options', exact: true }).click()
+        await page.getByRole('button', { name: 'All workspaces', exact: true }).click()
+        const carousel = page.getByRole('region', { name: 'Choose a workspace', exact: true })
+        await carousel.getByRole('button', { name: 'Show Studio', exact: true }).click()
+        await carousel.getByRole('button', { name: 'Open Studio', exact: true }).press('Enter')
+        await expect(carousel).toHaveCount(0)
+      } else {
+        await page.getByRole('button', { name: 'Chats', exact: true }).click()
+        await page.getByRole('button', { name: 'Studio', exact: true }).click()
+      }
     }
   }
   const showLibrary = async () => {
