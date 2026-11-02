@@ -1,3 +1,4 @@
+import { loginAllowed } from './_loginAccess'
 import { CloudflareStore, type CloudflareStatement } from './_cloudflareStore'
 import { hashPassword, newRecoveryCode, newSalt, newToken, normalizeRecoveryCode, sha256 } from './_db'
 
@@ -14,7 +15,7 @@ export class CloudflareAccounts {
   async current(token: string | null): Promise<CloudflareAccount | null> {
     if (!token) return null
     const result = await this.store.query('SELECT u.id,u.display_name,u.phone FROM nalu_sessions s JOIN nalu_users u ON u.id=s.user_id WHERE s.token=?', [token])
-    return result.results[0] ? account(result.results[0]) : null
+    return result.results[0] && loginAllowed(result.results[0].id) ? account(result.results[0]) : null
   }
   async signup(id: string, displayName: string, password: string) {
     validatePassword(password)
