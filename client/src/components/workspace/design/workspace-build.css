@@ -13,5 +13,5 @@
 .workspace-build .nalu-build-word { position:relative; display:inline-block; white-space:pre; }
 .workspace-build .nalu-build-measure { visibility:hidden; }
 .workspace-build .nalu-build-written { position:absolute; left:0; top:0; white-space:pre; }
-.workspace-build .nalu-build-space { white-space:pre-wrap; }
+.workspace-build .nalu-build-space { white-space:normal; }
 .workspace-build .nalu-build-copy { position:relative; }
