@@ -7,7 +7,7 @@
 .nalu-landing p { text-wrap: pretty; }
 .nalu-skip-link { position: fixed; left: 20px; top: -100px; z-index: 70; background: #28453f; padding: 15px 20px; }
 .nalu-skip-link:focus { top: 10px; }
-.nalu-landing-header { position: fixed; inset: 0 0 auto; height: 88px; padding: 0 5.5vw; z-index: 50; display: flex; align-items: center; justify-content: space-between; gap: 30px; border-bottom: 1px solid #ffffff1a; background: #173d39f2; isolation: isolate; }
+.nalu-landing-header { position: fixed; inset: 0 0 auto; height: 88px; padding: 0 5.5vw; z-index: 50; display: flex; align-items: center; justify-content: space-between; gap: 30px; border-bottom: 1px solid #ffffff1a; background: #173d3940; isolation: isolate; }
 .nalu-brand { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; color: #fff; }
 .nalu-brand svg { width: 36px; height: 34px; }
 .nalu-brand span { font-size: 33px; line-height: 1; letter-spacing: -.065em; font-weight: 500; padding-bottom: 3px; }
