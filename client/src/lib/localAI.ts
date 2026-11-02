@@ -1,15 +1,18 @@
 import type { MLCEngineInterface } from '@mlc-ai/web-llm'
 import { LOCAL_CREW, LocalTextFilter, localModelId, parseLocalActions, prepareLocalMessages, routeLocalTask, type LocalProfile, type LocalRequest, type LocalRole } from './localAIProtocol'
+import { checkOllamaCrew, ollamaModelId, streamOllamaChat, type LocalModelChunk } from './localOllama'
 
 // Device preferences must never follow the account onto a different computer.
 const KEY = 'device-local-ai-v1'
-export interface LocalPreferences { enabled: boolean; profile: LocalProfile }
+export interface LocalPreferences { enabled: boolean; profile: LocalProfile; provider?: 'browser' | 'ollama'; cpuOnly?: boolean }
 export function getLocalPreferences(): LocalPreferences {
-  try { const value = JSON.parse(localStorage.getItem(KEY) || '{}'); return { enabled: value.enabled === true, profile: value.profile === 'compact' ? 'compact' : 'balanced' } }
+  try { const value = JSON.parse(localStorage.getItem(KEY) || '{}'); return { enabled: value.enabled === true, profile: value.profile === 'compact' ? 'compact' : 'balanced', ...(value.provider === 'ollama' ? { provider: 'ollama' as const, ...(value.cpuOnly === true ? { cpuOnly: true } : {}) } : {}) } }
   catch { return { enabled: false, profile: 'balanced' } }
 }
 export function setLocalPreferences(value: LocalPreferences) {
+  const prior = getLocalPreferences()
   localStorage.setItem(KEY, JSON.stringify(value))
+  if (JSON.stringify(prior) !== JSON.stringify(getLocalPreferences())) resetLocalAI()
   window.dispatchEvent(new Event('nalu-local-ai'))
 }
 export interface LocalAIState { phase: 'idle' | 'checking' | 'loading' | 'ready' | 'generating' | 'error'; progress: number; message: string; model?: string; role?: LocalRole }
@@ -44,7 +47,7 @@ export function resetLocalAI() {
 }
 export async function checkLocalDevice(): Promise<{ halfPrecision: boolean; maxBuffer: number }> {
   const gpu = (navigator as unknown as { gpu?: { requestAdapter(): Promise<{ features: Set<string>; limits: { maxStorageBufferBindingSize: number } } | null> } }).gpu
-  if (!window.isSecureContext || !gpu) throw new Error('On-device AI needs a browser with WebGPU. Try an up-to-date Chrome or Edge on a supported computer. No cloud request was made.')
+  if (!window.isSecureContext || !gpu) throw new Error('Browser AI needs WebGPU. Use a supported Chrome or Edge, or connect the Ollama local companion for CPU/GPU inference. No cloud request was made.')
   const adapter = await gpu.requestAdapter()
   if (!adapter) throw new Error('Nalu could not access this computer’s GPU. Check browser hardware acceleration. No cloud request was made.')
   return { halfPrecision: adapter.features.has('shader-f16'), maxBuffer: adapter.limits.maxStorageBufferBindingSize }
@@ -85,7 +88,15 @@ export function prepareLocalCrew(signal?: AbortSignal) {
   const currentEpoch = epoch
   return serial(async () => {
     if (currentEpoch !== epoch || signal?.aborted) throw abortError()
-    try { await loadModel('conversation', signal) }
+    try {
+      if (getLocalPreferences().provider === 'ollama') {
+        report({ phase: 'checking', progress: 0, message: 'Checking the local companion and its installed models…' })
+        const preferences = getLocalPreferences()
+        await cancellable(checkOllamaCrew(preferences.profile, AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]), fetch, preferences.cpuOnly), AbortSignal.any([lifetime.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]))
+        if (currentEpoch !== epoch || signal?.aborted) throw abortError()
+        report({ phase: 'ready', progress: 1, model: ollamaModelId('conversation', preferences.profile, preferences.cpuOnly), message: 'Ollama is ready on this computer. Cloud inference is disabled.' })
+      } else await loadModel('conversation', signal)
+    }
     catch (error) { if (currentEpoch === epoch && !signal?.aborted) { resetLocalAI(); report({ phase: 'error', message: error instanceof Error ? error.message : 'Could not prepare the local model.' }) }; throw error }
   })
 }
@@ -93,7 +104,8 @@ export function prepareLocalCrew(signal?: AbortSignal) {
 /** Adapt real local inference to the existing Nalu SSE contract. No fetch fallback. */
 export function requestLocalChat(request: LocalRequest, signal?: AbortSignal): Response {
   if (request.webSearch === false && request.tools?.length) request = { ...request, tools: request.tools.filter(tool => !['web_search', 'fetch_url', 'deep_research'].includes(tool.function.name)) }
-  if (!getLocalPreferences().enabled) {
+  const selectedPreferences = getLocalPreferences(), selection = JSON.stringify(selectedPreferences)
+  if (!selectedPreferences.enabled) {
     window.dispatchEvent(new Event('nalu-local-ai-setup'))
     throw new Error('Set up your on-device AI crew to start chatting. Open Settings → On-device AI. No cloud request was made.')
   }
@@ -107,7 +119,7 @@ export function requestLocalChat(request: LocalRequest, signal?: AbortSignal): R
   if (signal?.aborted) abort()
   const body = new ReadableStream<Uint8Array>({
     start(stream) {
-      const current = () => !closed && !controller.signal.aborted && epoch === currentEpoch && owner === localStorage.getItem('nalu-token')
+      const current = () => !closed && !controller.signal.aborted && epoch === currentEpoch && owner === localStorage.getItem('nalu-token') && selection === JSON.stringify(getLocalPreferences())
       const emit = (event: string, data: unknown) => { if (current()) stream.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)) }
       void serial(async () => {
         try {
@@ -118,33 +130,34 @@ export function requestLocalChat(request: LocalRequest, signal?: AbortSignal): R
           // Refuse oversized contexts rather than silently discarding user work.
           if (JSON.stringify(messages).length > 24000) throw new Error('This conversation or tool context is too large for the local crew. Start a new chat or use a shorter excerpt; nothing was sent to a cloud model.')
           const role = request.localRole || routeLocalTask(request)
+          const preferences = selectedPreferences, companion = preferences.provider === 'ollama'
           emit('route', { name: `${LOCAL_CREW[role].name} · on this device`, kind: 'local', autoResearch: false })
-          const model = await loadModel(role, controller.signal)
+          const model = companion ? undefined : await loadModel(role, controller.signal)
           if (!current()) throw abortError()
           // Clear KV state between requests, accounts, chats, and pipeline steps.
-          await cancellable(model.resetChat(), taskSignal)
+          if (model) await cancellable(model.resetChat(), taskSignal)
           if (!current()) throw abortError()
           const generationSignal = AbortSignal.any([taskSignal, AbortSignal.timeout(180000)])
-          report({ phase: 'generating', role, message: `${LOCAL_CREW[role].name} is thinking on this computer` })
+          report({ phase: 'generating', role, ...(companion ? { model: ollamaModelId(role, preferences.profile, preferences.cpuOnly) } : {}), message: `${LOCAL_CREW[role].name} is thinking on this computer${companion ? ' with Ollama' : ''}` })
           const hasTools = !!request.tools?.length
           const jsonSchema = hasTools ? { type: 'object', properties: { message: { type: 'string' }, actions: { type: 'array', items: { type: 'object', properties: { name: { type: 'string', enum: request.tools!.map(tool => tool.function.name) }, arguments: { type: 'object' } }, required: ['name', 'arguments'] } } }, required: ['message', 'actions'] } : request.jsonSchema
           // WebLLM applies JSON grammar to every generated token, including
           // thinking tags. Internal reviews instead deliberate unconstrained;
           // their final JSON is still validated by the artifact adapter.
           const deliberate = !hasTools && (request.deliberate === true || !jsonSchema && role === 'reasoning')
-          const chunks = await cancellable(model.chat.completions.create({
+          const chunks: AsyncIterable<LocalModelChunk> = companion ? streamOllamaChat({ model: ollamaModelId(role, preferences.profile, preferences.cpuOnly), messages, maxTokens: Math.max(128, Math.min(4096, request.maxTokens || 2048)), temperature: deliberate ? .6 : .4, schema: jsonSchema, deliberate, cpuOnly: preferences.cpuOnly }, generationSignal) : await cancellable(model!.chat.completions.create({
             messages, stream: true, max_tokens: Math.max(128, Math.min(4096, request.maxTokens || 2048)), temperature: deliberate ? .6 : .4,
             ...(jsonSchema && !deliberate ? { response_format: { type: 'json_object' as const, schema: JSON.stringify(jsonSchema) } } : {}),
             ...(loadedModel.startsWith('Qwen3.5-') ? { extra_body: { enable_thinking: deliberate } } : {}),
           }), generationSignal)
           let output = '', finishReason = ''
-          const textFilter = new LocalTextFilter(deliberate && loadedModel.startsWith('Qwen3.5-'))
+          const textFilter = new LocalTextFilter(!companion && deliberate && loadedModel.startsWith('Qwen3.5-'))
           const iterator = chunks[Symbol.asyncIterator]()
           while (true) {
             const next = await cancellable(iterator.next(), generationSignal)
             if (next.done) break
             const chunk = next.value
-            if (!current()) { model.interruptGenerate(); throw abortError() }
+            if (!current()) { model?.interruptGenerate(); throw abortError() }
             const choice = chunk.choices[0]
             const text = textFilter.push(choice?.delta.content || '')
             output += text
@@ -182,4 +195,6 @@ export function requestLocalChat(request: LocalRequest, signal?: AbortSignal): R
   return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } })
 }
 
-if (import.meta.hot) import.meta.hot.dispose(resetLocalAI)
+const devicePreferencesChanged = (event: Event) => { if ((event as StorageEvent).key === KEY) resetLocalAI() }
+window.addEventListener('storage', devicePreferencesChanged)
+if (import.meta.hot) import.meta.hot.dispose(() => { window.removeEventListener('storage', devicePreferencesChanged); resetLocalAI() })

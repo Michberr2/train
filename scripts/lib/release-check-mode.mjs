@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 export const BROWSER_EXECUTING_SCRIPTS = Object.freeze([
   'cursor-build-browser-regressions.mjs',
   'local-swarm-browser-regressions.mjs',
+  'local-ollama-browser-regressions.mjs',
   'chat-swarm-browser-regressions.mjs',
   'artifact-build-browser-regressions.mjs',
   'adaptive-workspace-browser-regressions.mjs',
