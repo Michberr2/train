@@ -247,9 +247,10 @@ export class SwarmClient {
     if (task.handoff.studioKind === 'book') throw new Error('Create long-form books in Studio. Background book generation is not available here yet.')
     await this.mutate('continue-studio', { projectId, taskId, sourceJobId: task.executionId })
   }
-  private artifactTask(taskId: string, executionId: string) {
+  private artifactTask(taskId: string, executionId: string, room?: SwarmRoomReference) {
     if (!this.isCurrent()) throw new SwarmSessionChanged()
-    const { activeProjectId, recipient } = this.snapshot.preferences
+    const activeProjectId = room ? room.projectId : this.snapshot.preferences.activeProjectId, recipient = room ? room.thread : this.snapshot.preferences.recipient
+    if (!isSwarmRoom(this.snapshot.state, activeProjectId, recipient)) throw new Error('This creation is not available in that project conversation.')
     const task = this.snapshot.state.tasks.find(task => task.id === taskId && task.projectId === activeProjectId)
     if (!task?.artifact || task.artifact.executionId !== executionId || !(task.threads ?? ['group', task.assignee]).includes(recipient)) throw new Error('This creation changed or is no longer in the selected conversation. Reopen it from its task.')
     return task as typeof task & { artifact: NonNullable<typeof task.artifact> }
@@ -269,22 +270,22 @@ export class SwarmClient {
       return result
     } finally { clearTimeout(timer); this.controllers.delete(controller); externalSignal?.removeEventListener('abort', abort) }
   }
-  getArtifact = async (taskId: string, executionId: string, signal?: AbortSignal): Promise<SwarmArtifactResponse> => {
-    const task = this.artifactTask(taskId, executionId)
+  getArtifact = async (taskId: string, executionId: string, signal?: AbortSignal, room?: SwarmRoomReference): Promise<SwarmArtifactResponse> => {
+    const task = this.artifactTask(taskId, executionId, room)
     const result = await this.artifactRequest(signal => requestSwarmArtifact(this.account, { projectId: task.projectId, taskId, executionId }, signal, this.options.readAccount, this.options.request), signal)
-    const latest = this.artifactTask(taskId, executionId)
+    const latest = this.artifactTask(taskId, executionId, room)
     if (latest.projectId !== task.projectId || result.revision < latest.artifact.revision || result.artifact.studioKind !== latest.artifact.studioKind) throw new Error('A newer creation is available. Reload to view it.')
     return result
   }
-  loadArtifactMedia = async (taskId: string, executionId: string, media: SwarmMedia, signal?: AbortSignal): Promise<Blob> => {
-    const saved = await this.getArtifact(taskId, executionId, signal)
+  loadArtifactMedia = async (taskId: string, executionId: string, media: SwarmMedia, signal?: AbortSignal, room?: SwarmRoomReference): Promise<Blob> => {
+    const saved = await this.getArtifact(taskId, executionId, signal, room)
     if (JSON.stringify(saved.artifact.payload.media) !== JSON.stringify(media)) throw new Error('The saved media reference changed. Reload this creation.')
     const blob = await this.artifactRequest(signal => requestSwarmMedia(this.account, media, signal, this.options.readAccount, this.options.request), signal)
-    if (this.artifactTask(taskId, executionId).artifact.revision > saved.revision) throw new Error('This creation changed while loading. Please retry.')
+    if (this.artifactTask(taskId, executionId, room).artifact.revision > saved.revision) throw new Error('This creation changed while loading. Please retry.')
     return blob
   }
-  updateArtifact = async (taskId: string, executionId: string, revision: number, payload: Record<string, unknown>): Promise<number> => {
-    const task = this.artifactTask(taskId, executionId)
+  updateArtifact = async (taskId: string, executionId: string, revision: number, payload: Record<string, unknown>, room?: SwarmRoomReference): Promise<number> => {
+    const task = this.artifactTask(taskId, executionId, room)
     if (['image', 'video', 'cad'].includes(task.artifact.studioKind)) throw new Error('This creation supports viewing and downloading only.')
     if (task.artifact.revision > revision) throw new Error('This creation has newer saved changes. Keep your edits and reload the saved version before retrying.')
     const captured = JSON.stringify(payload)
@@ -298,7 +299,7 @@ export class SwarmClient {
       // A lost write response is only accepted if an owner-scoped read confirms
       // the exact edited payload at a newer artifact revision.
       if (error instanceof SwarmRequestError && error.uncertain && this.isCurrent()) {
-        const saved = await this.getArtifact(taskId, executionId).catch(() => null)
+        const saved = await this.getArtifact(taskId, executionId, undefined, room).catch(() => null)
         if (saved && saved.revision > revision && JSON.stringify(saved.artifact.payload) === captured) { void this.refresh(); return saved.revision }
       }
       throw error

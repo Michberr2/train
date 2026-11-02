@@ -68,8 +68,10 @@ export default function WorkspaceAssembly({ target, request, active, activity }:
     }
     const collect = () => {
       let discovered = 0
-      for (const element of root.querySelectorAll<HTMLElement>('h1,h2,h3,p,button,input,textarea,select,img')) {
-        if (seen.has(element) || discovered >= 80 || element.closest('[aria-hidden="true"],dialog,[role="dialog"]')) continue
+      const targets = new Set<HTMLElement>(root.querySelectorAll<HTMLElement>('h1,h2,h3,p,button,input,textarea,select,img'))
+      for (const element of document.querySelectorAll<HTMLElement>('.nalu-delegated-work h1,.nalu-delegated-work h2,.nalu-delegated-work h3,.nalu-delegated-work h4,.nalu-delegated-work p,.nalu-delegated-work button,.nalu-delegated-work img')) targets.add(element)
+      for (const element of targets) {
+        if (seen.has(element) || discovered >= 80 || element.closest('[aria-hidden="true"],dialog,[contenteditable]') || element.closest('[role="dialog"]') && !element.closest('.nalu-delegated-work')) continue
         const box = element.getBoundingClientRect(), style = getComputedStyle(element)
         if (box.width < 2 || box.height < 2 || box.bottom < 0 || box.top > innerHeight || style.visibility === 'hidden' || style.display === 'none') continue
         seen.add(element)
@@ -85,13 +87,15 @@ export default function WorkspaceAssembly({ target, request, active, activity }:
     }
     wake.current = () => { if (alive && !frame) frame = requestAnimationFrame(paint) }
     const observer = new MutationObserver(collect)
-    observer.observe(root, { childList: true, subtree: true })
+    // Chat is portaled outside the main scene. Observe its actual creation
+    // nodes too, without rewriting a generated iframe's opaque document.
+    observer.observe(document.body, { childList: true, subtree: true })
     collect()
     const stop = () => { jobs.forEach(restore); ctx.clearRect(0, 0, innerWidth, innerHeight); layer.dataset.assembling = 'false' }
     const reduced = matchMedia('(prefers-reduced-motion: reduce)')
     const motion = () => { if (reduced.matches) { observer.disconnect(); stop() } }
-    window.addEventListener('resize', stop); reduced.addEventListener('change', motion)
-    return () => { alive = false; wake.current = () => {}; setNarration(''); observer.disconnect(); cancelAnimationFrame(frame); stop(); window.removeEventListener('resize', stop); reduced.removeEventListener('change', motion) }
+    window.addEventListener('resize', stop); window.addEventListener('pointerdown', stop, true); reduced.addEventListener('change', motion)
+    return () => { alive = false; wake.current = () => {}; setNarration(''); observer.disconnect(); cancelAnimationFrame(frame); stop(); window.removeEventListener('resize', stop); window.removeEventListener('pointerdown', stop, true); reduced.removeEventListener('change', motion) }
   }, [target, request.key, active])
   return <><canvas ref={canvas} className="workspace-assembly-cursors" aria-hidden="true" aria-label={`Assembling ${request.label}`} />{(narration || activity) && active && <div className="workspace-agent-narration" role="status"><span aria-hidden="true" className="workspace-agent-narration-dot"/><span>{narration || activity}</span></div>}</>
 }

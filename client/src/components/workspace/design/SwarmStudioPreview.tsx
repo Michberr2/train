@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import CardErrorBoundary from '../CardErrorBoundary'
 import { ScopedArtifactContext } from '../ScopedArtifactContext'
@@ -58,8 +58,9 @@ export function SwarmStudioCard({ task, artifact, swarm, onChange }: { task: Swa
   return <p role="alert">This creation type cannot be previewed here yet. Its saved work remains on the task.</p>
 }
 
-export default function SwarmStudioPreview({ task, swarm, onClose }: { task: SwarmTask; swarm: SwarmController; onClose: () => void }) {
-  const dialog = useRef<HTMLDialogElement>(null)
+export default function SwarmStudioPreview({ task, swarm, onClose, inline = false }: { task: SwarmTask; swarm: SwarmController; onClose: () => void; inline?: boolean }) {
+  const dialog = useRef<HTMLDialogElement | null>(null)
+  const titleId = useId()
   const closeButton = useRef<HTMLButtonElement>(null)
   const latest = useRef(swarm); latest.current = swarm
   const [saved, setSaved] = useState<SwarmArtifactResponse | null>(null)
@@ -72,9 +73,9 @@ export default function SwarmStudioPreview({ task, swarm, onClose }: { task: Swa
   useEffect(() => {
     mounted.current = true
     const prior = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    dialog.current?.showModal(); closeButton.current?.focus({ preventScroll: true })
-    return () => { mounted.current = false; if (prior?.isConnected) prior.focus({ preventScroll: true }) }
-  }, [])
+    if (!inline) { dialog.current?.showModal(); closeButton.current?.focus({ preventScroll: true }) }
+    return () => { mounted.current = false; if (!inline && prior?.isConnected) prior.focus({ preventScroll: true }) }
+  }, [inline])
   useEffect(() => {
     const controller = new AbortController()
     setSaved(null); setDraft(null); setError(''); setSavedNote(''); setEditSource(false)
@@ -98,8 +99,9 @@ export default function SwarmStudioPreview({ task, swarm, onClose }: { task: Swa
     finally { savePending.current = false; if (mounted.current) setSaving(false) }
   }
   const newer = !!saved && task.artifact!.revision > saved.revision
-  return <dialog ref={dialog} className="swarm-studio-preview" aria-labelledby="swarm-studio-title" onCancel={event => { event.preventDefault(); close() }} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation() } }}>
-    <header><div><small>Studio · {task.artifact!.studioKind}</small><h2 id="swarm-studio-title" title={task.title}>{task.title}</h2></div><button ref={closeButton} type="button" aria-label="Close creation" onClick={close}><X size={18}/></button></header>
+  const Surface = inline ? 'section' : 'dialog'
+  return <Surface ref={(element: HTMLElement | null) => { dialog.current = element instanceof HTMLDialogElement ? element : null }} className={`swarm-studio-preview${inline ? ' swarm-studio-inline' : ''}`} aria-labelledby={titleId} onCancel={event => { event.preventDefault(); close() }} onKeyDown={event => { if (event.key === 'Escape' && !inline) { event.stopPropagation() } }}>
+    <header><div><small>Studio · {task.artifact!.studioKind}</small><h2 id={titleId} title={task.title}>{task.title}</h2></div><button ref={closeButton} type="button" aria-label={inline ? 'Collapse creation' : 'Close creation'} onClick={close}><X size={18}/></button></header>
     <div className="swarm-studio-toolbar">
       <span role="status">{saving ? 'Saving changes…' : dirty ? 'Unsaved changes' : savedNote || 'Saved with this task'}</span>
       {saved && typeof draft?.html === 'string' && <button type="button" aria-pressed={editSource} onClick={() => setEditSource(value => !value)}>{editSource ? 'Show preview' : 'Edit HTML'}</button>}
@@ -116,5 +118,5 @@ export default function SwarmStudioPreview({ task, swarm, onClose }: { task: Swa
           : <SwarmStudioCard task={task} artifact={{ ...saved.artifact, payload: draft }} swarm={swarm} onChange={change}/>}
       </Suspense></CardErrorBoundary></ScopedArtifactContext.Provider>}
     </div>
-  </dialog>
+  </Surface>
 }

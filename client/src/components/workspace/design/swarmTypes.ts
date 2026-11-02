@@ -74,9 +74,9 @@ export interface SwarmController {
   stopProjectTask?: (projectId: string, taskId: string) => void | Promise<void>
   shareTask?: (taskId: string) => void | Promise<void>
   continueStudio?: (taskId: string) => Promise<void>
-  getArtifact?: (taskId: string, executionId: string, signal?: AbortSignal) => Promise<SwarmArtifactResponse>
-  loadArtifactMedia?: (taskId: string, executionId: string, media: SwarmMedia, signal?: AbortSignal) => Promise<Blob>
-  updateArtifact?: (taskId: string, executionId: string, revision: number, payload: Record<string, unknown>) => Promise<number>
+  getArtifact?: (taskId: string, executionId: string, signal?: AbortSignal, room?: SwarmRoomReference) => Promise<SwarmArtifactResponse>
+  loadArtifactMedia?: (taskId: string, executionId: string, media: SwarmMedia, signal?: AbortSignal, room?: SwarmRoomReference) => Promise<Blob>
+  updateArtifact?: (taskId: string, executionId: string, revision: number, payload: Record<string, unknown>, room?: SwarmRoomReference) => Promise<number>
   busyTaskIds?: readonly string[]
 }
 

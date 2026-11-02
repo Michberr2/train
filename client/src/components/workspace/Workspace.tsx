@@ -786,6 +786,9 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   const [reviewActiveChats, setReviewActiveChats] = useState<string[]>([])
   const baseActivity = useLiveWorkspaceActivity({ chats, activeChatIds: reviewActiveChats, accountId: user?.id, enabled: reviewLayout && !previewLayout })
   const liveSwarm = useSwarm({ accountId: user?.id, enabled: reviewLayout && !previewLayout, active: reviewChatOpen || agentScreensOpen || workDrawerOpen || view === 'memory' })
+  const workingSwarmTasks = liveSwarm.state.tasks.filter(task => task.status === 'running' && task.executionId)
+  const queuedSwarmTasks = liveSwarm.state.tasks.filter(task => task.status === 'queued' && task.executionId)
+  const swarmScreenActivity = workingSwarmTasks.length ? workingSwarmTasks.slice(0, 2).map(task => `${task.assignee} is working on ${liveSwarm.state.projects.find(project => project.id === task.projectId)?.title || 'your project'}.`).join(' ') + (workingSwarmTasks.length > 2 ? ` ${workingSwarmTasks.length - 2} other jobs are also active.` : '') : queuedSwarmTasks.length ? `${queuedSwarmTasks.length} agent ${queuedSwarmTasks.length === 1 ? 'job is' : 'jobs are'} queued.` : undefined
   const liveActivity = withSwarmActivity({ ...baseActivity, error: [baseActivity.error, liveSwarm.error].filter(Boolean).join(' '), refresh: () => { baseActivity.refresh(); liveSwarm.refresh?.() } }, liveSwarm.state)
   const [swarmNavigationRequest, setSwarmNavigationRequest] = useState<(SwarmRoomReference & { key: number }) | undefined>()
   const [agentConversationRequest, setAgentConversationRequest] = useState<{ agent: string; key: number }>()
@@ -3129,7 +3132,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           </div>
         ) : <div ref={setChatInlineAnchor} className="workspace-chat-inline-slot" aria-hidden="true" />) : renderChatContent())}
       </main>
-      {reviewLayout && <WorkspaceAssembly target={reviewMainRef} request={assemblyRequest} active={(!ambientHome || streaming) && !launcherOpen && !agentScreensOpen} activity={view === 'map' && mapActivity ? mapActivity : streaming ? view === 'studio' ? `Nalu is working on your ${requestedStudioKind || 'creation'}.` : `${routeName || 'Nalu'} is working on your request.` : undefined} />}
+      {reviewLayout && <WorkspaceAssembly target={reviewMainRef} request={assemblyRequest} active={(!ambientHome || streaming || Boolean(swarmScreenActivity) || reviewChatOpen && messages.some(message => message.delegation)) && !launcherOpen && !agentScreensOpen} activity={view === 'map' && mapActivity ? mapActivity : streaming ? view === 'studio' ? `Nalu is working on your ${requestedStudioKind || 'creation'}.` : `${routeName || 'Nalu'} is working on your request.` : swarmScreenActivity} />}
       {reviewLayout && <button type="button" className="workspace-work-trigger" aria-label="Track all agent work" aria-expanded={workDrawerOpen} onClick={() => setWorkDrawerOpen(value => !value)}>Work <span>{liveActivity.items.filter(item => ['running', 'queued', 'waiting', 'failed'].includes(item.status)).length || '↗'}</span></button>}
       {reviewLayout && workDrawerOpen && <WorkspaceWorkDrawer activity={liveActivity} onClose={() => setWorkDrawerOpen(false)} onOpen={item => {
         if (innerWidth < 1000) setWorkDrawerOpen(false)

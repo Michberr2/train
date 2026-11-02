@@ -6,12 +6,13 @@ import type { MotionSpec } from './motionFrame'
 import type { WebsiteQuality } from './types'
 import StudioValidation from './StudioValidation'
 import { ARTIFACT_SANDBOX, artifactDocument as shimHtml, openArtifactHtml } from './artifactIsolation'
+import { agentBuiltPreview } from './agentBuiltPreview'
 
 // Inline "Nalu Design" card — renders an AI-generated self-contained HTML
 // document live in a sandboxed iframe, with download
 // (.html), open-in-new-tab, and a shareable public link (hosted on n4lu.ai).
 
-const PREVIEW_CHECKS = `<script>(function(){var send=function(message){parent.postMessage({type:'nalu-website-issue',message:String(message).slice(0,500)},'*')};addEventListener('error',function(e){if(e.message)send(e.message)});addEventListener('unhandledrejection',function(e){send(e.reason&&e.reason.message||'An action failed to complete.')});var check=function(){if(document.documentElement.scrollWidth>innerWidth+2)send('Content overflows the viewport at '+innerWidth+'px. Fix the responsive layout without clipping content.')};addEventListener('load',function(){setTimeout(check,500)});addEventListener('resize',check)})()</script>`
+const PREVIEW_CHECKS = `<script>(function(){var send=function(message){parent.postMessage({type:'nalu-website-issue',message:String(message).slice(0,500)},'*')};addEventListener('error',function(e){if(e.message)send(e.message)});addEventListener('unhandledrejection',function(e){send(e.reason&&e.reason.message||'An action failed to complete.')});var check=function(){if(document.documentElement.dataset.naluOutputBuilding==='true')return;if(document.documentElement.scrollWidth>innerWidth+2)send('Content overflows the viewport at '+innerWidth+'px. Fix the responsive layout without clipping content.')};addEventListener('load',function(){setTimeout(check,500)});addEventListener('resize',check);addEventListener('nalu-output-assembled',check)})()</script>`
 function checkedPreview(html: string): string {
   const preview = shimHtml(html)
   return preview.replace(/<head[^>]*>/i, match => match + PREVIEW_CHECKS)
@@ -41,11 +42,14 @@ export default function DesignCard({ html, kind = 'webpage', motion, truncated, 
   const [finishErr, setFinishErr] = useState('')
   const [phone, setPhone] = useState(false)
   const [previewIssues, setPreviewIssues] = useState<string[]>([])
+  const [assembling, setAssembling] = useState(false)
   const previewRef = useRef<HTMLIFrameElement>(null)
-  const preview = useMemo(() => kind === 'webpage' ? checkedPreview(html) : shimHtml(html), [html, kind])
+  const preview = useMemo(() => { const document = kind === 'webpage' ? checkedPreview(html) : shimHtml(html); return scoped && kind !== 'motion' ? agentBuiltPreview(document) : document }, [html, kind, scoped])
   useEffect(() => {
     setPreviewIssues([])
+    setAssembling(false)
     const receive = (event: MessageEvent) => {
+      if (event.source === previewRef.current?.contentWindow && event.data?.type === 'nalu-output-build' && typeof event.data.active === 'boolean') { setAssembling(event.data.active); return }
       if (event.source !== previewRef.current?.contentWindow || event.data?.type !== 'nalu-website-issue' || typeof event.data.message !== 'string') return
       const message = event.data.message.slice(0, 500)
       setPreviewIssues(issues => issues.includes(message) ? issues : [...issues, message].slice(0, 6))
@@ -192,6 +196,7 @@ export default function DesignCard({ html, kind = 'webpage', motion, truncated, 
         {onUpdate && !scoped && <button disabled={finishing} onClick={() => void finishBuild(true)} className="rounded-lg bg-amber-500/20 px-3 py-2 font-medium disabled:opacity-50">{finishing ? 'Repairing…' : 'Repair preview'}</button>}
         {finishErr && <span role="alert" className="w-full">{finishErr}</span>}
       </div>}
+      {assembling && <p role="status" className="px-3 py-2 text-xs text-dim">Nalu is putting your creation on screen.</p>}
       {kind === 'motion' ? <MotionPreview html={html} motion={motion} /> : <div className="flex justify-center overflow-auto bg-black/10"><iframe
         ref={previewRef}
         srcDoc={preview}

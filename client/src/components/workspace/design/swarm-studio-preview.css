@@ -30,4 +30,7 @@
 .swarm-studio-media > img, .swarm-studio-media > video { max-width: 100%; max-height: 60dvh; object-fit: contain; }
 .swarm-studio-email { max-width: 800px; margin: auto; }
 .swarm-studio-email > p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.swarm-studio-preview.swarm-studio-inline { display: flex; flex-direction: column; position: relative; width: 100%; height: auto; max-height: none; margin: 14px 0; box-shadow: none; overflow: hidden; }
+.swarm-studio-inline > .swarm-studio-body { flex: none; max-height: 650px; }
+.swarm-studio-inline > header, .swarm-studio-inline > .swarm-studio-toolbar, .swarm-studio-inline > .swarm-studio-body { padding: 12px; }
 @media (max-width: 600px) { .swarm-studio-preview { width: calc(100vw - 16px); height: calc(100dvh - 24px); } .swarm-studio-preview > header, .swarm-studio-toolbar, .swarm-studio-body { padding: 12px; } }

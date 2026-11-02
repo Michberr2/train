@@ -121,6 +121,6 @@ export default function useSwarm({ accountId, enabled = true, active = false }: 
     continueStudio: client ? async id => { if (readyForModel()) await mutate(() => client.continueStudio(id)) } : undefined,
     getArtifact: client?.getArtifact,
     loadArtifactMedia: client?.loadArtifactMedia,
-    updateArtifact: client ? (id, executionId, revision, payload) => mutate(() => client.updateArtifact(id, executionId, revision, payload)) : undefined,
+    updateArtifact: client ? (id, executionId, revision, payload, room) => mutate(() => client.updateArtifact(id, executionId, revision, payload, room)) : undefined,
   }
 }

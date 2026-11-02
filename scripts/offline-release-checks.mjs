@@ -19,6 +19,7 @@ export const OFFLINE_RELEASE_CHECKS = [
   'local-ai-regressions.mjs',
   'local-swarm-browser-regressions.mjs',
   'chat-swarm-browser-regressions.mjs',
+  'artifact-build-browser-regressions.mjs',
   'chat-verifier-regressions.mjs',
   'chat-budget-regressions.mjs',
   'chat-length-regressions.mjs',
