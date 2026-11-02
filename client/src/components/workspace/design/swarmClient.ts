@@ -1,5 +1,6 @@
 import { isSwarmRoom, selectSwarmPending, swarmRoomId, type SwarmArtifactResponse, type SwarmMedia, type SwarmAgentId, type SwarmRoomReference, type SwarmState, type SwarmThread } from './swarmTypes'
 import { requestSwarm, requestSwarmArtifact, requestSwarmMedia, sameSwarmAccount, SwarmRequestError, SwarmSessionChanged, type SwarmAccount, type SwarmResponse } from './swarmTransport'
+import { parseSwarmWorkPlan, type SwarmWorkPlan } from '../../../../../shared/swarmWorkPlan'
 
 type Payload = Record<string, string>
 type Intent = { key: string; requestId: string; action: string; payload: Payload; originalDraft?: string }
@@ -11,7 +12,7 @@ const emptyPreferences = (): Preferences => ({ activeProjectId: '', recipient: '
 export const emptySwarmSnapshot: SwarmSnapshot = { state: emptyState(), revision: -1, preferences: emptyPreferences(), creating: false, loading: true, error: '', sendingRooms: [], busyTaskIds: [] }
 const roomThread = (value: unknown): value is SwarmThread => typeof value === 'string' && value.length > 0 && value.length <= 48
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)
-const intentActions = new Set(['create', 'send', 'add-agent', 'add-task', 'start-task', 'continue-studio'])
+const intentActions = new Set(['delegate-work', 'create', 'send', 'add-agent', 'add-task', 'start-task', 'continue-studio'])
 const intentKey = (action: string, payload: Payload, context = '') => JSON.stringify([action, Object.entries(payload).sort(([a], [b]) => a.localeCompare(b)), context])
 function readPreferences(storage: Options['storage'], key: string): Preferences {
   try {
@@ -89,6 +90,12 @@ export class SwarmClient {
           prefs = this.acknowledge(intent, prefs)
           if (creating) { prefs = { ...prefs, activeProjectId: project.id, recipient: 'group' }; creating = false }
         }
+      } else if (intent.action === 'delegate-work') {
+        const projects = state.projects.filter(project => project.delegation?.requestId === intent.requestId)
+        if (projects.length) {
+          if (!this.writes.has(intent.key)) this.acknowledgedRetries.set(intent.key, { ...response, projectId: projects[0].id })
+          prefs = this.acknowledge(intent, prefs)
+        }
       } else if (intent.action === 'add-task') {
         const task = state.tasks.find(task => task.requestId === intent.requestId && task.projectId === intent.payload.projectId && task.title === intent.payload.title && task.threads?.includes(intent.payload.thread as SwarmThread))
         if (task) {
@@ -154,7 +161,7 @@ export class SwarmClient {
       if (this.isCurrent() && generation === this.generation && !(error instanceof SwarmSessionChanged)) {
         // A concurrent poll can confirm the exact request before its original
         // connection fails. Do not turn that acknowledged send into an error.
-        if (captured && !this.snapshot.preferences.intents.some(item => item.requestId === captured.requestId)) return { state: this.snapshot.state, revision: this.snapshot.revision, projectId: captured.action === 'create' ? this.snapshot.state.projects.find(project => project.requestId === captured.requestId)?.id : undefined }
+        if (captured && !this.snapshot.preferences.intents.some(item => item.requestId === captured.requestId)) return { state: this.snapshot.state, revision: this.snapshot.revision, projectId: captured.action === 'create' ? this.snapshot.state.projects.find(project => project.requestId === captured.requestId)?.id : captured.action === 'delegate-work' ? this.snapshot.state.projects.find(project => project.delegation?.requestId === captured.requestId)?.id : undefined }
         if (captured && error instanceof SwarmRequestError && !error.uncertain) this.preferences({ ...this.snapshot.preferences, intents: this.snapshot.preferences.intents.filter(item => item.requestId !== captured.requestId) })
         this.patch({ error: error instanceof Error ? error.message : 'That request could not be completed. Please try again.' })
       }
@@ -195,6 +202,13 @@ export class SwarmClient {
       this.navigate(id, 'group')
       return id
     } catch { return null }
+  }
+  delegateWork = async (input: SwarmWorkPlan): Promise<string[]> => {
+    const plan = parseSwarmWorkPlan(input)
+    const response = await this.mutate('delegate-work', { plan: JSON.stringify(plan) })
+    const receipt = response.state.projects.find(project => project.id === response.projectId)?.delegation
+    if (!receipt) throw new Error('The delegated work was not confirmed. Retry the same request; saved work is unchanged.')
+    return response.state.projects.filter(project => project.delegation?.requestId === receipt.requestId).map(project => project.id)
   }
   addTask = async (title: string, assignee: SwarmAgentId): Promise<void> => {
     const { activeProjectId: projectId, recipient: thread } = this.snapshot.preferences

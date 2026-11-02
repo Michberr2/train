@@ -4,6 +4,7 @@ import type { SwarmJob, SwarmSnapshot } from './_swarmStore'
 import { SWARM_MAX_STATE_BYTES, SWARM_MAX_SNAPSHOT_BYTES } from './_swarmStore'
 import { validateSwarmStudioHandoff, type SwarmStudioKind } from './_swarmGeneration'
 import { validateSwarmStudioArtifact } from './_swarmStudioArtifact'
+import { parseSwarmWorkPlan } from '../shared/swarmWorkPlan'
 
 export class SwarmError extends Error {
   constructor(message: string, public status = 400) { super(message) }
@@ -11,6 +12,7 @@ export class SwarmError extends Error {
 const AGENTS: SwarmAgentId[] = ['Nalu', 'Rocky', 'Milo']
 const ACTIVE = new Set(['queued', 'running'])
 const idFor = (owner: string, kind: string, request: string) => `swarm_${kind}_${createHash('sha256').update(`${owner}\0${kind}\0${request}`).digest('hex').slice(0, 32)}`
+const delegatedRequest = (request: string, key: string) => `delegate:${createHash('sha256').update(`${request}:${key}`).digest('hex').slice(0, 40)}`
 function text(value: unknown, field: string, max: number, optional = false): string {
   if (optional && value == null) return ''
   if (typeof value !== 'string' || (!optional && !value.trim()) || value.length > max) throw new SwarmError(`Invalid ${field}.`)
@@ -71,11 +73,50 @@ export function applySwarmAction(snapshot: SwarmSnapshot, owner: string, body: R
   }
   // Manual tracking/sharing cannot consume space already reserved for pending
   // jobs. Cancellation and reassignment remain available near the limit.
-  if (before !== JSON.stringify(snapshot) && ['create', 'send', 'add-agent', 'add-task', 'start-task', 'continue-studio', 'update-artifact', 'share-task'].includes(String(body.action))) capacity(snapshot, 0)
+  if (before !== JSON.stringify(snapshot) && ['delegate-work', 'create', 'send', 'add-agent', 'add-task', 'start-task', 'continue-studio', 'update-artifact', 'share-task'].includes(String(body.action))) capacity(snapshot, 0)
 }
 
 function applyAction(snapshot: SwarmSnapshot, owner: string, body: Record<string, unknown>, now: number): void {
   const { state } = snapshot
+  if (body.action === 'delegate-work') {
+    if (body.executionMode !== 'device') throw new SwarmError('Delegated work needs the local device executor. No cloud worker was started.')
+    const request = requestId(body)
+    let plan
+    try { plan = parseSwarmWorkPlan(body.plan) } catch (reason) { throw new SwarmError(reason instanceof Error ? reason.message : 'Invalid delegated work plan.') }
+    const hash = createHash('sha256').update(JSON.stringify(plan)).digest('hex')
+    const previous = state.projects.filter(project => project.delegation?.requestId === request)
+    if (previous.length) {
+      if (previous.length !== plan.projects.length || previous.some(project => project.delegation?.hash !== hash)) throw new SwarmError('This delegation request already belongs to a different work plan.', 409)
+      return
+    }
+    const childRequest = (key: string) => delegatedRequest(request, key)
+    for (const group of plan.projects) {
+      const projectRequest = childRequest(`${group.key}:project`)
+      applyAction(snapshot, owner, { action: 'create', requestId: projectRequest, title: group.title, brief: group.brief }, now)
+      const projectId = idFor(owner, 'project', projectRequest), project = projectFor(state, projectId)
+      project.delegation = { requestId: request, hash, key: group.key }
+      for (const [index, instruction] of group.tasks.entries()) {
+        const assignee = `Nalu ${index + 1}`
+        applyAction(snapshot, owner, { action: 'add-agent', projectId, requestId: childRequest(`${group.key}:agent:${index}`), name: assignee, personality: 'Create the assigned deliverable carefully. Keep this project separate from unrelated work.', appearance: { coat: index % 8, ears: index % 4, markings: index % 6, eyes: index % 4 } }, now)
+        const taskRequest = childRequest(`${group.key}:${instruction.key}:task`), startRequest = childRequest(`${group.key}:${instruction.key}:start`)
+        applyAction(snapshot, owner, { action: 'add-task', projectId, thread: assignee, assignee, requestId: taskRequest, title: instruction.instructions }, now)
+        const taskId = idFor(owner, 'task', taskRequest)
+        // The user delegated this project to its swarm. Its board and results
+        // are shared inside that project, without importing private chat logs.
+        taskFor(state, projectId, taskId).threads = [assignee, 'group']
+        applyAction(snapshot, owner, { action: 'start-task', projectId, taskId, requestId: startRequest }, now)
+        if (instruction.kind !== 'text') {
+          const sourceId = idFor(owner, 'work', startRequest), source = snapshot.jobs.find(job => job.id === sourceId)!, task = taskFor(state, projectId, taskId)
+          const reason = 'This request selected a Studio creation.'
+          source.status = 'waiting'; source.summary = reason
+          source.artifact = { type: 'needs-workspace', workspace: 'studio', studioKind: instruction.kind, prompt: source.input, reason }
+          task.status = 'waiting'; task.summary = reason; task.handoff = { studioKind: instruction.kind, prompt: source.input, reason }
+          applyAction(snapshot, owner, { action: 'continue-studio', projectId, taskId, sourceJobId: sourceId, requestId: childRequest(`${group.key}:${instruction.key}:studio`) }, now)
+        }
+      }
+    }
+    return
+  }
   if (body.action === 'create') {
     const request = requestId(body), id = idFor(owner, 'project', request)
     const title = text(body.title, 'project title', 100), brief = text(body.brief, 'project brief', 4000, true)
@@ -255,6 +296,7 @@ function applyAction(snapshot: SwarmSnapshot, owner: string, body: Record<string
 }
 
 export function createdProjectId(owner: string, body: Record<string, unknown>) {
+  if (body.action === 'delegate-work') return idFor(owner, 'project', delegatedRequest(requestId(body), `${parseSwarmWorkPlan(body.plan).projects[0].key}:project`))
   return body.action === 'create' ? idFor(owner, 'project', requestId(body)) : undefined
 }
 

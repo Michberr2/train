@@ -251,3 +251,28 @@ test('the global work drawer stops the selected project task without navigating 
   await assert.rejects(client.stopProjectTask('travel', 'launch-work'), /not available in that project/)
   assert.equal(writes.length, 1); client.dispose()
 })
+
+test('a delegation recovered after a lost acknowledgement keeps its batch receipt and never queues duplicate work', async () => {
+  const storage = memory(), writes = []
+  let state = base(), revision = 1
+  const plan = { version: 1, projects: [
+    { key: 'website', title: 'Website project', brief: 'Public website brief.', tasks: [{ key: 'site', instructions: 'Build the public website.', kind: 'website' }] },
+    { key: 'document', title: 'Document project', brief: 'Separate document brief.', tasks: [{ key: 'doc', instructions: 'Write the separate document.', kind: 'document' }] },
+  ] }
+  const request = async (_url, options) => {
+    const body = JSON.parse(options.body)
+    if (body.action === 'list') return response(state, revision)
+    assert.equal(body.action, 'delegate-work'); assert.equal(body.executionMode, 'device'); writes.push(body)
+    state = { ...state, projects: [...state.projects, ...plan.projects.map((item, index) => ({ ...project(`delegated-${index}`), title: item.title, brief: item.brief, delegation: { requestId: body.requestId, hash: 'a'.repeat(64), key: item.key } }))] }; revision++
+    throw new TypeError('Lost delegation acknowledgement')
+  }
+  const first = setup(request, { storage }); await first.refresh(); first.navigate('launch', 'Milo'); first.setDraft('Keep this conversation separate.')
+  await assert.rejects(first.delegateWork(plan)); first.dispose()
+  const second = setup(request, { storage }); await second.refresh()
+  assert.deepEqual(await second.delegateWork(plan), ['delegated-0', 'delegated-1'])
+  assert.equal(writes.length, 1)
+  assert.equal(second.getSnapshot().preferences.activeProjectId, 'launch')
+  assert.equal(second.getSnapshot().preferences.recipient, 'Milo')
+  assert.equal(second.getSnapshot().preferences.drafts['launch::Milo'], 'Keep this conversation separate.')
+  second.dispose()
+})

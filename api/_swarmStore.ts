@@ -86,6 +86,9 @@ function assertSnapshot(value: SwarmSnapshot, previous?: SwarmSnapshot): void {
     }
   }
   for (const project of state.projects) {
+    if (project.delegation && (typeof project.delegation.requestId !== 'string' || !/^[\w:-]{8,100}$/.test(project.delegation.requestId) || !/^[a-f0-9]{64}$/.test(project.delegation.hash) || !/^[a-zA-Z0-9_-]{1,40}$/.test(project.delegation.key))) throw new Error('Invalid delegated project receipt.')
+    const priorDelegation = previous?.state.projects.find(item => item.id === project.id)?.delegation
+    if (priorDelegation && JSON.stringify(priorDelegation) !== JSON.stringify(project.delegation)) throw new Error('A delegated project receipt cannot be rewritten.')
     if (!Array.isArray(project.members) || !project.members.length || project.members.length > 1000 || new Set(project.members).size !== project.members.length || project.members.some(member => !validAgent(project, member))) throw new Error('Invalid Swarm membership.')
     if (typeof project.title !== 'string' || typeof project.brief !== 'string' || !timestamp(project.createdAt) || !timestamp(project.updatedAt)) throw new Error('Invalid Swarm project.')
   }

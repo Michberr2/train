@@ -358,5 +358,39 @@ await regression('device jobs use no quota/provider wake, stay out of cloud clai
   assert.equal(fixture.reservations, quota); assert.equal(fixture.wakes.length, wakes)
   fixture.quotaAllowed = true
 })
+await regression('one local delegation atomically queues unrelated website and document projects with separate contexts and idempotent receipts', async () => {
+  db.db.exec("INSERT INTO nalu_users VALUES('delegated-owner')")
+  const backend = fixture.backend
+  fixture.backend = () => ({ ...backend(), userId: async token => token === 'delegated-token' ? 'delegated-owner' : backend().userId(token) })
+  const local = body => request({ ...body, executionMode: 'device' }, 'delegated-token')
+  const plan = { version: 1, projects: [
+    { key: 'acorn', title: 'Acorn website', brief: 'ACORN_PUBLIC_BRIEF: a coffee roaster.', tasks: [{ key: 'website', instructions: 'Build a website for Acorn coffee.', kind: 'website' }] },
+    { key: 'travel', title: 'Travel document', brief: 'DOC_PRIVATE_BRIEF: the team trip has three attendees.', tasks: [{ key: 'document', instructions: 'Write a document summarizing the team trip.', kind: 'document' }] },
+  ] }
+  const quota = fixture.reservations, wakes = fixture.wakes.length
+  const body = { action: 'delegate-work', requestId: 'delegate-two-projects-01', plan: JSON.stringify(plan) }
+  const accepted = await local(body)
+  assert.equal(accepted.code, 200)
+  assert.equal(accepted.body.state.projects.length, 2); assert.equal(accepted.body.state.tasks.length, 2)
+  assert.ok(accepted.body.state.projects.some(project => project.id === accepted.body.projectId))
+  const before = await store.read('delegated-owner')
+  assert.equal(before.jobs.filter(job => job.status === 'queued').length, 2)
+  assert.ok(before.jobs.every(job => job.executionMode === 'device'))
+  assert.ok(before.state.tasks.every(task => task.threads.includes('group') && task.threads.includes(task.assignee)))
+  assert.equal((await local(body)).code, 200)
+  assert.equal((await store.read('delegated-owner')).jobs.length, before.jobs.length)
+  const changed = structuredClone(plan); changed.projects[1].tasks[0].instructions = 'Different instructions.'
+  assert.equal((await local({ ...body, plan: JSON.stringify(changed) })).code, 409)
+  assert.deepEqual((await store.read('delegated-owner')).state, before.state)
+  const [first, second] = await Promise.all([local({ action: 'device-claim' }), local({ action: 'device-claim' })])
+  const jobs = [first.body.deviceJob, second.body.deviceJob]
+  assert.equal(new Set(jobs.map(job => job.projectId)).size, 2)
+  for (const job of jobs) {
+    assert.ok(job.studio)
+    if (job.studio.kind === 'website') { assert.match(JSON.stringify(job), /ACORN_PUBLIC_BRIEF/); assert.doesNotMatch(JSON.stringify(job), /DOC_PRIVATE_BRIEF/) }
+    else { assert.equal(job.studio.kind, 'document'); assert.match(JSON.stringify(job), /DOC_PRIVATE_BRIEF/); assert.doesNotMatch(JSON.stringify(job), /ACORN_PUBLIC_BRIEF/) }
+  }
+  assert.equal(fixture.reservations, quota); assert.equal(fixture.wakes.length, wakes)
+})
 if (failures.length) { console.error(`${failures.length} outstanding Swarm regression(s): ${failures.join('; ')}`); process.exitCode = 1 }
 delete globalThis.__swarmRoutes
