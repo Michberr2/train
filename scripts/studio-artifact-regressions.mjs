@@ -88,10 +88,14 @@ try {
   }
   const galleryButton = title => page.getByRole('button').filter({ has: page.getByText(title, { exact: true }) }).last()
   const selectStudio = async () => {
-    // The authenticated app opens its space picker even with a saved view.
+    // The authenticated app starts with scenery even with a saved view.
     // Wait for that shell before checking lazy navigation, then enter Studio
-    // through the same carousel control a returning account uses.
+    // through the account menu's workspace picker, preserving the scenic home.
     await page.locator('.nalu-workspace').waitFor()
+    if (await page.locator('.nalu-workspace[data-workspace-home=true]').count()) {
+      await page.getByRole('button', { name: 'Account options', exact: true }).click()
+      await page.getByRole('button', { name: 'All workspaces', exact: true }).click()
+    }
     if (await page.locator('.nalu-workspace[data-workspace-launcher=true]').count()) {
       const carousel = page.getByRole('region', { name: 'Choose a workspace', exact: true })
       await carousel.waitFor()

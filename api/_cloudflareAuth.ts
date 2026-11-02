@@ -1,3 +1,4 @@
+import { blockedAccountAction } from './_loginAccess'
 import { CloudflareStore } from './_cloudflareStore'
 import { CloudflareAccounts } from './_cloudflareAccounts'
 import { normalizePhone, normalizeRecoveryCode, readToken } from './_db'
@@ -8,6 +9,7 @@ export async function cloudflareAuth(req: any, res: any, body: any) {
   try {
     const accounts = new CloudflareAccounts(new CloudflareStore()), action = String(body.action || '')
     const id = String(body.email || '').trim().toLowerCase(), password = String(body.password || '')
+    if (blockedAccountAction(action, id)) return res.status(403).json({ ok: false, error: 'Nalu is temporarily limited to its owner account.' })
     const passwordError = () => res.status(400).json({ ok: false, error: 'Password must be at least 8 characters.' })
     if (action === 'signup') {
       if (!id || id.length > 320) return res.status(400).json({ ok: false, error: 'Enter an email or username.' })

@@ -1,5 +1,6 @@
 // Nalu auth — server-side accounts in Neon Postgres, shared across n4lu.ai/.com.
 // POST { action: 'signup'|'signin'|'me'|'signout', ... }
+import { blockedAccountAction, loginAllowed } from './_loginAccess'
 import { cors } from './_cors'
 import { getClient, ensureSchema, hashPassword, newSalt, newToken, readToken, safeJson, sha256, newRecoveryCode, normalizeRecoveryCode, userIdForToken, normalizePhone } from './_db'
 import { sendEmail, resetEmail } from './_email'
@@ -28,6 +29,7 @@ export default async function handler(req: any, res: any) {
   }
   const body = (typeof req.body === 'string' ? safeJson(req.body) : req.body) || {}
   const action = String(body.action || '')
+  if (blockedAccountAction(action, body.email)) return res.status(403).json({ ok: false, error: 'Nalu is temporarily limited to its owner account.' })
   if (process.env.NALU_STORAGE_BACKEND === 'cloudflare') return cloudflareAuth(req, res, body)
 
   const client = getClient()
@@ -88,7 +90,7 @@ export default async function handler(req: any, res: any) {
         [token],
       )
       const u = r.rows[0]
-      return res.status(200).json({ user: u ? { id: u.id, displayName: u.display_name, phone: u.phone ?? null } : null })
+      return res.status(200).json({ user: u && loginAllowed(u.id) ? { id: u.id, displayName: u.display_name, phone: u.phone ?? null } : null })
     }
 
     // Update the signed-in user's profile (display name and/or phone number).
