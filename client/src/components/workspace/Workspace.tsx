@@ -6,6 +6,8 @@ import Scenery from '../Scenery'
 import NaluAvatar from '../avatar/NaluAvatar'
 import NaluMark from '../landing/NaluMark'
 import NaluGlobe from '../NaluGlobe'
+import { workspaceForRequest } from './design/workspaceRequest'
+import WorkspaceAssembly from './design/WorkspaceAssembly'
 import { fallbackStudioIntent, parseStudioIntent, shouldClassifyStudio, studioKind as normalizeStudioKind, type StudioIntent } from '../../../../shared/studioIntent'
 import { buildChatMemory } from './crossChatMemory'
 import { mergeChatMessages } from '../../../../shared/chatMessages'
@@ -91,7 +93,6 @@ const EmailCard = lazy(() => import('./EmailCard'))
 const DesignArtifactCard = lazy(() => import('./DesignArtifactCard'))
 const AgentsPanel = lazy(() => import('./AgentsPanel'))
 const WorkspaceCarousel = lazy(() => import('../workspace-preview/real/WorkspaceCarousel'))
-const WorkspaceAppDock = lazy(() => import('../workspace-preview/real/WorkspaceAppDock'))
 const LiveWorkspaceLiveHub = lazy(() => import('../workspace-preview/real/WorkspaceLiveHub'))
 const LiveWorkspaceAgentTray = lazy(() => import('../workspace-preview/real/WorkspaceAgentTray'))
 const LiveWorkspaceAgentScreens = lazy(() => import('../workspace-preview/real/WorkspaceAgentScreens'))
@@ -740,10 +741,12 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     const v = localStorage.getItem('nalu-view')
     return v && v !== 'settings' && (v === 'chat' || Object.prototype.hasOwnProperty.call(VIEW_TITLES, v)) ? v as View : 'chat'
   })
-  // The carousel is the entry point on every authenticated visit. Retain the
-  // saved view underneath it without letting that preference bypass the picker.
-  const [launcherOpen, setLauncherOpen] = useState(() => reviewLayout && (!previewLayout
-    || new URLSearchParams(location.search).get('view') !== 'memory'))
+  // Start with scenery and the chat lip. Saved spaces remain available on demand.
+  const [ambientHome, setAmbientHome] = useState(() => reviewLayout && !previewLayout && window.location.hash !== '#settings' && !new URLSearchParams(location.search).has('billing'))
+  const [launcherOpen, setLauncherOpen] = useState(() => previewLayout && new URLSearchParams(location.search).get('view') !== 'memory')
+  const [mapRequest, setMapRequest] = useState<{ key: number; query: string }>()
+  const [requestedStudioKind, setRequestedStudioKind] = useState<string>()
+  const [assemblyRequest, setAssemblyRequest] = useState({ key: 0, label: '' })
   const [launcherSelection, setLauncherSelection] = useState<WorkspaceCarouselView>('studio')
   const [hasOpenedSpace, setHasOpenedSpace] = useState(!launcherOpen)
   const [agentScreensOpen, setAgentScreensOpen] = useState(previewLayout && new URLSearchParams(location.search).get('screens') === '1')
@@ -760,11 +763,11 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   const [chatContentVisible, setChatContentVisible] = useState(false)
   useEffect(() => {
     if (!reviewLayout || !reviewMainRef.current) return
-    reviewMainRef.current.inert = launcherOpen || agentScreensOpen
-    if (launcherOpen || agentScreensOpen || reviewChatOpenRef.current) return
+    reviewMainRef.current.inert = ambientHome || launcherOpen || agentScreensOpen
+    if (ambientHome || launcherOpen || agentScreensOpen || reviewChatOpenRef.current) return
     const frame = requestAnimationFrame(() => reviewMainRef.current?.focus({ preventScroll: true }))
     return () => cancelAnimationFrame(frame)
-  }, [reviewLayout, launcherOpen, agentScreensOpen])
+  }, [reviewLayout, ambientHome, launcherOpen, agentScreensOpen])
   const [navOpen, setNavOpen] = useState(false) // the nav dropdown open/closed
   const [model] = useState<string>(() => loadModel())
   const [chats, setChats] = useState<Chat[]>(() => loadChats())
@@ -855,6 +858,8 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     if (reviewLayout || (typeof window !== 'undefined' && window.innerWidth < 768)) setSidebarOpen(false)
   }, [reviewLayout])
   const openSpace = useCallback((next: WorkspaceCarouselView) => {
+    setAmbientHome(false)
+    setAssemblyRequest(previous => ({ key: previous.key + 1, label: next === 'agents' ? 'Autopilot' : next }))
     setReviewChatOpen(false)
     setAgentScreensOpen(false)
     setView(next)
@@ -864,11 +869,15 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     closeSidebarOnMobile()
   }, [closeSidebarOnMobile, setReviewChatOpen])
   const openWorkspaceLauncher = useCallback(() => {
+    setAmbientHome(false)
     setReviewChatOpen(false)
     setAgentScreensOpen(false)
     if (view !== 'settings' && view !== 'automations') setLauncherSelection(view)
     setLauncherOpen(true)
   }, [view, setReviewChatOpen])
+  const returnToScenery = useCallback(() => {
+    setAmbientHome(true); setLauncherOpen(false); setAgentScreensOpen(false); setReviewChatOpen(false)
+  }, [setReviewChatOpen])
   const openAgentScreens = useCallback((id: string | null) => {
     if (document.activeElement instanceof HTMLElement) agentScreenTrigger.current = document.activeElement
     setSelectedAgentItem(id)
@@ -1229,8 +1238,9 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     async (text: string, opts?: { keepView?: boolean; userMessageId?: string; assistantMessageId?: string; studioKind?: string; studioTarget?: Creation; movieSeconds?: number; attachments?: Attachment[] }) => {
       const content = text.trim()
       if (!content || streaming) return
+      const workspaceRequest = reviewLayout && !opts?.keepView && !opts?.studioKind && dismissedIntent !== content ? workspaceForRequest(content) : null
       // A floating conversation keeps its original space, including after async attachment work.
-      const keepCurrentView = opts?.keepView || reviewChatOpenRef.current
+      const keepCurrentView = opts?.keepView || reviewChatOpenRef.current || workspaceRequest?.view === 'studio'
       // Per-target re-entry guard (see sendingChatsRef): block a second fire into
       // the same chat while its turn is still starting/streaming, but allow a
       // deliberate send into a different chat (background builds keep running).
@@ -1265,16 +1275,25 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       // send() in the same tick — builds on the freshest message list.
       const existing = (chatsRef.current.find((c) => c.id === chatId)) || chats.find((c) => c.id === chatId)
       const assistantMessageId = opts?.assistantMessageId || uid()
-      if (opts?.keepView) setStudioTurn({ chatId, messageId: assistantMessageId })
+      if (opts?.keepView || workspaceRequest?.view === 'studio') setStudioTurn({ chatId, messageId: assistantMessageId })
       const history: Msg[] = [...(existing?.messages ?? []).map(m => m.clarify && !m.clarify.answered ? { ...m, updatedAt: Date.now(), clarify: { ...m.clarify, answered: true } } : m), { id: opts?.userMessageId || uid(), updatedAt: Date.now(), role: 'user', content }]
 
       // Commit the user's request before attachments or any network operation.
       // A refresh immediately after Send must not lose the new conversation.
-      const checkpoint: Chat = { ...(existing || { id: chatId, title: content.length > 40 ? content.slice(0, 40) + '…' : content, createdAt: Date.now() }), messages: [...history, { id: assistantMessageId, updatedAt: Date.now(), role: 'assistant', content: '' }] }
+      const workspaceOnly = workspaceRequest && workspaceRequest.view !== 'studio'
+      const checkpoint: Chat = { ...(existing || { id: chatId, title: content.length > 40 ? content.slice(0, 40) + '…' : content, createdAt: Date.now() }), messages: [...history, { id: assistantMessageId, updatedAt: Date.now(), role: 'assistant', content: workspaceOnly ? `I’ve opened ${workspaceRequest.view === 'agents' ? 'Autopilot' : workspaceRequest.view === 'map' ? 'Map with your request' : 'your saved work'}.` : '' }] }
       const checkpointChats = [checkpoint, ...chatsRef.current.filter(c => c.id !== chatId)]
       chatsRef.current = checkpointChats; setChats(checkpointChats)
       persistChats(checkpointChats, sessionToken)
       setActiveId(chatId)
+      if (workspaceRequest) {
+        setAmbientHome(false); setLauncherOpen(false); setAgentScreensOpen(false); setHasOpenedSpace(true)
+        setView(workspaceRequest.view); setReviewChatOpen(false)
+        setAssemblyRequest(previous => ({ key: previous.key + 1, label: workspaceRequest.view }))
+        if (workspaceRequest.studioKind) setRequestedStudioKind(workspaceRequest.studioKind)
+        if (workspaceRequest.view === 'map') setMapRequest(previous => ({ key: (previous?.key || 0) + 1, query: content }))
+        if (workspaceOnly) { sendingChatsRef.current.delete(guardKey); finishReviewActivity(); return }
+      }
       if (!keepCurrentView) setView('chat')
       const ctrl = new AbortController()
       abortRef.current = ctrl
@@ -1409,7 +1428,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         artifacts: [m.doc && 'document', m.sheet && 'spreadsheet', m.deck && 'slides', m.cad && 'cad', m.video && 'video', m.email && 'email', m.design?.kind].map(normalizeStudioKind).filter(Boolean),
       }))
       const recentKind = intentContext.slice().reverse().find(m => m.artifacts.length)?.artifacts[0]
-      const selectedKind = normalizeStudioKind(opts?.studioKind === 'movie' || /^\/movie\b/i.test(content) ? 'video' : opts?.studioKind)
+      const selectedKind = normalizeStudioKind(opts?.studioKind === 'movie' || /^\/movie\b/i.test(content) ? 'video' : opts?.studioKind || workspaceRequest?.studioKind)
       let intent: StudioIntent = plain
         ? { kind: 'chat', mode: 'chat', additionalKinds: [] }
         : selectedKind
@@ -2712,6 +2731,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     <div
       className="nalu-workspace relative isolate h-[100dvh] w-screen flex text-ink overflow-hidden font-sans" data-workspace-theme={isDark ? 'dark' : 'light'}
       data-workspace-view={view} data-workspace-design-preview={reviewLayout || undefined}
+      data-workspace-home={reviewLayout && ambientHome || undefined}
       data-workspace-launcher={reviewLayout && launcherOpen || undefined}
       data-agent-screens={reviewLayout && agentScreensOpen || undefined}
       onKeyDownCapture={reviewLayout && launcherOpen && !reviewChatOpen ? event => {
@@ -2725,12 +2745,12 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       {/* The avatar workspace is scoped to the authenticated app. */}
 
       {reviewLayout && <header className="review-workspace-header">
-        <button className="review-header-brand" aria-label="Nalu home" onClick={openWorkspaceLauncher}>
+        <button className="review-header-brand" aria-label="Nalu home" onClick={returnToScenery}>
           <span className="review-logo-wordmark"><NaluMark/><b>nalu</b></span>
         </button>
-        {WorkspaceAppDock && <Suspense fallback={<nav aria-label="Workspace navigation"/>}><WorkspaceAppDock currentView={view} launcherOpen={launcherOpen || agentScreensOpen} onOpen={openSpace}/></Suspense>}
         <WorkspaceAccountMenu displayName={user?.displayName} saveState={saveState} onLogout={onLogout} onRetrySave={retrySync}
-          onSettings={() => { setReviewChatOpen(false); setLauncherOpen(false); setAgentScreensOpen(false); setHasOpenedSpace(true); setView('settings'); closeSidebarOnMobile() }}/>
+          onSpaces={openWorkspaceLauncher}
+          onSettings={() => { setAmbientHome(false); setReviewChatOpen(false); setLauncherOpen(false); setAgentScreensOpen(false); setHasOpenedSpace(true); setView('settings'); closeSidebarOnMobile() }}/>
 
       </header>}
 
@@ -2859,7 +2879,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       </aside>
 
       {/* Main */}
-      <main ref={reviewMainRef} tabIndex={reviewLayout ? -1 : undefined} aria-hidden={reviewLayout && (launcherOpen || agentScreensOpen) || undefined} data-launcher-hidden={reviewLayout && (launcherOpen || agentScreensOpen) || undefined} className="ws-main flex-1 flex flex-col min-w-0">
+      <main ref={reviewMainRef} tabIndex={reviewLayout ? -1 : undefined} aria-hidden={reviewLayout && (ambientHome || launcherOpen || agentScreensOpen) || undefined} data-launcher-hidden={reviewLayout && (ambientHome || launcherOpen || agentScreensOpen) || undefined} className="ws-main flex-1 flex flex-col min-w-0">
         <div className="ws-topbar flex items-center gap-2 px-5 shrink-0">
           {!reviewLayout && <button
             onClick={() => setSidebarOpen((v) => !v)}
@@ -2932,6 +2952,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         {view === 'studio' && (
           <StudioPanel
             designEnabled={reviewLayout}
+            requestedTool={requestedStudioKind}
             creations={creations}
             onOpen={openCreation}
             streaming={streaming}
@@ -3009,7 +3030,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
             }}
           />
         )}
-        {view === 'map' && <MapPanel />}
+        {view === 'map' && <MapPanel request={mapRequest} />}
         {view === 'memory' && IS_WEB_APP && (reviewLayout && WorkspaceLiveHub ? (
           <Suspense fallback={<div className="review-launcher-loading" role="status">Opening your work…</div>}>
             <WorkspaceLiveHub chats={chats} activeChatIds={reviewActiveChats} activity={liveActivity}
@@ -3038,12 +3059,13 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           </div>
         ) : <div ref={setChatInlineAnchor} className="workspace-chat-inline-slot" aria-hidden="true" />) : renderChatContent())}
       </main>
+      {reviewLayout && <WorkspaceAssembly target={reviewMainRef} request={assemblyRequest} active={!ambientHome && !launcherOpen && !agentScreensOpen} />}
 
       {reviewLayout && agentScreensOpen && WorkspaceAgentScreens && <Suspense fallback={<div className="review-launcher-loading" role="status">Opening agent screens…</div>}>
         <WorkspaceAgentScreens chats={chats} activeChatIds={reviewActiveChats} activity={liveActivity} selectedItemId={selectedAgentItem}
           onSelectItem={selectActivityItem} onOpenSwarm={openSwarmActivity} onOpenChat={id => { setActiveId(id); openSpace('chat') }} onOpenSpace={openSpace} onClose={closeAgentScreens}/>
       </Suspense>}
-      {reviewLayout && WorkspaceAgentTray && <Suspense fallback={null}>
+      {reviewLayout && !ambientHome && WorkspaceAgentTray && <Suspense fallback={null}>
         <WorkspaceAgentTray chats={chats} activeChatIds={reviewActiveChats} activity={liveActivity}
           onOpenChat={id => { setActiveId(id); openSpace('chat') }}
           onOpenPicker={() => setReviewChatOpen(false)}
@@ -3055,7 +3077,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       {reviewLayout && WorkspaceChatPopover && <Suspense fallback={null}>
         <WorkspaceChatPopover swarm={previewLayout ? undefined : liveSwarm} swarmNavigationRequest={swarmNavigationRequest} agentConversationRequest={agentConversationRequest} open={reviewChatOpen} onOpen={() => setReviewChatOpen(true)}
           fullPageAnchor={chatInlineAnchor}
-          fullPageVisible={view === 'chat' && !launcherOpen && !agentScreensOpen}
+          fullPageVisible={view === 'chat' && !ambientHome && !launcherOpen && !agentScreensOpen}
           onChatVisibilityChange={setChatContentVisible}
           onClose={() => setReviewChatOpen(false)}
           onNewChat={newChat} title={active?.title || 'A little space to think'}

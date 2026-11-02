@@ -72,6 +72,7 @@ export default function StudioPanel({
   onStop,
   designPreview = false,
   designEnabled = false,
+  requestedTool,
 }: {
   onGenerate: (prompt: string, toolKey: string, target?: Creation, movieSeconds?: number) => void
   creations?: Creation[]
@@ -85,9 +86,14 @@ export default function StudioPanel({
   onStop?: () => void
   designPreview?: boolean
   designEnabled?: boolean
+  requestedTool?: string
 }) {
   const reviewLayout = designEnabled || import.meta.env.DEV && designPreview
   const [toolKey, setToolKey] = useState('website')
+  useEffect(() => {
+    const next = requestedTool === 'slides' ? 'presentation' : requestedTool
+    if (next && TOOLS.some(tool => tool.key === next)) setToolKey(next)
+  }, [requestedTool])
   const [style, setStyle] = useState('none')
   const [studioView, setStudioView] = useState<'create' | 'library'>('create')
   const [showIdeas, setShowIdeas] = useState(false)
