@@ -18,6 +18,7 @@
  --review-panel-rgb:var(--gw-panel-rgb);--review-ink-rgb:var(--gw-ink-rgb);--review-muted-rgb:var(--gw-muted-rgb);--color-primary:var(--gw-ink-rgb);--color-secondary:var(--gw-muted-rgb);color-scheme:var(--gw-color-scheme);
 }
 .nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .nalu-workspace:not([data-workspace-view=chat])>.ws-main{background:rgb(var(--gw-panel-rgb)/.97);border-color:var(--gw-line);}
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .nalu-workspace[data-workspace-theme] :is(.ws-main,.generative-home,.workspace-account-panel,.workspace-work-drawer) :is(input:not([type=checkbox],[type=radio],[type=range],[type=color],[type=file]),textarea,select){background-color:var(--gw-input);color:var(--gw-ink);border-color:var(--gw-line);}
 .nalu-design-review[data-generative-workspace] :is(.generative-block,.generative-library-card,.generative-conversation,.generative-agent-workspace,.generative-empty){background:rgb(var(--gw-panel-rgb)/.97);color:var(--gw-ink);border-color:var(--gw-line);}
 .nalu-design-review[data-generative-workspace] :is(.generative-block .text-ink,.generative-fields input,.generative-fields textarea,.generative-table-filter){color:var(--gw-ink);}
 .nalu-design-review[data-generative-workspace] :is(.generative-block .text-dim,.generative-fields label,.generative-check small,.generative-metric small,.generative-metric p,.generative-table th,.generative-library-card p,.generative-library-card>div){color:var(--gw-muted);}

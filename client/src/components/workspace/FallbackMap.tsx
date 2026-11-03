@@ -8,7 +8,7 @@ export default function FallbackMap({ query: initialQuery, reason, onPrimary, in
   const [query, setQuery] = useState(initialQuery || ''), [snapshot, setSnapshot] = useState<PlaceSnapshot | null>(() => initialSnapshot || (initialQuery ? cachedPlaces(initialQuery, initialView) : null))
   const [view, setView] = useState<View>(() => {
     const cached = initialSnapshot || (initialQuery ? cachedPlaces(initialQuery, initialView) : null)
-    return placesViewport(cached?.results || [], 700, 500) || initialView || { lat: 30, lng: 0, zoom: 2 }
+    return initialView || placesViewport(cached?.results || [], 700, 500) || { lat: 30, lng: 0, zoom: 2 }
   })
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [selected, setSelected] = useState<string>()
   const [tiles, setTiles] = useState({ loaded: 0, failed: false, attempt: 0 }), [offline, setOffline] = useState(!navigator.onLine)
@@ -23,7 +23,7 @@ export default function FallbackMap({ query: initialQuery, reason, onPrimary, in
     if (surfaceOnly && initialView) setView(v => v.lat === initialView.lat && v.lng === initialView.lng && v.zoom === initialView.zoom ? v : initialView)
   }, [surfaceOnly, initialView?.lat, initialView?.lng, initialView?.zoom])
   useEffect(() => { if (surfaceOnly) viewCallback.current?.(view) }, [surfaceOnly, view.lat, view.lng, view.zoom])
-  const run = async (text: string) => {
+  const run = async (text: string, fit = true) => {
     if (!text.trim()) return
     search.current?.abort(); const request = new AbortController(); search.current = request
     setBusy(true); setError('')
@@ -32,12 +32,12 @@ export default function FallbackMap({ query: initialQuery, reason, onPrimary, in
       if (search.current !== request || request.signal.aborted) return
       setSnapshot(data)
       const next = placesViewport(data.results, size.width, size.height)
-      if (next) setView(next)
+      if (next && fit) setView(next)
       if (!data.results.length) setError('No matching places were returned. Try a more specific city or category.')
     } catch (e) { if (!request.signal.aborted) setError(e instanceof Error ? e.message : 'Search is unavailable. Try again.') }
     finally { if (search.current === request) setBusy(false) }
   }
-  useEffect(() => { if (initialQuery && !surfaceOnly) { setQuery(initialQuery); void run(initialQuery) }; return () => search.current?.abort() }, [initialQuery, surfaceOnly])
+  useEffect(() => { if (initialQuery && !surfaceOnly) { setQuery(initialQuery); void run(initialQuery, !initialSnapshot || initialSnapshot.query !== initialQuery) }; return () => search.current?.abort() }, [initialQuery, surfaceOnly])
   useEffect(() => {
     if (!host.current) return
     const resize = new ResizeObserver(entries => { const r = entries[0].contentRect; if (r.width && r.height) setSize({ width: r.width, height: r.height }) })
@@ -48,7 +48,7 @@ export default function FallbackMap({ query: initialQuery, reason, onPrimary, in
       setOffline(!navigator.onLine)
       if (navigator.onLine) {
         setTiles(t => ({ loaded: 0, failed: false, attempt: t.attempt + 1 }))
-        if (query && !surfaceOnly) void run(query)
+        if (query && !surfaceOnly) void run(query, false)
       }
     }
     window.addEventListener('online', update); window.addEventListener('offline', update)

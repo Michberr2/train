@@ -198,6 +198,18 @@ try {
  const workspaceTint=await freshPage.locator('.review-desktop-scene').evaluate(el=>getComputedStyle(el,'::after').backgroundColor)
  assert.ok(Number(workspaceTint.match(/[\d.]+/g).at(-1))>=.65,'dark mode tints the actual workspace scenery')
  await freshPage.screenshot({path:output+'/07-dark-account-login.png'})
+ await freshPage.getByRole('button',{name:'Capabilities',exact:true}).click()
+ await freshPage.getByRole('button',{name:'Open Studio',exact:true}).click()
+ const studioTool=freshPage.getByRole('combobox',{name:'Studio tool',exact:true})
+ await expect(studioTool).toBeVisible()
+ assert.ok(luminance(await studioTool.evaluate(el=>getComputedStyle(el).backgroundColor))<.08,'native Studio controls follow dark mode')
+ await freshPage.getByRole('button',{name:'Account options',exact:true}).click();await freshPage.getByRole('button',{name:'Light mode',exact:true}).click();await freshPage.keyboard.press('Escape')
+ await expect.poll(async()=>luminance(await studioTool.evaluate(el=>getComputedStyle(el).backgroundColor))>.7).toBe(true)
+ await freshPage.getByRole('button',{name:'Account options',exact:true}).click();await freshPage.getByRole('button',{name:'Dark mode',exact:true}).click();await freshPage.keyboard.press('Escape')
+ for(const name of ['Autopilot','Memory']){
+  await freshPage.getByRole('button',{name:'Capabilities',exact:true}).click();await freshPage.getByRole('button',{name:'Open '+name,exact:true}).click()
+  await expect.poll(async()=>luminance(await freshPage.locator('.ws-main').evaluate(el=>getComputedStyle(el).backgroundColor))<.08).toBe(true)
+ }
  await fresh.close()
  const publicContext=await browser.newContext({viewport:{width:1200,height:900},reducedMotion:'reduce'})
  await publicContext.addInitScript(()=>{if(!sessionStorage.getItem('theme-fixture')){localStorage.setItem('nalu-theme','dark');sessionStorage.setItem('theme-fixture','1')}})
@@ -219,5 +231,5 @@ try {
  await publicContext.close()
  assert.deepEqual(errors, [])
  assert.deepEqual(remote, [])
- console.log('PASS signed-in light/dark surfaces, draft and edit preservation, account appearance reload, fresh-account login restoration, public/login/workspace background tint and input contrast; cursor coverage across text/layout/controls, dynamic registration and Motion pause/resume without lost edits; progressive UI before stream completion; live calculation, checklist and sorting edits; reload restoration; follow-up preservation; form continuation; Stop; full-page conversation; mobile layout; new capability/library navigation and settings; no legacy carousel, floating icons or remote fixture traffic')
+ console.log('PASS signed-in light/dark surfaces, draft and edit preservation, account appearance reload, fresh-account login restoration, public/login/workspace background tint, native tool surfaces and input contrast; cursor coverage across text/layout/controls, dynamic registration and Motion pause/resume without lost edits; progressive UI before stream completion; live calculation, checklist and sorting edits; reload restoration; follow-up preservation; form continuation; Stop; full-page conversation; mobile layout; new capability/library navigation and settings; no legacy carousel, floating icons or remote fixture traffic')
 } catch(error) { await page?.screenshot({path: output+'/failure.png'}).catch(()=>{}); await writeFile(output+'/failure.json',JSON.stringify({errors,text:await page?.locator('body').innerText()},null,2)); throw error } finally { await context.close(); await browser.close(); await server?.close() }
