@@ -1,7 +1,13 @@
 .scenery-reveal { animation: scenery-reveal .45s ease-out both; }
 .scenery-breeze { background: radial-gradient(ellipse at center,rgba(255,255,255,.16),transparent 60%); animation: scenery-breeze 4s ease-in-out infinite alternate; }
 .scenery-ball { animation: scenery-bounce 1.1s ease-in-out infinite alternate; }
+/* Keep the image and its tint in one background layer, behind page content. */
+[data-scenery]{isolation:isolate;}
+[data-scenery]::after{content:'';position:absolute;inset:0;z-index:2;pointer-events:none;background:#050804;opacity:0;transition:opacity .25s ease;}
+.dark [data-scenery]::after{opacity:.68;}
+.dark :is(.nalu-scene-shade,.nalu-auth-shade,.nalu-opening-shade){background:rgba(5,8,4,.15);}
+.dark .nalu-landing-header{background:#141911d9;border-color:#a1ae8d45;}
 @keyframes scenery-reveal { from { opacity: 0; } to { opacity: 1; } }
 @keyframes scenery-breeze { from { transform: translateX(-12%); opacity: .35; } to { transform: translateX(12%); opacity: .8; } }
 @keyframes scenery-bounce { from { transform: translateY(0) scaleX(1.08); } to { transform: translateY(-18px) scaleX(.98); } }
-@media (prefers-reduced-motion: reduce) { .scenery-reveal,.scenery-breeze,.scenery-ball { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .scenery-reveal,.scenery-breeze,.scenery-ball { animation: none; } [data-scenery]::after{transition:none;} }

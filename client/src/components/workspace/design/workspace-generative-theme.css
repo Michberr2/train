@@ -9,7 +9,7 @@
  --gw-ink:#f3f1e7;--gw-ink-rgb:243 241 231;--gw-muted:#bdc6b1;--gw-muted-rgb:189 198 177;--gw-line:#6a765e;--gw-line-rgb:106 118 94;
  --gw-input:#191e17;--gw-accent:#d1dfb8;--gw-accent-rgb:209 223 184;--gw-on-accent:#20271a;--gw-selected:#3b4931;--gw-color-scheme:dark;--gw-map-ground:#2b3225;
 }
-.nalu-design-review.workspace-design-surface[data-generative-workspace]:has([data-workspace-theme=dark]) .review-desktop-scene::after{background:linear-gradient(180deg,#10150f80,#10150f65 45%,#10150fc7);}
+.nalu-design-review.workspace-design-surface[data-generative-workspace]:has([data-workspace-theme=dark]) .review-desktop-scene::after{background:rgba(5,8,4,.72);}
 .nalu-design-review[data-generative-workspace]:has([data-workspace-theme=dark]) .fallback-tile-map>img{filter:grayscale(.75) invert(.9) brightness(.8);}
 .nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .nalu-workspace[data-workspace-theme],
 .nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .nalu-workspace[data-workspace-theme]>.ws-main{
