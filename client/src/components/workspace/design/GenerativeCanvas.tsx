@@ -59,13 +59,21 @@ export default function GenerativeCanvas({ ui, values, text, title, busy, partia
   composer: ReactNode; agents?: ReactNode; artifacts?: ReactNode; clarification?: ReactNode
   onChange: (key: string, value: string | boolean) => void; onAction: (prompt: string) => void; onConversation: () => void; onRetry: () => void
 }) {
-  return <section className="generative-canvas" aria-label="Generated workspace" aria-busy={busy}>
+  const mapBlock = ui?.blocks.find(block => block.type === 'map')
+  const mapKey = mapBlock ? `${mapBlock.id}:${mapBlock.query || ''}` : ''
+  const [mapView, setMapView] = useState<{ key: string; expanded: boolean } | null>(null)
+  const mapLayout = !!mapBlock && (mapView?.key === mapKey ? mapView.expanded : true)
+  const [details, setDetails] = useState(false)
+  const supporting = ui?.blocks.filter(block => block !== mapBlock) || []
+  return <section className="generative-canvas" data-layout={mapLayout ? 'map' : ui?.blocks.some(block => block.type === 'workflow' || block.type === 'agents') ? 'operations' : ui?.blocks.some(block => block.type === 'calculator' || block.type === 'metrics') ? 'analysis' : 'document'} aria-label="Generated workspace" aria-busy={busy}>
     <header className="generative-canvas-header"><div><span className="generative-eyebrow">{busy ? <span className="generative-building"><i/>{ui ? 'YOUR WORKSPACE IS TAKING SHAPE' : loading ? `CREATING YOUR ${loading.toUpperCase()}` : 'THINKING WITH YOU'}</span> : partial ? 'SAVED PARTIAL WORKSPACE' : 'YOUR NALU WORKSPACE'}</span>
       <h1><BuildCopy text={ui?.title || title}/></h1>{ui?.description && <p><BuildCopy text={ui.description}/></p>}</div>
-      <div className="generative-canvas-toolbar"><button onClick={onConversation}><MessageSquare size={14}/> Conversation</button>{!busy && <button onClick={onRetry}><RotateCcw size={13}/> Retry</button>}</div>
+      <div className="generative-canvas-toolbar">{mapBlock && <button aria-pressed={mapLayout} onClick={() => setMapView({ key: mapKey, expanded: !mapLayout })}>{mapLayout ? 'Exit full-page map' : 'Expand map'}</button>}{mapLayout && supporting.length > 0 && <button aria-expanded={details} onClick={() => setDetails(value => !value)}>{details ? 'Close details' : 'Show details'}</button>}<button onClick={onConversation}><MessageSquare size={14}/> Conversation</button>{!busy && <button onClick={onRetry}><RotateCcw size={13}/> Retry</button>}</div>
     </header>
     <div className="generative-grid">
-      {ui?.blocks.map(block => <Block key={block.id} block={block} values={values} onChange={onChange} onAction={onAction} busy={busy} agents={agents}/>)}
+      {mapBlock && <Block key={mapBlock.id} block={mapBlock} values={values} onChange={onChange} onAction={onAction} busy={busy} agents={agents}/>}
+      {mapBlock ? <aside className="generative-map-details" hidden={mapLayout && !details} aria-label="Map supporting details">{supporting.map(block => <Block key={block.id} block={block} values={values} onChange={onChange} onAction={onAction} busy={busy} agents={agents}/>)}</aside>
+        : ui?.blocks.map(block => <Block key={block.id} block={block} values={values} onChange={onChange} onAction={onAction} busy={busy} agents={agents}/>)}
       {!ui?.blocks.length && text && <section className="generative-block generative-text" data-width="full"><Markdown>{text}</Markdown>{clarification}</section>}
       {!ui?.blocks.length && !text && !artifacts && <div className="generative-empty generative-text" role="status"><i/><span>{busy ? 'Nalu is building a workspace for your question…' : 'Your work will appear here. Ask Nalu to get started.'}</span></div>}
       {ui?.blocks.length && clarification ? <div className="generative-block" data-width="full">{clarification}</div> : null}

@@ -26,6 +26,7 @@ import './workspace-utility-interior.css'
 import './workspace-adaptive.css'
 import './generative-workspace.css'
 import './workspace-generative-theme.css'
+import './workspace-page-layouts.css'
 
 /** Shared visual surface only. Authentication, storage and network access stay
  * with the caller; importing this component never initializes sample data. */

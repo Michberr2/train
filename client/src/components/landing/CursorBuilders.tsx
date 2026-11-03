@@ -44,7 +44,7 @@ export default function CursorBuilders({ container, reduced, active, workspace =
         for (const word of wordStyles.keys()) if (!word.isConnected) wordStyles.delete(word)
       }
       for (const element of Array.from(host.querySelectorAll<HTMLElement>(workspace ? workspaceSelectors : selectors)).filter(el => !el.closest('.nalu-landing-playground,.nalu-cursor-builders'))) {
-        if (registered.has(element) || element.closest('[data-cursor-exempt]')) continue
+        if (registered.has(element) || element.closest('[data-cursor-exempt],.gm-style,.fallback-tile-map,.generative-motion')) continue
         // Copy is managed by BuildCopy; its internal measurement spans are never jobs.
         if (element.parentElement?.closest('.nalu-build-copy')) continue
         const section = workspace ? element.closest('.generative-block,.generative-library-card,.generative-home,.generative-capabilities,.generative-library,.generative-conversation,.generative-connections-content') || host : element.closest('section,footer')
@@ -99,7 +99,9 @@ export default function CursorBuilders({ container, reduced, active, workspace =
     }
     const paint = (now = performance.now()) => {
       frame = 0; ctx.clearRect(0, 0, width, height)
-      const hostTop = host.getBoundingClientRect().top
+      const surfaceBox = surface.getBoundingClientRect()
+      const hostTop = surfaceBox.top, hostLeft = surfaceBox.left
+      const localBox = (element: Element) => { const r = element.getBoundingClientRect(); return { x: r.left - hostLeft, y: r.top - hostTop, w: r.width, h: r.height } }
       let running = false, jobs = 0
       for (const scene of scenes.values()) {
         if (!scene.section.isConnected) { scenes.delete(scene.section); continue }
@@ -118,27 +120,28 @@ export default function CursorBuilders({ container, reduced, active, workspace =
           if (cardBox && visible && t >= 0 && cardBox.left < width * .92 && cardBox.right > width * .08 && piece.began === undefined) piece.began = now
           const pieceTime = workspace ? piece.began === undefined ? -10 : (now - piece.began) / 1000 : card ? piece.began === undefined ? -10 : (now - piece.began) / 1000 : t
           const bounds = kind === 'photo' || kind === 'guide' ? element.parentElement!.getBoundingClientRect() : element.getBoundingClientRect()
-          const x = bounds.left, y = bounds.top - hostTop, w = element.offsetWidth || bounds.width, h = element.offsetHeight || bounds.height
+          const x = bounds.left - hostLeft, y = bounds.top - hostTop, w = element.offsetWidth || bounds.width, h = element.offsetHeight || bounds.height
           const agentId = id * 100
           if (kind === 'photo') {
-            const drag = ease((t - 1.05) / 1.35), size = ease((t - 3.05) / 1.9)
+            const size = ease((t - 3.05) / 1.9)
             const source = { x: 28, y: height * .59 }, destination = { x: width * .2, y: height * .26 }
             const placed = point(source, destination, clamp((t - 1.05) / 1.35), agentId)
             const left = mix(placed.x, 0, size), upper = mix(placed.y, 0, size), scale = mix(.29, 1, size)
             element.style.transformOrigin = 'top left'; element.style.scale = String(scale); element.style.translate = `${left}px ${upper}px`
             element.style.opacity = t < .8 ? '0' : '1'
+            const rendered = localBox(element)
             if (t >= 0 && t < 5.8 && visible) {
               running = true; jobs += 3
-              if (t > .8) selection(x + left, y + upper, w * scale, h * scale, clamp((5.5 - t) * 2), agentId)
+              if (t > .8) selection(rendered.x, rendered.y, rendered.w, rendered.h, clamp((5.5 - t) * 2), agentId)
               const grip = { x: source.x + 28, y: y + source.y + 18 }
               const dragging = t >= 1.05
-              const operator = dragging ? { x: x + placed.x + 28, y: y + placed.y + 18 } : point(entrance(agentId, grip), grip, clamp(t / .72), agentId)
+              const operator = dragging ? { x: rendered.x + 28 * scale, y: rendered.y + 18 * scale } : point(entrance(agentId, grip), grip, clamp(t / .72), agentId)
               if (t < 2.9) cursor(agentId, operator, t < 2.5 ? 1 : clamp((2.9 - t) / .4), dragging ? 'placing background' : 'import background', true, t - .82)
               const handle = { x: x + destination.x + w * .29, y: y + destination.y + h * .29 }
-              const sizing = { x: Math.min(width - 18, x + left + w * scale), y: Math.min(height - 20, y + upper + h * scale) }
+              const sizing = { x: rendered.x + rendered.w, y: rendered.y + rendered.h }
               if (t > 2.2) cursor(agentId + 1, t < 3.05 ? point(entrance(agentId + 1, handle), handle, (t - 2.2) / .65, agentId + 1) : sizing, clamp((t - 2.2) * 5) * clamp((5.6 - t) * 3), t < 3.05 ? 'grab resize handle' : 'resize background', true, t - 2.94)
               const anchor = { x: x + destination.x, y: y + destination.y }
-              if (t > 2.45) cursor(agentId + 2, t < 3.05 ? point(entrance(agentId + 2, anchor), anchor, (t - 2.45) / .5, agentId + 2) : { x: Math.max(12, x + left), y: Math.max(100, y + upper) }, clamp((t - 2.45) * 5) * clamp((5.6 - t) * 3), 'align background', false, t - 2.99)
+              if (t > 2.45) cursor(agentId + 2, t < 3.05 ? point(entrance(agentId + 2, anchor), anchor, (t - 2.45) / .5, agentId + 2) : { x: rendered.x, y: rendered.y }, clamp((t - 2.45) * 5) * clamp((5.6 - t) * 3), 'align background', false, t - 2.99)
             }
           } else if (kind === 'copy') {
             const index = copyIndex++, inButton = !!element.closest('button')
@@ -160,45 +163,61 @@ export default function CursorBuilders({ container, reduced, active, workspace =
               return typed
             })
             finished = elapsed >= clock
+            element.dispatchEvent(new CustomEvent('nalu-build-step', { detail: counts }))
+            words.forEach((word, wordIndex) => {
+              const aligned = ease((elapsed - wordEnds[wordIndex] - .3) / .6)
+              word.style.transformOrigin = 'left bottom'; word.style.scale = String(mix(.9, 1, aligned)); word.style.translate = `0 ${mix(5, 0, aligned)}px`
+              word.dataset.alignment = aligned === 1 ? 'placed' : 'placing'
+            })
             if (elapsed >= 0 && elapsed < clock + .6 && visible && words.length) {
               running = true; jobs++
               const word = words[activeWord], r = word.getBoundingClientRect(), first = words[0].getBoundingClientRect()
-              const length = Number(word.dataset.letters) || 1
-              const target = { x: (word.querySelector<HTMLElement>('.nalu-build-written')?.getBoundingClientRect().right ?? r.left) + 2, y: r.top - hostTop + r.height * .75 }
-              const initial = { x: first.left + 2, y: first.top - hostTop + first.height * .75 }
+              const target = { x: (word.querySelector<HTMLElement>('.nalu-build-written')?.getBoundingClientRect().right ?? r.left) - hostLeft + 2, y: r.top - hostTop + r.height * .75 }
+              const initial = { x: first.left - hostLeft + 2, y: first.top - hostTop + first.height * .75 }
               let position = elapsed < .55 ? point(entrance(agentId, initial), initial, elapsed / .55, agentId) : target
               if (elapsed > clock + .2) position = point(target, { x: target.x + 28, y: target.y + 34 }, (elapsed - clock - .2) / .4, agentId)
-              cursor(agentId, position, clamp(elapsed * 8) * clamp((clock + .6 - elapsed) * 5), elapsed < .72 ? 'set text' : 'typing', true, elapsed - .58)
+              cursor(agentId, position, clamp(elapsed * 8) * clamp((clock + .6 - elapsed) * 5), elapsed < .72 ? 'set text' : elapsed > clock ? 'finish text' : 'typing', true, elapsed - .58)
               if (elapsed >= .72 && !finished) { ctx.save(); ctx.fillStyle = workspace ? '#283024' : '#ffffff'; ctx.fillRect(target.x, r.top - hostTop + 2, 1.3, r.height); ctx.restore() }
             }
             words.forEach((word, wordIndex) => {
               const local = elapsed - wordEnds[wordIndex] + .35
-              const aligned = ease((local - .65) / .6)
-              word.style.transformOrigin = 'left bottom'; word.style.scale = String(mix(.9, 1, aligned)); word.style.translate = `0 ${mix(5, 0, aligned)}px`
-              word.dataset.alignment = aligned === 1 ? 'placed' : 'placing'
               if (local >= 0 && local < 1.65 && visible) {
                 running = true; jobs++
-                const r = word.getBoundingClientRect(), finish = { x: r.right, y: r.bottom - hostTop }
+                const r = word.getBoundingClientRect(), finish = { x: r.right - hostLeft, y: r.bottom - hostTop }
                 const begin = { x: finish.x - r.width * .1, y: finish.y + 5 }
-                const position = local < .55 ? point(entrance(agentId + 10 + wordIndex, begin), begin, local / .55, agentId + 10 + wordIndex) : point(begin, finish, (local - .65) / .6, agentId + 10 + wordIndex)
+                const position = local < .55 ? point(entrance(agentId + 10 + wordIndex, begin), begin, local / .55, agentId + 10 + wordIndex) : finish
                 cursor(agentId + 10 + wordIndex, position, clamp(local * 7) * clamp((1.65 - local) * 4), 'set typography', wordIndex % 8 === 0, local - .58)
-                if (local > .55 && local < 1.35) selection(r.left, r.top - hostTop, r.width, r.height, .4, agentId + 10 + wordIndex)
+                if (local > .55 && local < 1.35) selection(r.left - hostLeft, r.top - hostTop, r.width, r.height, .4, agentId + 10 + wordIndex)
               }
             })
             if (visible && pieceTime >= 0 && elapsed < clock + 1.7) running = true
             element.style.opacity = pieceTime >= start ? '1' : '0'
-            element.dispatchEvent(new CustomEvent('nalu-build-step', { detail: counts }))
           } else if (kind === 'text') {
             const elapsed = pieceTime - .1, progress = ease(elapsed / 1.8)
-            const lineHeight = parseFloat(getComputedStyle(element).lineHeight) || 22
-            const multiline = h > lineHeight * 1.6
-            // Reveal the actual rendered copy; React retains ownership of its text.
-            element.style.clipPath = progress >= 1 ? '' : multiline ? `inset(0 0 ${(1 - progress) * 100}% 0)` : `inset(0 ${(1 - progress) * 100}% 0 0)`
-            if (elapsed >= 0 && elapsed < 2.35 && visible) {
+            // Use the rendered glyph, including real wrapping and nested inline text.
+            // The cursor and reveal share this caret instead of tracing an invented line.
+            const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+            const nodes: Text[] = []; let node: Node | null
+            while ((node = walker.nextNode())) nodes.push(node as Text)
+            const length = nodes.reduce((sum, text) => sum + text.length, 0)
+            let remaining = Math.max(1, Math.ceil(length * progress)), caret: DOMRect | undefined
+            for (const text of nodes) {
+              if (remaining > text.length) { remaining -= text.length; continue }
+              if (text.length) { const range = document.createRange(); range.setStart(text, Math.max(0, remaining - 1)); range.setEnd(text, Math.min(text.length, remaining)); caret = range.getBoundingClientRect() }
+              break
+            }
+            const box = localBox(element)
+            const target = caret && caret.height ? { x: caret.right - hostLeft, y: caret.bottom - hostTop } : { x: box.x, y: box.y + box.h }
+            if (progress >= 1) element.style.clipPath = ''
+            else if (caret && box.w && box.h) {
+              const sx = element.offsetWidth / box.w, sy = element.offsetHeight / box.h
+              const right = Math.max(0, (target.x - box.x) * sx), top = Math.max(0, (caret.top - hostTop - box.y) * sy), bottom = Math.max(0, (target.y - box.y) * sy)
+              element.style.clipPath = progress <= 0 ? 'inset(0 100% 0 0)' : `polygon(0 0,100% 0,100% ${top}px,${right}px ${top}px,${right}px ${bottom}px,0 ${bottom}px)`
+            }
+            if (elapsed >= 0 && elapsed < 2.35 && visible && length) {
               running = true; jobs++
-              const target = { x: x + (multiline ? w * (.15 + .7 * ((elapsed * 1.8) % 1)) : w * progress), y: y + (multiline ? h * progress : h * .72) }
-              cursor(agentId, elapsed < .25 ? point(entrance(agentId, target), target, elapsed / .25, agentId) : target, clamp(elapsed * 8) * clamp((2.35 - elapsed) * 5), 'set copy', id % 5 === 0)
-              if (elapsed > .2 && elapsed < 1.95) selection(x, y, w, h, .2, agentId)
+              cursor(agentId, elapsed < .25 ? point(entrance(agentId, target), target, elapsed / .25, agentId) : target, clamp(elapsed * 8) * clamp((2.35 - elapsed) * 5), elapsed < .25 ? 'approach text' : 'set copy', id % 5 === 0)
+              if (elapsed > .2 && elapsed < 1.95) selection(box.x, box.y, box.w, box.h, .2, agentId)
             }
           } else if (kind === 'guide') {
             element.style.opacity = String(ease((t - 4) / 1.4))
@@ -206,16 +225,25 @@ export default function CursorBuilders({ container, reduced, active, workspace =
             const index = buttonIndex++, start = workspace ? .08 + id % 10 * .03 : card ? .8 : kind === 'button' ? 2.5 + index * .48 : 1 + index * .32
             const elapsed = pieceTime - start, draw = ease((elapsed - .8) / 1.2)
             const dx = (1 - draw) * (id % 2 ? 26 : -22), dy = (1 - draw) * 18
-            element.style.transformOrigin = 'top left'; element.style.translate = `${dx}px ${dy}px`
-            element.style.scale = kind === 'button' ? `${mix(.12, 1, draw)} ${mix(.2, 1, draw)}` : '1'
-            element.style.opacity = String(clamp((elapsed - .72) * 4)); if (!workspace) element.inert = elapsed < 2
+            // A live map stays painted while agents outline its real controls.
+            // Moving or fading the map provider's surface would create a blank flash.
+            const liveMap = workspace && !!element.closest('[data-block-type=map]')
+            if (!liveMap) {
+              element.style.transformOrigin = 'top left'; element.style.translate = `${dx}px ${dy}px`
+              element.style.scale = kind === 'button' ? `${mix(.12, 1, draw)} ${mix(.2, 1, draw)}` : '1'
+              element.style.opacity = String(clamp((elapsed - .72) * 4))
+            }
+            if (!workspace) element.inert = elapsed < 2
             if (elapsed >= 0 && elapsed < 2.75 && visible) {
               running = true; jobs++
-              const startPoint = { x: x - dx + 2, y: y - dy + 2 }
-              const end = { x: x - dx + w * mix(.12, 1, draw), y: y - dy + h * mix(.2, 1, draw) }
-              const pos = elapsed < .65 ? point(entrance(agentId, startPoint), startPoint, elapsed / .65, agentId) : elapsed < .8 ? startPoint : point(startPoint, end, clamp((elapsed - .8) / 1.2), agentId)
+              // Read after applying this frame's transforms. Ancestor transforms,
+              // reflow, scrolling and responsive scaling are already in this box.
+              const box = localBox(element)
+              const startPoint = { x: box.x, y: box.y }
+              const end = { x: box.x + box.w, y: box.y + box.h }
+              const pos = elapsed < .65 ? point(entrance(agentId, startPoint), startPoint, elapsed / .65, agentId) : elapsed < .8 ? startPoint : end
               cursor(agentId, pos, clamp(elapsed * 7) * clamp((2.75 - elapsed) * 3), kind === 'button' ? elapsed < .8 ? 'draw button' : 'size button' : 'place component', true, elapsed - .68)
-              if (elapsed > .72) selection(x - dx, y - dy, w * (kind === 'button' ? mix(.12, 1, draw) : 1), h * (kind === 'button' ? mix(.2, 1, draw) : 1), clamp((2.7 - elapsed) * 2), agentId)
+              if (elapsed > .72) selection(box.x, box.y, box.w, box.h, clamp((2.7 - elapsed) * 2), agentId)
             }
           }
         }
@@ -231,7 +259,7 @@ export default function CursorBuilders({ container, reduced, active, workspace =
     }
     const schedule = () => { if (!frame) frame = requestAnimationFrame(paint) }
     const resize = () => {
-      width = host.clientWidth; height = host.clientHeight
+      width = surface.clientWidth; height = surface.clientHeight
       const ratio = Math.min(window.devicePixelRatio || 1, 2); surface.width = width * ratio; surface.height = height * ratio
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0); schedule()
     }
@@ -258,7 +286,7 @@ export default function CursorBuilders({ container, reduced, active, workspace =
     mutations?.observe(host, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['aria-label'] })
     const observer = new ResizeObserver(resize); observer.observe(host)
     void document.fonts.ready.then(() => { if (alive) schedule() })
-    resize(); paint()
+    resize()
     return () => {
       alive = false; window.removeEventListener('nalu-construction-replay', replay); host.removeEventListener('scroll', schedule, { capture: workspace }); mutations?.disconnect(); observer.disconnect(); cancelAnimationFrame(frame)
       pieces.forEach(piece => {
