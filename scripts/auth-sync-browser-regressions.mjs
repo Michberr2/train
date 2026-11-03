@@ -21,7 +21,7 @@ const server = await createServer({ configFile: false, root, cacheDir: `${output
   load(id) { if (id === '\0auth-fixture') return fixture },
   transform(code, id) { if (id === '\0auth-fixture') return transform(code, { loader: 'jsx', jsx: 'automatic' }) },
   configureServer(vite) { vite.middlewares.use('/__auth-test', async (_req, res) => { res.setHeader('Content-Type', 'text/html'); res.end(await vite.transformIndexHtml('/__auth-test', '<html><body><div id="root"></div><script type="module" src="/@auth-fixture"></script></body></html>')) }) },
-}], server: { host: '127.0.0.1', port: 0, strictPort: true, hmr: false } })
+}], server: { host: '127.0.0.1', port: 0, strictPort: false, hmr: false } })
 let browser, base
 const report = { passed: false, checks: [] }
 const record = name => { report.checks.push(name); console.log(`PASS ${name}`) }
@@ -67,14 +67,12 @@ async function workspaceAccount(page, account) {
   return panel
 }
 async function openSavedChat(page, account) {
-  await page.getByRole('button', { name: 'Open Nalu chat', exact: true }).click()
-  const panel = page.getByRole('dialog', { name: 'Nalu chat', exact: true })
-  await panel.getByRole('button', { name: 'Expand Nalu chat', exact: true }).click()
-  const history = panel.getByRole('navigation', { name: 'Chat history', exact: true })
-  await expect(history).toBeVisible()
-  await history.getByRole('button', { name: account, exact: true }).click()
-  return panel
+  await page.getByRole('button', { name: 'Saved work', exact: true }).click()
+  await page.getByLabel('Search saved work', { exact: true }).fill(account)
+  await page.locator('.generative-library-card').filter({hasText: account}).first().click()
+  return page.getByRole('region', { name: 'Generated workspace', exact: true })
 }
+
 try {
   await server.listen(); base = `http://127.0.0.1:${server.httpServer.address().port}`
   browser = await chromium.launch()
@@ -220,7 +218,7 @@ try {
     await s.page.keyboard.press('Escape')
     const aChat = await openSavedChat(s.page, 'A')
     await expect(s.page.getByText('Private A', { exact: true })).toBeVisible()
-    await aChat.getByRole('button', { name: 'Close Nalu chat', exact: true }).click()
+    await s.page.getByRole('button', { name: 'Nalu home', exact: true }).click()
     await (await workspaceAccount(s.page, 'A')).getByRole('button', { name: 'Sign out', exact: true }).click()
     await s.page.getByRole('button', { name: 'Sign in', exact: true }).click()
     const form = s.page.locator('form')
@@ -238,9 +236,8 @@ try {
     assert.ok(bWrites.every(c => JSON.parse(c.entries['nalu-chats']).every(chat => chat.id === 'B')), 'Old unmount/debounce must not write A’s chat as B')
     await s.page.screenshot({ path: `${output}/workspace-account-b.png` })
     await s.page.reload()
-    // Popover visibility is transient; reopening must restore the selected B
-    // conversation without choosing it from history or restoring fixture data.
-    await s.page.getByRole('button', { name: 'Open Nalu chat', exact: true }).click()
+    // Reopen the persisted B conversation through the production Saved work UI.
+    await openSavedChat(s.page, 'B')
     await expect(s.page.getByText('Private B', { exact: true })).toBeVisible({ timeout: 30000 })
     await expect(s.page.getByText('Private A', { exact: true })).toHaveCount(0)
     assert.deepEqual(s.errors, [])

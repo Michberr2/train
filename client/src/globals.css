@@ -239,3 +239,10 @@
 .think-word { animation: thinkWordIn .4s ease both; }
 @keyframes thinkBadgeIn { 0% { opacity: 0; transform: translateY(4px) scale(.85); } 55% { transform: translateY(0) scale(1.08); } 100% { opacity: 1; transform: scale(1); } }
 .think-badge { animation: thinkBadgeIn .42s cubic-bezier(.2,.9,.3,1.35) both; }
+
+/* Readable text selection on both the scenery and ivory working surfaces. */
+::selection {
+  background: #35452d;
+  color: #ffffff;
+  text-shadow: none;
+}
