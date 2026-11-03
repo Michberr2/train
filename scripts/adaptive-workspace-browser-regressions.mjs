@@ -35,7 +35,7 @@ try {
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.screenshot({ path: `${output}/01-home.png` })
   await page.getByRole('button', { name: 'Account options' }).click()
-  await page.getByRole('button', { name: 'Dark frame', exact: true }).click()
+  await page.getByRole('button', { name: 'Dark mode', exact: true }).click()
   await expect(page.locator('[data-workspace-theme=dark]')).toHaveCount(1)
   await page.keyboard.press('Escape')
   await page.reload()

@@ -1,11 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState, lazy, Suspense } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useMemo, lazy, Suspense } from 'react'
 import { Search, Loader2, Star, MapPin, ExternalLink, Layers, Sparkles, Trash2, X, Boxes, Eye, EyeOff, Maximize2, Minimize2 } from 'lucide-react'
 import MapLayerControls from './MapLayerControls'
 import { normalizeMapComparison, type MapComparison } from '../../../../shared/mapComparison'
 import { isMapBackground, mapLayerOpacity, mapLayerZoomRange, readMapDisplay } from './mapLayerDisplay'
 
-const FallbackMap = lazy(() => import('./FallbackMap'))
-import { reliablePlaces, type PlaceSnapshot } from './mapReliability'
+import FallbackMap from './FallbackMap'
+import { cachedPlaces, placesViewport, reliablePlaces, type PlaceSnapshot } from './mapReliability'
 import type { MapRecoveryState } from './FallbackMap'
 const MapGlobe3D = lazy(() => import('./MapGlobe3D'))
 import { PARCEL_SVCS, parcelSvcFor, parcelFacts, permitSvcFor, queryPermitsNear, permitCities } from '../../lib/geoData'
@@ -52,15 +52,15 @@ function loadMaps(key: string): Promise<GMaps> {
 }
 
 const DARK_STYLE = [
-  { elementType: 'geometry', stylers: [{ color: '#1c2230' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#0d1018' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#9aa4b8' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#13202e' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2a3142' }] },
-  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#7e8aa3' }] },
+  { elementType: 'geometry', stylers: [{ color: '#20231e' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#171b15' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#c0c7b7' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#29382d' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#3d4434' }] },
+  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#b4bea8' }] },
   { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#1d2a22' }] },
-  { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#3a4255' }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#2c3826' }] },
+  { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#59624d' }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
 ]
 // Warm "quiet-luxury" light map: cream land, near-white street grid, muted
@@ -562,8 +562,8 @@ const PARCEL_JUMPS = [
   { label: 'Seattle, WA', lat: 47.606, lng: -122.333 },
 ]
 const MAP_KEYS = [
-  (import.meta.env.VITE_GOOGLE_MAPS_KEY as string) || '',
   (import.meta.env.VITE_GOOGLE_MAPS_KEY2 as string) || '',
+  (import.meta.env.VITE_GOOGLE_MAPS_KEY as string) || '',
 ].filter(Boolean)
 const SHAPES_KEY = 'nalu-map-shapes'
 const ACTIVE_KEY = 'nalu-map-active-layers' // layers you turned on persist + reload with the map
@@ -601,10 +601,14 @@ export default function MapPanel({ request, onWork }: { onWork?: (message: strin
   const layerIdleTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const [err, setErr] = useState('')
   const [ready, setReady] = useState(false)
+  const [painted, setPainted] = useState(false)
   const [authErr, setAuthErr] = useState(false)
   const [sdkUnavailable, setSdkUnavailable] = useState(false)
   const [sel, setSel] = useState<string | null>(null)
   const initialDisplay = useRef(readMapDisplay(displayKey))
+  const cachedSnapshot = useMemo(() => request?.query ? cachedPlaces(request.query, initialDisplay.current.view) : null, [request?.key, request?.query])
+  const [previewView, setPreviewView] = useState(() => placesViewport(cachedSnapshot?.results || [], 700, 500) || initialDisplay.current.view || { lat: 28.4, lng: -81.4, zoom: 6 })
+  const previewViewRef = useRef(previewView); previewViewRef.current = previewView
   const [base, setBase] = useState(initialDisplay.current.base)
   const [opacity, setOpacity] = useState(initialDisplay.current.opacity)
   const opacityRef = useRef(opacity)
@@ -658,7 +662,7 @@ export default function MapPanel({ request, onWork }: { onWork?: (message: strin
   // Keep the 2D map mounted for its saved layers and camera, but expose only the active renderer.
   const [globe, setGlobe] = useState<{ lat: number; lng: number; zoom: number; cameraRequest?: MapCameraRequest } | null>(null)
   const is3D = globe !== null
-  useLayoutEffect(() => { if (mapEl.current) mapEl.current.inert = is3D }, [is3D])
+  useLayoutEffect(() => { if (mapEl.current) mapEl.current.inert = is3D || !painted }, [is3D, painted])
   const moveGlobe = (cameraRequest: MapCameraRequest) => setGlobe((current) => current ? { ...current, cameraRequest } : current)
   const fitGlobe = (bounds: GMaps, padding: number) => {
     const sw = bounds.getSouthWest(), ne = bounds.getNorthEast()
@@ -685,14 +689,14 @@ export default function MapPanel({ request, onWork }: { onWork?: (message: strin
     let tileTimer: ReturnType<typeof setTimeout> | undefined
     handledRequest.current = undefined
     setSdkUnavailable(false)
-    setLoading(false); setErr(''); setReady(false); setAuthErr(false)
+    setLoading(false); setErr(''); setReady(false); setPainted(false); setAuthErr(false)
     loadMaps(key).then((g) => {
       if (!alive || !mapEl.current) return
       sdk = g
-      const savedView = initialDisplay.current.view
+      const savedView = previewViewRef.current
       const map = new g.maps.Map(mapEl.current, {
         center: savedView ? { lat: savedView.lat, lng: savedView.lng } : { lat: 28.4, lng: -81.4 }, zoom: savedView?.zoom ?? 6, clickableIcons: false,
-        styles: roadmapStyle, backgroundColor: isDark ? '#1c2230' : '#e9e5db', gestureHandling: 'greedy', isFractionalZoomEnabled: true,
+        styles: roadmapStyle, backgroundColor: isDark ? '#20231e' : '#e9e5db', gestureHandling: 'greedy', isFractionalZoomEnabled: true,
         mapTypeControl: false, streetViewControl: false, fullscreenControl: false, mapTypeId: 'roadmap', scaleControl: true,
       })
       mapRef.current = map
@@ -701,13 +705,17 @@ export default function MapPanel({ request, onWork }: { onWork?: (message: strin
       if (g.maps.version) {
         const watchTiles = () => { clearTimeout(tileTimer); tileTimer = setTimeout(() => { if (alive) setSdkUnavailable(true) }, 20000) }
         map.addListener('bounds_changed', watchTiles)
-        map.addListener('tilesloaded', () => clearTimeout(tileTimer))
+        map.addListener('tilesloaded', () => { clearTimeout(tileTimer); if (alive) setPainted(true) })
         watchTiles()
-      }
+      } else setPainted(true)
       map.addListener('idle', () => {
         setViewZoom(map.getZoom() ?? 6)
         const c = map.getCenter()
-        if (c) { initialDisplay.current.view = { lat: c.lat(), lng: c.lng(), zoom: map.getZoom() ?? 6 }; saveDisplay() }
+        if (c) {
+          const view = { lat: c.lat(), lng: c.lng(), zoom: map.getZoom() ?? 6 }
+          initialDisplay.current.view = view; saveDisplay()
+          setPreviewView(previous => Math.abs(previous.lat - view.lat) < 1e-7 && Math.abs(previous.lng - view.lng) < 1e-7 && previous.zoom === view.zoom ? previous : view)
+        }
       })
       infoRef.current = new g.maps.InfoWindow()
       // No manual drawing toolbar — Nalu draws polygons/lines/markers itself in
@@ -1599,19 +1607,19 @@ export default function MapPanel({ request, onWork }: { onWork?: (message: strin
   const activeCount = LAYERS.filter((l) => active[l.key]).length
   const dataLayerCount = LAYERS.filter(l => active[l.key] && !isMapBackground(l)).length
 
-  if (!key || authErr || sdkUnavailable) return <Suspense fallback={<div role="status">Opening backup map…</div>}>
-    <FallbackMap query={request && agentTyping.typing ? request.query : query || request?.query} initialSnapshot={lastPlaceSnapshot.current} initialView={initialDisplay.current.view} reason={!key ? 'No map key required' : 'Full map provider unavailable'} onPrimary={state => {
+  if (!key || authErr || sdkUnavailable) return <>
+    <FallbackMap query={request && agentTyping.typing ? request.query : query || request?.query} initialSnapshot={lastPlaceSnapshot.current || cachedSnapshot} initialView={previewViewRef.current} reason={!key ? 'No map key required' : 'Full map provider unavailable'} onPrimary={state => {
       recoveryRef.current = { ...state, requestKey: request?.key }
       if (state.snapshot?.query !== lastPlaceSnapshot.current?.query) {
         setComparison(null)
         setAnswer(state.snapshot?.cached ? `Showing saved locations from ${new Date(state.snapshot.savedAt).toLocaleString()}. Live search is temporarily unavailable.` : state.snapshot?.source === 'osm' ? 'Live locations from OpenStreetMap. Ratings are unavailable, so these results are not a ranked best-of list.' : '')
       }
       lastPlaceSnapshot.current = state.snapshot
-      initialDisplay.current.view = state.view; saveDisplay()
+      initialDisplay.current.view = state.view; previewViewRef.current = state.view; setPreviewView(state.view); saveDisplay()
       setQuery(state.query); setSel(null); setReady(false); setGlobe(null)
       teardownMaps(); setSdkUnavailable(false); setAuthErr(false); setKeyIdx(0); setMapAttempt(value => value + 1)
     }}/>
-  </Suspense>
+  </>
 
   return (
     <div ref={workspaceRef} data-map-expanded={expandedMap} className={`map-workspace flex flex-1 overflow-hidden${compactPanels ? ' map-compact' : ''}`} style={expandedMap ? { position: 'fixed', inset: 0, zIndex: 100, background: 'rgb(var(--ws-canvas))' } : undefined}>
@@ -1721,7 +1729,15 @@ export default function MapPanel({ request, onWork }: { onWork?: (message: strin
 
       {/* Map + controls */}
       <div className="map-surface relative flex-1" data-map-mode={is3D ? '3d' : '2d'}>
-        <div ref={mapEl} aria-label="Interactive map" aria-hidden={is3D} className="map-2d-viewport h-full w-full bg-[#1c2230]" />
+        <div ref={mapEl} aria-label="Interactive map" aria-hidden={is3D || !painted} className="map-2d-viewport h-full w-full" style={{background:'rgb(var(--ws-canvas))'}} />
+
+        {!painted && !is3D && <div className="map-instant-surface"><FallbackMap surfaceOnly reason="" onPrimary={() => {}} initialSnapshot={lastPlaceSnapshot.current || cachedSnapshot} initialView={previewView} onViewChange={view => {
+          previewViewRef.current = view
+          setPreviewView(previous => previous.lat === view.lat && previous.lng === view.lng && previous.zoom === view.zoom ? previous : view)
+          const map = mapRef.current, center = map?.getCenter?.()
+          if (center && (Math.abs(center.lat() - view.lat) > 1e-7 || Math.abs(center.lng() - view.lng) > 1e-7)) map.panTo({ lat: view.lat, lng: view.lng })
+          if (map && map.getZoom() !== view.zoom) map.setZoom(view.zoom)
+        }}/></div>}
 
         {ready && (
           // The map controls are dark frosted-glass overlays in BOTH themes, so we
@@ -1793,7 +1809,6 @@ export default function MapPanel({ request, onWork }: { onWork?: (message: strin
             </div>
           </div>
         )}
-        {!ready && !err && !authErr && <div className="absolute inset-0 flex items-center justify-center text-sm text-dim"><Loader2 size={18} className="mr-2 animate-spin" /> Loading map…</div>}
         {err && !ready && <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-sm text-amber-300/90"><span role="alert">{err}</span>{key && <button onClick={() => setMapAttempt((attempt) => attempt + 1)} className="rounded-lg border border-accent/50 px-3 py-2 text-ink">Retry map</button>}</div>}
       </div>
     </div>

@@ -445,6 +445,7 @@ export async function loadFromServer(): Promise<void> {
           origSet(k, mergeProjects(local, sv, k))
         }
         else if (k === BRAND_KEY && Object.prototype.hasOwnProperty.call(pending, k)) { /* keep this owner's unsent explicit selection */ }
+        else if (k === 'nalu-theme' && (Object.prototype.hasOwnProperty.call(pending, k) || Object.prototype.hasOwnProperty.call(inFlightEntries, k))) { /* A late hydrate must not replace a theme the user just selected. */ }
         else { try { origSet(k, sv) } catch { /* oversized local cache — keep server copy, skip locally */ } }
       }
     }

@@ -17,6 +17,7 @@ await mkdir(output, { recursive: true })
 const browser = await chromium.launch()
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
 const calls = [], errors = [], remote = []
+let accountTheme
 const blockA = { id: 'returns', type: 'calculator', title: 'Editable returns', width: 'half', fields: [{ id: 'price', label: 'Purchase price', type: 'number', value: '400000' }, { id: 'noi', label: 'Annual NOI', type: 'number', value: '24000' }], calculations: [{ label: 'Cap rate', formula: 'noi/price', format: 'percent' }] }
 const blockB = { id: 'tasks', type: 'checklist', title: 'Due diligence', width: 'half', items: [{ id: 'leases', label: 'Verify leases' }, { id: 'expenses', label: 'Verify expenses' }] }
 const blockC = { id: 'comparison', type: 'table', title: 'Comparison', width: 'full', columns: ['Property','Price'], rows: [['B','$500000'],['A','$400000']] }
@@ -45,7 +46,7 @@ await context.addInitScript(({ layouts }) => {
     return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } })
   }
 }, { layouts })
-await context.route('**/*', async route => {
+const fixtureTransport = async route => {
  const request = route.request(), url = new URL(request.url())
  if (url.hostname === 'tile.openstreetmap.org') return route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7QAAAABJRU5ErkJggg==', 'base64') })
  if (url.origin === 'http://127.0.0.1:8834' && /health/.test(url.pathname)) return route.fulfill({ status: 503, json: { error: 'Local GPU fixture is offline.' } })
@@ -53,9 +54,10 @@ await context.route('**/*', async route => {
  if (url.pathname === '/__nalu_local_entry') return route.fulfill({ json: { ok: true, token: 'isolated-generative-test', user: { id: 'isolated-generative-owner', displayName: 'Local test' } } })
  if (!url.pathname.startsWith('/api/')) return route.continue()
  const body = request.postData() ? JSON.parse(request.postData()) : {}; calls.push({ path: url.pathname, action: body.action })
+ if (url.pathname === '/api/data' && body.action === 'setMany' && body.entries?.['nalu-theme']) accountTheme = body.entries['nalu-theme']
  let json = { ok: true }
  if (url.pathname === '/api/auth') json = { ok: true, user: { id: 'isolated-generative-owner', displayName: 'Local test' } }
- else if (url.pathname === '/api/data') json = body.action === 'load' ? { data: {} } : { ok: true, items: [], tasks: [] }
+ else if (url.pathname === '/api/data') json = body.action === 'load' ? { data: accountTheme ? { 'nalu-theme': accountTheme } : {} } : { ok: true, items: [], tasks: [] }
  else if (url.pathname === '/api/swarm') json = { state: { version: 1, mode: 'live', projects: [], tasks: [], messages: [], turns: [] }, revision: 1 }
  else if (url.pathname === '/api/web' && body.action === 'intent') json = { kind: 'chat', mode: 'chat', additionalKinds: [] }
  else if (url.pathname === '/api/web' && body.action === 'places') json = { source: 'osm', results: [{ name: 'Fixture Dallas restaurant', address: 'Dallas, Texas', lat: 32.78, lng: -96.8 }] }
@@ -63,7 +65,8 @@ await context.route('**/*', async route => {
  else if (url.pathname === '/api/artifacts') json = { outputs: [] }
  else if (url.pathname === '/api/community') json = { rooms: [] }
  return route.fulfill({ json })
-})
+}
+await context.route('**/*',fixtureTransport)
 let page
 try {
  page = await context.newPage(); page.on('pageerror', e => errors.push(e.message))
@@ -76,6 +79,23 @@ try {
  await page.screenshot({ path: output + '/00-cursors.png' })
  await page.getByRole('button', { name: 'Pause cursor construction', exact: true }).click()
  assert.equal(await page.locator('.workspace-chat-trigger,.workspace-app-dock,.workspace-agent-tray,.workspace-chat-popover').count(), 0)
+ const appearance = async (label) => {
+  await page.getByRole('button',{name:'Account options',exact:true}).click()
+  await page.getByRole('button',{name:label,exact:true}).click()
+  await page.keyboard.press('Escape')
+  await expect.poll(async()=>{const color=await page.locator('.generative-home .ws-composer,.generative-block').first().evaluate(el=>getComputedStyle(el).backgroundColor);return label==='Dark mode'?luminance(color)<.08:luminance(color)>.7},{timeout:4000}).toBe(true)
+ }
+ const luminance = css => css.match(/[\d.]+/g).slice(0,3).map(Number).map(n=>n/255).map(n=>n<=.04045?n/12.92:((n+.055)/1.055)**2.4).reduce((v,n,i)=>v+n*[.2126,.7152,.0722][i],0)
+ await home.locator('textarea').fill('A draft survives changing appearance')
+ const lightHome=await home.locator('.ws-composer').evaluate(el=>getComputedStyle(el).backgroundColor)
+ await appearance('Dark mode')
+ await expect(page.locator('[data-workspace-theme=dark]')).toHaveCount(1)
+ const darkHome=await home.locator('.ws-composer').evaluate(el=>getComputedStyle(el).backgroundColor)
+ assert.ok(luminance(darkHome)<.08 && luminance(lightHome)>.7,'signed-in home actually changes its surfaces between light and dark '+JSON.stringify({lightHome,darkHome,root:await page.locator('[data-generative-workspace]').evaluate(el=>({matches:el.matches(':has([data-workspace-theme=dark])'),panel:getComputedStyle(el).getPropertyValue('--gw-panel-rgb'),sheets:[...document.querySelectorAll('style')].filter(s=>s.textContent.includes('--gw-panel-rgb')).length}))}))
+ await expect(home.locator('textarea')).toHaveValue('A draft survives changing appearance')
+ await appearance('Light mode')
+ await expect(page.locator('[data-workspace-theme=light]')).toHaveCount(1)
+ await expect(home.locator('textarea')).toHaveValue('A draft survives changing appearance')
  const logo = await page.getByRole('button', { name: 'Nalu home', exact: true }).boundingBox()
  assert.ok(logo.x >= 30 && logo.y > 10 && logo.y < 70)
  await home.locator('textarea').fill('Compare two properties with editable inputs and a checklist.')
@@ -100,13 +120,23 @@ try {
  await page.getByRole('button', { name: 'Pause cursor construction', exact: true }).click()
  await expect(page.getByRole('spinbutton', { name: 'Purchase price', exact: true })).toHaveValue('500000')
  await page.screenshot({ path: output + '/02-edited.png' })
+ await appearance('Dark mode')
+ const fieldColors=await page.getByRole('spinbutton',{name:'Purchase price',exact:true}).evaluate(el=>({ink:getComputedStyle(el).color,background:getComputedStyle(el).backgroundColor}))
+ assert.ok((Math.max(luminance(fieldColors.ink),luminance(fieldColors.background))+.05)/(Math.min(luminance(fieldColors.ink),luminance(fieldColors.background))+.05)>=4.5,'dark inputs retain readable contrast')
+ assert.ok(luminance(await page.locator('.generative-block').first().evaluate(el=>getComputedStyle(el).backgroundColor))<.08,'generated blocks follow dark mode')
+ await expect(page.getByRole('spinbutton',{name:'Purchase price',exact:true})).toHaveValue('500000')
+ await page.screenshot({path:output+'/02-dark-workspace.png'})
  await page.waitForTimeout(500)
  await page.reload()
  await expect(home).toBeVisible({ timeout: 45000 })
  await page.getByRole('button', { name: 'Pause cursor construction', exact: true }).click()
+ await expect(page.locator('[data-workspace-theme=dark]')).toHaveCount(1)
  await page.getByRole('navigation', { name: 'Recent work' }).getByRole('button').first().click()
  await expect(page.getByRole('spinbutton', { name: 'Purchase price', exact: true })).toHaveValue('500000')
  await expect(page.getByRole('checkbox', { name: 'Verify leases', exact: true })).toBeChecked()
+ await appearance('Light mode')
+ await expect(page.getByRole('spinbutton',{name:'Purchase price',exact:true})).toHaveValue('500000')
+ assert.ok(luminance(await page.locator('.generative-block').first().evaluate(el=>getComputedStyle(el).backgroundColor))>.7,'light mode restores light generated blocks')
  const canvas = page.getByRole('region', { name: 'Generated workspace' })
  await canvas.locator('textarea').fill('Add a next step form and keep my inputs.')
  await canvas.getByRole('button', { name: 'Send', exact: true }).click()
@@ -155,7 +185,19 @@ try {
  await expect(page.locator('[data-block-type="map"]')).toBeVisible()
  await expect(page.getByRole('textbox', { name: 'Map search', exact: true })).toHaveValue('best restaurants in dallas')
  assert.equal(await page.evaluate(() => window.__uiCalls.length), beforeMapCalls, 'explicit map requests do not wait on chat generation')
+ await appearance('Dark mode')
+ await expect.poll(()=>accountTheme).toBe('dark')
+ const fresh=await browser.newContext({viewport:{width:1100,height:850},reducedMotion:'reduce'})
+ await fresh.addInitScript(()=>localStorage.setItem('nalu-token','isolated-generative-test'))
+ await fresh.route('**/*',fixtureTransport)
+ const freshPage=await fresh.newPage();freshPage.on('pageerror',e=>errors.push(e.message))
+ await freshPage.goto(base)
+ await expect(freshPage.getByRole('region',{name:'Your generative workspace'})).toBeVisible({timeout:45000})
+ await expect(freshPage.locator('[data-workspace-theme=dark]')).toHaveCount(1)
+ assert.ok(luminance(await freshPage.locator('.generative-home .ws-composer').evaluate(el=>getComputedStyle(el).backgroundColor))<.08,'fresh login restores the account theme without a local theme preference')
+ await freshPage.screenshot({path:output+'/07-dark-account-login.png'})
+ await fresh.close()
  assert.deepEqual(errors, [])
  assert.deepEqual(remote, [])
- console.log('PASS cursor coverage across text/layout/controls, dynamic registration and Motion pause/resume without lost edits; progressive UI before stream completion; live calculation, checklist and sorting edits; reload restoration; follow-up preservation; form continuation; Stop; full-page conversation; mobile layout; new capability/library navigation and settings; no legacy carousel, floating icons or remote fixture traffic')
+ console.log('PASS signed-in light/dark surfaces, draft and edit preservation, account appearance reload, fresh-account login restoration and input contrast; cursor coverage across text/layout/controls, dynamic registration and Motion pause/resume without lost edits; progressive UI before stream completion; live calculation, checklist and sorting edits; reload restoration; follow-up preservation; form continuation; Stop; full-page conversation; mobile layout; new capability/library navigation and settings; no legacy carousel, floating icons or remote fixture traffic')
 } catch(error) { await page?.screenshot({path: output+'/failure.png'}).catch(()=>{}); await writeFile(output+'/failure.json',JSON.stringify({errors,text:await page?.locator('body').innerText()},null,2)); throw error } finally { await context.close(); await browser.close(); await server?.close() }
