@@ -103,6 +103,7 @@ export const OFFLINE_RELEASE_CHECKS = [
   ['map-browser-verify.mjs', '--camera'],
   ['map-browser-verify.mjs', '--layers'],
   ['map-browser-verify.mjs', '--comparisons'],
+  ['map-browser-verify.mjs', '--recovery'],
   'generative-workspace-browser-regressions.mjs',
 ]
 export function runOfflineReleaseChecks({ browserTestSkipReason, run = spawnSync, log = console.log, sourceEnv = process.env } = {}) {

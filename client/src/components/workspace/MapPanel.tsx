@@ -6,6 +6,7 @@ import { isMapBackground, mapLayerOpacity, mapLayerZoomRange, readMapDisplay } f
 
 const FallbackMap = lazy(() => import('./FallbackMap'))
 import { reliablePlaces, type PlaceSnapshot } from './mapReliability'
+import type { MapRecoveryState } from './FallbackMap'
 const MapGlobe3D = lazy(() => import('./MapGlobe3D'))
 import { PARCEL_SVCS, parcelSvcFor, parcelFacts, permitSvcFor, queryPermitsNear, permitCities } from '../../lib/geoData'
 import { useTheme } from '../ThemeProvider'
@@ -593,6 +594,7 @@ export default function MapPanel({ request, onWork }: { onWork?: (message: strin
   useEffect(() => () => workCallback.current?.(null), [])
   const [results, setResults] = useState<Place[]>([])
   const lastPlaceSnapshot = useRef<PlaceSnapshot | null>(null)
+  const recoveryRef = useRef<(MapRecoveryState & { requestKey?: number }) | null>(null)
   const [loading, setLoading] = useState(false)
   const searchRequests = useRef(new MapRequestScope())
   const layerRequests = useRef<Record<string, MapRequestScope>>({})
@@ -1573,6 +1575,18 @@ export default function MapPanel({ request, onWork }: { onWork?: (message: strin
     }
   }
   useEffect(() => {
+    if (!ready || !mapRef.current || !recoveryRef.current) return
+    const recovered = recoveryRef.current
+    recoveryRef.current = null
+    if (request?.key !== recovered.requestKey) return
+    // The backup is a continuation of this map. Restore its completed search
+    // without replaying an older embedding request or changing its camera.
+    if (request) handledRequest.current = request.key
+    setQuery(recovered.query)
+    setResults(recovered.snapshot?.results || [])
+    plot(recovered.snapshot?.results || [], false)
+  }, [ready])
+  useEffect(() => {
     if (!request || typedRequest !== request.key || handledRequest.current === request.key) return
     if (!ready || authErr) return
     handledRequest.current = request.key
@@ -1586,7 +1600,17 @@ export default function MapPanel({ request, onWork }: { onWork?: (message: strin
   const dataLayerCount = LAYERS.filter(l => active[l.key] && !isMapBackground(l)).length
 
   if (!key || authErr || sdkUnavailable) return <Suspense fallback={<div role="status">Opening backup map…</div>}>
-    <FallbackMap query={request && typedRequest !== request.key ? request.query : query || request?.query} initialSnapshot={lastPlaceSnapshot.current} initialView={initialDisplay.current.view} reason={!key ? 'No map key required' : 'Full map provider unavailable'} onPrimary={() => { teardownMaps(); setSdkUnavailable(false); setAuthErr(false); setKeyIdx(0); setMapAttempt(value => value + 1) }}/>
+    <FallbackMap query={request && agentTyping.typing ? request.query : query || request?.query} initialSnapshot={lastPlaceSnapshot.current} initialView={initialDisplay.current.view} reason={!key ? 'No map key required' : 'Full map provider unavailable'} onPrimary={state => {
+      recoveryRef.current = { ...state, requestKey: request?.key }
+      if (state.snapshot?.query !== lastPlaceSnapshot.current?.query) {
+        setComparison(null)
+        setAnswer(state.snapshot?.cached ? `Showing saved locations from ${new Date(state.snapshot.savedAt).toLocaleString()}. Live search is temporarily unavailable.` : state.snapshot?.source === 'osm' ? 'Live locations from OpenStreetMap. Ratings are unavailable, so these results are not a ranked best-of list.' : '')
+      }
+      lastPlaceSnapshot.current = state.snapshot
+      initialDisplay.current.view = state.view; saveDisplay()
+      setQuery(state.query); setSel(null); setReady(false); setGlobe(null)
+      teardownMaps(); setSdkUnavailable(false); setAuthErr(false); setKeyIdx(0); setMapAttempt(value => value + 1)
+    }}/>
   </Suspense>
 
   return (

@@ -3,7 +3,8 @@ import { cachedPlaces, reliablePlaces, project, unproject, placesViewport, type 
 import { mapPlaceUrl, type MapPlace } from './mapRequests'
 import './fallback-map.css'
 type View = { lat: number; lng: number; zoom: number }
-export default function FallbackMap({ query: initialQuery, reason, onPrimary, initialSnapshot, initialView }: { query?: string; reason: string; initialSnapshot?: PlaceSnapshot | null; initialView?: View | null; onPrimary: () => void }) {
+export type MapRecoveryState = { query: string; snapshot: PlaceSnapshot | null; view: View }
+export default function FallbackMap({ query: initialQuery, reason, onPrimary, initialSnapshot, initialView }: { query?: string; reason: string; initialSnapshot?: PlaceSnapshot | null; initialView?: View | null; onPrimary: (state: MapRecoveryState) => void }) {
   const [query, setQuery] = useState(initialQuery || ''), [snapshot, setSnapshot] = useState<PlaceSnapshot | null>(() => initialSnapshot || (initialQuery ? cachedPlaces(initialQuery, initialView) : null))
   const [view, setView] = useState<View>(() => {
     const cached = initialSnapshot || (initialQuery ? cachedPlaces(initialQuery, initialView) : null)
@@ -19,7 +20,7 @@ export default function FallbackMap({ query: initialQuery, reason, onPrimary, in
     search.current?.abort(); const request = new AbortController(); search.current = request
     setBusy(true); setError('')
     try {
-      const data = await reliablePlaces(text, initialView, request.signal)
+      const data = await reliablePlaces(text, view, request.signal)
       if (search.current !== request || request.signal.aborted) return
       setSnapshot(data)
       const next = placesViewport(data.results, size.width, size.height)
@@ -44,7 +45,7 @@ export default function FallbackMap({ query: initialQuery, reason, onPrimary, in
     }
     window.addEventListener('online', update); window.addEventListener('offline', update)
     return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update) }
-  }, [query])
+  }, [query, view.lat, view.lng, view.zoom])
   const center = project(view.lat, view.lng, view.zoom), world = 256 * 2 ** view.zoom
   const visibleTiles: { x: number; y: number; left: number; top: number; worldX: number }[] = []
   for (let y = Math.floor((center.y - size.height / 2) / 256); y <= Math.floor((center.y + size.height / 2) / 256); y++) {
@@ -58,7 +59,7 @@ export default function FallbackMap({ query: initialQuery, reason, onPrimary, in
   }
   const choose = (p: MapPlace) => { setSelected(p.id); setView(v => ({ ...v, lat: p.lat, lng: p.lng, zoom: Math.max(v.zoom, 14) })) }
   return <section className="fallback-map" aria-label="Resilient map workspace">
-    <div className="fallback-map-toolbar"><span>{offline ? 'Offline map' : 'Backup map'} · {reason}</span><button onClick={onPrimary}>Retry full map</button></div>
+    <div className="fallback-map-toolbar"><span>{offline ? 'Offline map' : 'Backup map'} · {reason}</span><button onClick={() => onPrimary({ query, snapshot, view })}>Retry full map</button></div>
     <div className="fallback-map-body"><aside aria-label="Map search and results"><form onSubmit={e => { e.preventDefault(); void run(query) }}><label>Find a place<input aria-label="Map search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Restaurants in Dallas"/></label><button disabled={busy || !query.trim()}>{busy ? 'Searching…' : 'Search'}</button>{busy && <button type="button" onClick={() => { search.current?.abort(); setBusy(false) }}>Stop</button>}</form>
       {error && <p role="status">{error}</p>}
       {snapshot && <p className="fallback-map-notice">Showing: {snapshot.query}</p>}
