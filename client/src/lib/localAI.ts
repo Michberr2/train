@@ -1,13 +1,15 @@
 import type { MLCEngineInterface } from '@mlc-ai/web-llm'
-import { LOCAL_CREW, LocalTextFilter, localModelId, parseLocalActions, prepareLocalMessages, routeLocalTask, type LocalProfile, type LocalRequest, type LocalRole } from './localAIProtocol'
+import { LOCAL_CREW, LocalTextFilter, localModelId, localActionSchema, parseLocalActions, prepareLocalMessages, routeLocalTask, type LocalProfile, type LocalRequest, type LocalRole } from './localAIProtocol'
 import { checkOllamaCrew, ollamaModelId, streamOllamaChat, type LocalModelChunk } from './localOllama'
+import { BrowserCPUEngine, browserCPUModel } from './browserCPU'
+import { streamingLocalMessage } from './streamingLocalMessage'
 
 // Device preferences must never follow the account onto a different computer.
 const KEY = 'device-local-ai-v1'
 export interface LocalPreferences { enabled: boolean; profile: LocalProfile; provider?: 'browser' | 'ollama'; cpuOnly?: boolean }
 export function getLocalPreferences(): LocalPreferences {
-  try { const value = JSON.parse(localStorage.getItem(KEY) || '{}'); return { enabled: value.enabled === true, profile: value.profile === 'compact' ? 'compact' : 'balanced', ...(value.provider === 'ollama' ? { provider: 'ollama' as const, ...(value.cpuOnly === true ? { cpuOnly: true } : {}) } : {}) } }
-  catch { return { enabled: false, profile: 'balanced' } }
+  try { const value = JSON.parse(localStorage.getItem(KEY) || '{}'); return { enabled: value.enabled !== false, profile: value.profile === 'compact' ? 'compact' : value.profile === 'balanced' ? 'balanced' : 'automatic', ...(value.provider === 'ollama' ? { provider: 'ollama' as const, ...(value.cpuOnly === true ? { cpuOnly: true } : {}) } : {}) } }
+  catch { return { enabled: true, profile: 'automatic' } }
 }
 export function setLocalPreferences(value: LocalPreferences) {
   const prior = getLocalPreferences()
@@ -15,12 +17,13 @@ export function setLocalPreferences(value: LocalPreferences) {
   if (JSON.stringify(prior) !== JSON.stringify(getLocalPreferences())) resetLocalAI()
   window.dispatchEvent(new Event('nalu-local-ai'))
 }
-export interface LocalAIState { phase: 'idle' | 'checking' | 'loading' | 'ready' | 'generating' | 'error'; progress: number; message: string; model?: string; role?: LocalRole }
+export interface LocalAIState { phase: 'idle' | 'checking' | 'loading' | 'ready' | 'generating' | 'error'; progress: number; message: string; model?: string; role?: LocalRole; backend?: 'gpu' | 'cpu' | 'ollama' }
 let state: LocalAIState = { phase: 'idle', progress: 0, message: 'AI runs on this computer' }
 export function getLocalAIState() { return state }
 function report(patch: Partial<LocalAIState>) { state = { ...state, ...patch }; window.dispatchEvent(new Event('nalu-local-ai')) }
 
-let engine: MLCEngineInterface | undefined, worker: Worker | undefined, loadedModel = '', modelGeneration = 0
+let engine: MLCEngineInterface | BrowserCPUEngine | undefined, worker: Worker | undefined, loadedModel = '', modelGeneration = 0
+let browserGPUFailed = false
 let epoch = 0, queue: Promise<unknown> = Promise.resolve(), lifetime = new AbortController()
 let activeRequest: AbortController | undefined
 function abortError() { return new DOMException('Cancelled', 'AbortError') }
@@ -36,10 +39,11 @@ function discardLocalModel() {
   modelGeneration++
   engine?.interruptGenerate(); worker?.terminate()
   engine = undefined; worker = undefined; loadedModel = ''
-  report({ phase: 'idle', progress: 0, model: undefined, role: undefined, message: 'AI runs on this computer' })
+  report({ phase: 'idle', progress: 0, model: undefined, role: undefined, backend: undefined, message: 'AI runs on this computer' })
 }
 export function resetLocalAI() {
   epoch++; lifetime.abort(); lifetime = new AbortController()
+  browserGPUFailed = false
   discardLocalModel()
   // Terminating a worker can leave its pending RPC unresolved. A new session
   // gets a fresh queue; the old epoch can never emit or execute an action.
@@ -47,33 +51,62 @@ export function resetLocalAI() {
 }
 export async function checkLocalDevice(): Promise<{ halfPrecision: boolean; maxBuffer: number }> {
   const gpu = (navigator as unknown as { gpu?: { requestAdapter(): Promise<{ features: Set<string>; limits: { maxStorageBufferBindingSize: number } } | null> } }).gpu
-  if (!window.isSecureContext || !gpu) throw new Error('Browser AI needs WebGPU. Use a supported Chrome or Edge, or connect the Ollama local companion for CPU/GPU inference. No cloud request was made.')
+  if (!window.isSecureContext || !gpu) throw new Error('This browser cannot use WebGPU. Nalu will try its browser CPU engine. No cloud request was made.')
   const adapter = await gpu.requestAdapter()
   if (!adapter) throw new Error('Nalu could not access this computer’s GPU. Check browser hardware acceleration. No cloud request was made.')
   return { halfPrecision: adapter.features.has('shader-f16'), maxBuffer: adapter.limits.maxStorageBufferBindingSize }
 }
-async function loadModel(role: LocalRole, signal?: AbortSignal) {
+async function loadCPUModel(role: LocalRole, signal?: AbortSignal) {
+  const currentEpoch = epoch, model = browserCPUModel(role, getLocalPreferences().profile)
+  const taskSignal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(3600000), ...(signal ? [signal] : [])])
+  if (signal?.aborted || epoch !== currentEpoch) throw abortError()
+  if (loadedModel === model && engine instanceof BrowserCPUEngine) { report({ phase: 'ready', backend: 'cpu', progress: 1, message: `${LOCAL_CREW[role].name} is ready on this computer` }); return engine }
+  if (engine) await cancellable(engine.unload(), taskSignal)
+  worker?.terminate(); worker = undefined; engine = undefined; loadedModel = ''
+  if (signal?.aborted || epoch !== currentEpoch) throw abortError()
+  report({ phase: 'loading', backend: 'cpu', role, model, progress: 0, message: `Preparing ${LOCAL_CREW[role].name} on this computer’s CPU…` })
+  worker = new Worker(new URL('./browserCPU.worker.ts', import.meta.url), { type: 'module' })
+  const generation = ++modelGeneration
+  const cpu = new BrowserCPUEngine(worker, progress => { if (epoch === currentEpoch && generation === modelGeneration) report({ phase: 'loading', progress: progress.progress, message: progress.text }) })
+  engine = cpu
+  await cancellable(cpu.reload(model), taskSignal)
+  if (signal?.aborted || epoch !== currentEpoch) throw abortError()
+  loadedModel = model
+  report({ phase: 'ready', backend: 'cpu', progress: 1, message: `${LOCAL_CREW[role].name} is ready on this computer` })
+  return cpu
+}
+async function loadModel(role: LocalRole, signal?: AbortSignal): Promise<MLCEngineInterface | BrowserCPUEngine> {
+  if (browserGPUFailed) return loadCPUModel(role, signal)
   const currentEpoch = epoch
-  const taskSignal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(600000), ...(signal ? [signal] : [])])
+  const taskSignal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(3600000), ...(signal ? [signal] : [])])
   report({ phase: 'checking', role, message: 'Checking this computer…', progress: 0 })
-  const device = await cancellable(checkLocalDevice(), taskSignal)
+  let device: Awaited<ReturnType<typeof checkLocalDevice>>
+  try { device = await cancellable(checkLocalDevice(), taskSignal) }
+  catch { taskSignal.throwIfAborted(); return loadCPUModel(role, signal) }
   if (signal?.aborted || epoch !== currentEpoch) throw abortError()
   const model = localModelId(role, getLocalPreferences().profile, device.halfPrecision)
-  if (loadedModel === model && engine) { report({ phase: 'ready', progress: 1, message: `${LOCAL_CREW[role].name} is ready on this computer` }); return engine }
-  report({ phase: 'loading', role, model, progress: 0, message: `Preparing ${LOCAL_CREW[role].name}…` })
+  if (loadedModel === model && engine) { report({ phase: 'ready', backend: 'gpu', progress: 1, message: `${LOCAL_CREW[role].name} is ready on this computer` }); return engine }
+  report({ phase: 'loading', backend: 'gpu', role, model, progress: 0, message: `Preparing ${LOCAL_CREW[role].name}…` })
   const webllm = await import('@mlc-ai/web-llm')
   if (signal?.aborted || epoch !== currentEpoch) throw abortError()
   const record = webllm.prebuiltAppConfig.model_list.find(item => item.model_id === model)
-  if (!record || (record.buffer_size_required_bytes || 0) > device.maxBuffer) throw new Error('This model exceeds the browser’s GPU limits. Choose the compact crew in Settings → On-device AI.')
+  if (!record) throw new Error('This browser model is unavailable. Please reload Nalu.')
+  if ((record.buffer_size_required_bytes || 0) > device.maxBuffer) return loadCPUModel(role, signal)
   if (engine) await cancellable(engine.unload(), taskSignal)
   if (signal?.aborted || epoch !== currentEpoch) throw abortError()
-  if (!worker) worker = new Worker(new URL('./localAI.worker.ts', import.meta.url), { type: 'module' })
+  worker?.terminate(); worker = new Worker(new URL('./localAI.worker.ts', import.meta.url), { type: 'module' })
   const generation = ++modelGeneration
   engine = new webllm.WebWorkerMLCEngine(worker, { initProgressCallback: progress => {
     if (epoch === currentEpoch && generation === modelGeneration) report({ phase: 'loading', progress: Math.max(0, Math.min(1, progress.progress)), message: progress.text })
   } })
   const loadingEngine = engine
-  await cancellable(loadingEngine.reload(model, { context_window_size: 8192, ...(model.startsWith('Qwen3.5-') ? { conv_config: { ...record.overrides?.conv_config, role_empty_sep: '\n<think>\n' } } : {}) }), taskSignal)
+  try { await cancellable(loadingEngine.reload(model, { context_window_size: 8192, ...(model.startsWith('Qwen3.5-') ? { conv_config: { ...record.overrides?.conv_config, role_empty_sep: '\n<think>\n' } } : {}) }), taskSignal) }
+  catch {
+    taskSignal.throwIfAborted()
+    if (epoch !== currentEpoch || signal?.aborted) throw abortError()
+    discardLocalModel(); browserGPUFailed = true
+    return loadCPUModel(role, signal)
+  }
   if (signal?.aborted || epoch !== currentEpoch) throw abortError()
   loadedModel = model
   report({ phase: 'ready', progress: 1, message: `${LOCAL_CREW[role].name} is ready on this computer` })
@@ -94,7 +127,7 @@ export function prepareLocalCrew(signal?: AbortSignal) {
         const preferences = getLocalPreferences()
         await cancellable(checkOllamaCrew(preferences.profile, AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]), fetch, preferences.cpuOnly), AbortSignal.any([lifetime.signal, AbortSignal.timeout(30000), ...(signal ? [signal] : [])]))
         if (currentEpoch !== epoch || signal?.aborted) throw abortError()
-        report({ phase: 'ready', progress: 1, model: ollamaModelId('conversation', preferences.profile, preferences.cpuOnly), message: 'Ollama is ready on this computer. Cloud inference is disabled.' })
+        report({ phase: 'ready', backend: 'ollama', progress: 1, model: ollamaModelId('conversation', preferences.profile, preferences.cpuOnly), message: 'Ollama is ready on this computer. Cloud inference is disabled.' })
       } else await loadModel('conversation', signal)
     }
     catch (error) { if (currentEpoch === epoch && !signal?.aborted) { resetLocalAI(); report({ phase: 'error', message: error instanceof Error ? error.message : 'Could not prepare the local model.' }) }; throw error }
@@ -107,7 +140,7 @@ export function requestLocalChat(request: LocalRequest, signal?: AbortSignal): R
   const selectedPreferences = getLocalPreferences(), selection = JSON.stringify(selectedPreferences)
   if (!selectedPreferences.enabled) {
     window.dispatchEvent(new Event('nalu-local-ai-setup'))
-    throw new Error('Set up your on-device AI crew to start chatting. Open Settings → On-device AI. No cloud request was made.')
+    throw new Error('Nalu is paused on this computer. Resume it in AI settings. No cloud request was made.')
   }
   const owner = localStorage.getItem('nalu-token'), currentEpoch = epoch
   const sessionSignal = lifetime.signal
@@ -137,21 +170,25 @@ export function requestLocalChat(request: LocalRequest, signal?: AbortSignal): R
           // Clear KV state between requests, accounts, chats, and pipeline steps.
           if (model) await cancellable(model.resetChat(), taskSignal)
           if (!current()) throw abortError()
-          const generationSignal = AbortSignal.any([taskSignal, AbortSignal.timeout(180000)])
+          const generationSignal = AbortSignal.any([taskSignal, AbortSignal.timeout(model instanceof BrowserCPUEngine ? 600000 : 180000)])
           report({ phase: 'generating', role, ...(companion ? { model: ollamaModelId(role, preferences.profile, preferences.cpuOnly) } : {}), message: `${LOCAL_CREW[role].name} is thinking on this computer${companion ? ' with Ollama' : ''}` })
           const hasTools = !!request.tools?.length
-          const jsonSchema = hasTools ? { type: 'object', properties: { message: { type: 'string' }, actions: { type: 'array', items: { type: 'object', properties: { name: { type: 'string', enum: request.tools!.map(tool => tool.function.name) }, arguments: { type: 'object' } }, required: ['name', 'arguments'] } } }, required: ['message', 'actions'] } : request.jsonSchema
+          const jsonSchema = hasTools ? localActionSchema(request.tools!) : request.jsonSchema
           // WebLLM applies JSON grammar to every generated token, including
           // thinking tags. Internal reviews instead deliberate unconstrained;
           // their final JSON is still validated by the artifact adapter.
           const deliberate = !hasTools && (request.deliberate === true || !jsonSchema && role === 'reasoning')
-          const chunks: AsyncIterable<LocalModelChunk> = companion ? streamOllamaChat({ model: ollamaModelId(role, preferences.profile, preferences.cpuOnly), messages, maxTokens: Math.max(128, Math.min(4096, request.maxTokens || 2048)), temperature: deliberate ? .6 : .4, schema: jsonSchema, deliberate, cpuOnly: preferences.cpuOnly }, generationSignal) : await cancellable(model!.chat.completions.create({
+          const chunks: AsyncIterable<LocalModelChunk> = companion ? streamOllamaChat({ model: ollamaModelId(role, preferences.profile, preferences.cpuOnly), messages, maxTokens: Math.max(128, Math.min(4096, request.maxTokens || 2048)), temperature: deliberate ? .6 : .4, schema: jsonSchema, deliberate, cpuOnly: preferences.cpuOnly }, generationSignal) : await cancellable<AsyncIterable<LocalModelChunk>>(model!.chat.completions.create({
             messages, stream: true, max_tokens: Math.max(128, Math.min(4096, request.maxTokens || 2048)), temperature: deliberate ? .6 : .4,
             ...(jsonSchema && !deliberate ? { response_format: { type: 'json_object' as const, schema: JSON.stringify(jsonSchema) } } : {}),
-            ...(loadedModel.startsWith('Qwen3.5-') ? { extra_body: { enable_thinking: deliberate } } : {}),
+            ...(loadedModel.includes('Qwen3.5-') ? { extra_body: { enable_thinking: deliberate } } : {}),
           }), generationSignal)
-          let output = '', finishReason = ''
-          const textFilter = new LocalTextFilter(!companion && deliberate && loadedModel.startsWith('Qwen3.5-'))
+          let output = '', finishReason = '', streamedMessage = ''
+          const publishMessage = () => {
+            const message = streamingLocalMessage(output)
+            if (message.startsWith(streamedMessage) && message.length > streamedMessage.length) { emit('delta', { text: message.slice(streamedMessage.length) }); streamedMessage = message }
+          }
+          const textFilter = new LocalTextFilter(!companion && deliberate && loadedModel.includes('Qwen3.5-'))
           const iterator = chunks[Symbol.asyncIterator]()
           while (true) {
             const next = await cancellable(iterator.next(), generationSignal)
@@ -162,6 +199,7 @@ export function requestLocalChat(request: LocalRequest, signal?: AbortSignal): R
             const text = textFilter.push(choice?.delta.content || '')
             output += text
             if (!hasTools && text) emit('delta', { text })
+            if (hasTools && text) publishMessage()
             if (choice?.finish_reason) finishReason = choice.finish_reason
           }
           const tail = textFilter.push('', true)
@@ -171,7 +209,8 @@ export function requestLocalChat(request: LocalRequest, signal?: AbortSignal): R
           if (hasTools) {
             if (finishReason === 'length') throw new Error('The local model ran out of room before completing its action. No action was run. Try a smaller request.')
             const result = parseLocalActions(output, request.tools!)
-            if (result.message) emit('delta', { text: result.message })
+            if (!result.message.startsWith(streamedMessage)) throw new Error('The model changed its unfinished message. No action was run. Please retry.')
+            if (result.message.length > streamedMessage.length) emit('delta', { text: result.message.slice(streamedMessage.length) })
             result.calls.forEach(call => emit('tool_call_delta', call))
             finishReason = result.calls.length ? 'tool_calls' : 'stop'
           }

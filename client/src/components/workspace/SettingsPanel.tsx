@@ -77,7 +77,7 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
             <span role="status" className="ws-save-status">{saved ? 'Changes saved' : 'Preferences save automatically'}</span>
           </header>
           <nav className="ws-segments flex-wrap" aria-label="Settings categories">
-            {['Account', 'On-device AI', 'Support Nalu', 'Thinking', 'Video & engine'].map(item => <button key={item} aria-pressed={category === item} onClick={() => setCategory(item)}>{item}</button>)}
+            {['Account', 'AI', 'Support Nalu', 'Thinking', 'Video & engine'].map(item => <button key={item} aria-pressed={category === item} onClick={() => setCategory(item)}>{item}</button>)}
           </nav>
           <div className="ws-settings-group" hidden={category !== 'Account'}>
           {/* Account */}
@@ -125,7 +125,7 @@ export default function SettingsPanel({ displayName, onLogout }: Props) {
           <PhoneSection />
 
           </div>
-          {category === 'On-device AI' && <div className="ws-settings-group"><LocalAIControl panel /></div>}
+          {category === 'AI' && <div className="ws-settings-group"><LocalAIControl panel /></div>}
           {category === 'Support Nalu' && <div className="ws-settings-group"><AiBudgetPanel /></div>}
           <div className="ws-settings-group" hidden={category !== 'Thinking'}>
           {/* Reasoning & capacity */}

@@ -4,11 +4,12 @@ import { chromium, expect } from '@playwright/test'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createServer } from 'vite'
 import { fileURLToPath } from 'node:url'
+import { localEngineBrowserFixture, enableFixtureLocalAI } from './lib/local-engine-browser-fixture.mjs'
 let base = process.env.GENERATIVE_TEST_URL, server
 if (!base) {
  const root = fileURLToPath(new URL('../client/', import.meta.url))
  process.chdir(root)
- server = await createServer({ root, configFile: root + 'vite.config.ts', cacheDir: '/tmp/nalu-generative-browser-vite', server: { host: '127.0.0.1', port: 0, strictPort: false, hmr: false } })
+ server = await createServer({ root, configFile: root + 'vite.config.ts', plugins: [localEngineBrowserFixture()], cacheDir: '/tmp/nalu-generative-browser-vite', server: { host: '127.0.0.1', port: 0, strictPort: false, hmr: false } })
  await server.listen()
  base = `http://127.0.0.1:${server.httpServer.address().port}`
 }
@@ -21,36 +22,24 @@ const blockA = { id: 'returns', type: 'calculator', title: 'Editable returns', w
 const blockB = { id: 'tasks', type: 'checklist', title: 'Due diligence', width: 'half', items: [{ id: 'leases', label: 'Verify leases' }, { id: 'expenses', label: 'Verify expenses' }] }
 const blockC = { id: 'comparison', type: 'table', title: 'Comparison', width: 'full', columns: ['Property','Price'], rows: [['B','$500000'],['A','$400000']] }
 const layouts = { initial: { title: 'Your property workspace', description: 'Based on your supplied figures.', blocks: [blockA, blockB, blockC] }, update: { title: 'Updated property workspace', blocks: [blockA, blockB, blockC, { id: 'action', type: 'form', title: 'Next step', width: 'full', fields: [{ id: 'note', label: 'Your instructions', type: 'text' }], actions: [{ label: 'Continue with Nalu', prompt: 'Use these instructions for the next step.' }] }] } }
-await context.addInitScript(({ layouts }) => {
-  const original = window.fetch.bind(window)
-  window.__uiCalls = []
-  window.fetch = async (input, init) => {
-    const path = String(input)
-    if (!path.includes('/api/chat')) return original(input, init)
-    const body = JSON.parse(init?.body || '{}')
-    window.__uiCalls.push(body)
-    if (!body.messages?.some(m => m.role === 'system' && m.content.includes('generative Nalu workspace'))) return new Response('event: delta\ndata: {"text":"Fixture helper"}\n\nevent: finish\ndata: {"reason":"stop"}\n\nevent: done\ndata: {"ok":true}\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
-    const turn = body.messages.filter(m => m.role === 'user').length
-    const layout = turn === 1 ? layouts.initial : layouts.update
-    const raw = '```nalu_ui\n' + JSON.stringify(layout) + '\n```\nYour workspace is ready.'
-    const firstBlock = raw.indexOf('},{"id":"tasks"') + 1
-    const chunks = [raw.slice(0, firstBlock), raw.slice(firstBlock)]
-    let timer
-    const stream = new ReadableStream({ start(controller) {
-      const write = text => controller.enqueue(new TextEncoder().encode(`event: delta\ndata: ${JSON.stringify({ text })}\n\n`))
-      write(chunks[0])
-      timer = setTimeout(() => { if (init?.signal?.aborted) return; write(chunks[1]); controller.enqueue(new TextEncoder().encode('event: finish\ndata: {"reason":"stop"}\n\nevent: done\ndata: {"ok":true}\n\n')); controller.close() }, 3000)
-      init?.signal?.addEventListener('abort', () => { clearTimeout(timer); controller.error(new DOMException('Cancelled','AbortError')) }, { once: true })
-    }, cancel() { clearTimeout(timer) } })
-    return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } })
-  }
-}, { layouts })
+await context.addInitScript(enableFixtureLocalAI)
+await context.addInitScript(() => { window.__uiCalls = [] })
 await context.route('**/*', async route => {
  const request = route.request(), url = new URL(request.url())
  if (url.hostname === 'tile.openstreetmap.org') return route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7QAAAABJRU5ErkJggg==', 'base64') })
  if (url.origin === 'http://127.0.0.1:8834' && /health/.test(url.pathname)) return route.fulfill({ status: 503, json: { error: 'Local GPU fixture is offline.' } })
  if (url.origin !== base && !['data:', 'blob:'].includes(url.protocol)) { if (url.hostname !== 'fonts.googleapis.com' && url.hostname !== 'fonts.gstatic.com') remote.push(url.origin); return route.abort() }
  if (url.pathname === '/__nalu_local_entry') return route.fulfill({ json: { ok: true, token: 'isolated-generative-test', user: { id: 'isolated-generative-owner', displayName: 'Local test' } } })
+ if (url.pathname === '/__fixture-local-model') {
+  const body = request.postDataJSON()
+  await page.evaluate(value => window.__uiCalls.push(value), body)
+  if (!body.messages?.some(m => m.role === 'system' && m.content.includes('generative Nalu workspace'))) return route.fulfill({json:{completion:'Fixture helper'}})
+  const turn = body.messages.filter(m => m.role === 'user').length
+  const layout = turn === 1 ? layouts.initial : layouts.update
+  const raw = '```nalu_ui\n' + JSON.stringify(layout) + '\n```\nYour workspace is ready.'
+  const firstBlock = raw.indexOf('},{"id":"tasks"') + 1
+  return route.fulfill({json:{completion:raw,chunks:[raw.slice(0,firstBlock),raw.slice(firstBlock)],delayMs:3000}})
+ }
  if (!url.pathname.startsWith('/api/')) return route.continue()
  const body = request.postData() ? JSON.parse(request.postData()) : {}; calls.push({ path: url.pathname, action: body.action })
  let json = { ok: true }

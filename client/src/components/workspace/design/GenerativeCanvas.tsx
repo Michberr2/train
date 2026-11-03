@@ -54,9 +54,9 @@ function Block({ block, values, onChange, onAction, busy, agents }: { agents?: R
     {!!block.sources?.length && <footer className="generative-sources">{block.sources.map((source, index) => <a key={index} href={source.url} target="_blank" rel="noopener noreferrer">{source.label}<ArrowUpRight size={11}/></a>)}</footer>}
   </section>
 }
-export default function GenerativeCanvas({ ui, values, text, title, busy, partial, loading, composer, artifacts, clarification, agents, onChange, onAction, onConversation, onRetry }: {
+export default function GenerativeCanvas({ ui, values, text, title, busy, status, partial, loading, composer, artifacts, clarification, agents, onChange, onAction, onConversation, onRetry }: {
   ui?: GenerativeUi; values: UiValues; text: string; title: string; busy: boolean; partial?: boolean; loading?: string
-  composer: ReactNode; agents?: ReactNode; artifacts?: ReactNode; clarification?: ReactNode
+  composer: ReactNode; agents?: ReactNode; artifacts?: ReactNode; clarification?: ReactNode; status?: string
   onChange: (key: string, value: string | boolean) => void; onAction: (prompt: string) => void; onConversation: () => void; onRetry: () => void
 }) {
   return <section className="generative-canvas" aria-label="Generated workspace" aria-busy={busy}>
@@ -67,7 +67,7 @@ export default function GenerativeCanvas({ ui, values, text, title, busy, partia
     <div className="generative-grid">
       {ui?.blocks.map(block => <Block key={block.id} block={block} values={values} onChange={onChange} onAction={onAction} busy={busy} agents={agents}/>)}
       {!ui?.blocks.length && text && <section className="generative-block generative-text" data-width="full"><Markdown>{text}</Markdown>{clarification}</section>}
-      {!ui?.blocks.length && !text && !artifacts && <div className="generative-empty generative-text" role="status"><i/><span>{busy ? 'Nalu is building a workspace for your question…' : 'Your work will appear here. Ask Nalu to get started.'}</span></div>}
+      {!ui?.blocks.length && !text && !artifacts && <div className="generative-empty generative-text" role="status"><i/><span>{busy ? status || 'Nalu is building a workspace for your question…' : 'Your work will appear here. Ask Nalu to get started.'}</span></div>}
       {ui?.blocks.length && clarification ? <div className="generative-block" data-width="full">{clarification}</div> : null}
       {artifacts && <section className="generative-block" data-width="full">{artifacts}</section>}
       {ui && text.includes('⚠️') && <div className="generative-block" data-width="full" role="alert"><Markdown>{text}</Markdown></div>}

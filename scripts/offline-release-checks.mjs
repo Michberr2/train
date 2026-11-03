@@ -20,6 +20,8 @@ export const OFFLINE_RELEASE_CHECKS = [
   'chat-protocol-regressions.mjs',
   'agent-action-contract-regressions.mjs',
   'local-ai-regressions.mjs',
+  'browser-model-download-regressions.mjs',
+  'local-tool-grammar-regressions.mjs',
   'local-ollama-regressions.mjs',
   'local-ollama-browser-regressions.mjs',
   'local-swarm-browser-regressions.mjs',

@@ -18,11 +18,15 @@ export class WebWorkerMLCEngine {
  async *generate(request){
   const response=await fetch('/__fixture-local-model',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)});
   if(!response.ok)throw Error('Synthetic local model fixture failed');
-  let {completion}=await response.json();
+  let {completion,chunks,delayMs}=await response.json();
   const schema=request.response_format?.schema?JSON.parse(request.response_format.schema):null;
-  if(schema?.properties?.message&&schema?.properties?.actions)completion=JSON.stringify({message:completion,actions:[]});
+  let parts=chunks||[completion];
+  if(schema?.properties?.message&&schema?.properties?.actions){
+   if(chunks)parts=chunks.map((text,index)=>(index===0?'{"message":"':'')+JSON.stringify(text).slice(1,-1)+(index===chunks.length-1?'","actions":[]}':''));
+   else parts=[JSON.stringify({message:completion,actions:[]})];
+  }
   if(request.extra_body?.enable_thinking)yield{choices:[{delta:{content:'Internal fixture assessment.</think>\\n\\n'}}]};
-  yield{choices:[{delta:{content:completion}}]};yield{choices:[{delta:{},finish_reason:'stop'}]};
+  for(let i=0;i<parts.length;i++){if(i&&delayMs)await new Promise(resolve=>setTimeout(resolve,delayMs));yield{choices:[{delta:{content:parts[i]}}]}}yield{choices:[{delta:{},finish_reason:'stop'}]};
  }
 }`
     },

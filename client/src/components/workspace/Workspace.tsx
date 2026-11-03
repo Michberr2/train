@@ -127,7 +127,7 @@ import SkillsPanel from './SkillsPanel'
 import AutomationsPanel from './AutomationsPanel'
 import SettingsPanel from './SettingsPanel'
 import LocalAIControl from './LocalAIControl'
-import { getLocalPreferences } from '../../lib/localAI'
+import { getLocalPreferences, getLocalAIState } from '../../lib/localAI'
 import { isLocalSwarmRequest, localDelegationKey, planLocalSwarmWork } from '../../lib/localSwarmPlan'
 import { parseSwarmWorkPlan } from '../../../../shared/swarmWorkPlan'
 import DelegatedWorkCard, { type SavedDelegation } from './design/DelegatedWorkCard'
@@ -788,11 +788,11 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   const [chatContentVisible, setChatContentVisible] = useState(false)
   useEffect(() => {
     if (!reviewLayout || !reviewMainRef.current) return
-    reviewMainRef.current.inert = launcherOpen || agentScreensOpen
-    if (launcherOpen || agentScreensOpen || reviewChatOpenRef.current) return
+    reviewMainRef.current.inert = generativeHome || launcherOpen || agentScreensOpen
+    if (generativeHome || launcherOpen || agentScreensOpen || reviewChatOpenRef.current) return
     const frame = requestAnimationFrame(() => reviewMainRef.current?.focus({ preventScroll: true }))
     return () => cancelAnimationFrame(frame)
-  }, [reviewLayout, launcherOpen, agentScreensOpen])
+  }, [reviewLayout, generativeHome, launcherOpen, agentScreensOpen])
   const [navOpen, setNavOpen] = useState(false) // the nav dropdown open/closed
   const [model] = useState<string>(() => loadModel())
   const [chats, setChats] = useState<Chat[]>(() => loadChats())
@@ -808,6 +808,12 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   const [swarmNavigationRequest, setSwarmNavigationRequest] = useState<(SwarmRoomReference & { key: number }) | undefined>()
   const [agentConversationRequest, setAgentConversationRequest] = useState<{ agent: string; key: number }>()
   const [saveState, setSaveState] = useState(getSyncState)
+  const [deviceAIState, setDeviceAIState] = useState(getLocalAIState)
+  useEffect(() => {
+    const update = () => { const next = getLocalAIState(); setDeviceAIState(previous => previous.phase === next.phase && previous.backend === next.backend ? previous : next) }
+    window.addEventListener('nalu-local-ai', update)
+    return () => window.removeEventListener('nalu-local-ai', update)
+  }, [])
   useEffect(() => {
     const update = () => setSaveState(getSyncState())
     window.addEventListener('nalu-sync-status', update)
@@ -1426,7 +1432,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         ctrl.signal.addEventListener('abort', cancel)
         setRouteName('Nalu swarm')
         try {
-          if (!getLocalPreferences().enabled) { window.dispatchEvent(new Event('nalu-local-ai-setup')); throw Error('Enable local AI to run these agents on your computer. No work was started.') }
+          if (!getLocalPreferences().enabled) { window.dispatchEvent(new Event('nalu-local-ai-setup')); throw Error('Nalu is paused on this computer. Resume it in AI settings. No work was started.') }
           if (!liveSwarm.delegateWork || !liveSwarm.stopDelegation) throw Error('Your agent connection is not ready. No work was started; retry once your account is connected.')
           if (imageAtts.length || imageLoadError) throw Error('The local swarm cannot inspect attached images yet. No work was started; use a written brief for these jobs.')
           const requestId = await localDelegationKey(history[history.length - 1].id!, content, ctxParts.join('\n\n'))
@@ -2876,6 +2882,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     const ui = !hasArtifact && !current?.clarify && (current?.generativeUi || streaming) ? generated?.generativeUi : undefined
     return <GenerativeCanvas ui={ui} values={generated?.uiValues || {}} text={workspaceText(current?.content || '') || (!streaming && current?.content.includes('```nalu_ui') && !current.generativeUi ? 'Nalu could not finish the workspace layout. Your question is saved. Retry to finish it.' : '')}
       title={messages.slice().reverse().find(m => m.role === 'user')?.content || 'A little space to think'} busy={streaming}
+      status={deviceAIState.phase === 'checking' ? 'Checking this computer’s available hardware…' : deviceAIState.phase === 'loading' ? `Preparing Nalu on this computer${deviceAIState.backend === 'cpu' ? '’s CPU' : deviceAIState.backend === 'gpu' ? '’s GPU' : ''}. Model files download when first needed and stay cached here.` : deviceAIState.phase === 'generating' && deviceAIState.backend === 'cpu' ? 'Nalu is thinking on this computer’s CPU…' : undefined}
       partial={!!ui && generated?.uiComplete === false && !streaming} loading={current?.loading}
       composer={renderGenerativeComposer()} agents={<Suspense fallback={<p>Opening your project agents…</p>}><FullPageSwarm swarm={liveSwarm} navigationKey={0} onOpenChat={selectChat} availableChatIds={chats.map(chat => chat.id)}/></Suspense>} artifacts={artifacts ? <CardErrorBoundary label="Your creation"><Suspense fallback={<MediaLoader kind={current?.loading || 'design'} action="opening"/>}>{artifacts}</Suspense></CardErrorBoundary> : undefined}
       clarification={current?.clarify && !current.clarify.answered && !streaming ? <ClarifyBlock questions={current.clarify.questions} onSubmit={answers => submitClarify(index, answers)}/> : undefined}
@@ -2911,7 +2918,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           <button onClick={() => { setGenerativeHome(false); setLibraryOpen(true); setCapabilitiesOpen(false); setLauncherOpen(false); setView('chat') }}>Saved work</button>
           <button onClick={() => { setGenerativeHome(false); setCapabilitiesOpen(true); setLibraryOpen(false); setLauncherOpen(false); setView('chat') }}>Capabilities</button>
         </nav>}
-        {!previewLayout && <LocalAIControl/>}
+        {!previewLayout && <LocalAIControl trigger={false}/>}
         <WorkspaceAccountMenu displayName={user?.displayName} saveState={saveState} onLogout={onLogout} onRetrySave={retrySync} onWork={() => setWorkDrawerOpen(true)}
           onSettings={() => { setGenerativeHome(false); setLibraryOpen(false); setCapabilitiesOpen(false); setReviewChatOpen(false); setLauncherOpen(false); setAgentScreensOpen(false); setHasOpenedSpace(true); setView('settings'); closeSidebarOnMobile() }}/>
 

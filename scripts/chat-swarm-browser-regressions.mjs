@@ -28,6 +28,10 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
   await context.addInitScript(enableFixtureLocalAI)
   await context.addInitScript(() => { if (!localStorage.getItem('nalu-token')) { localStorage.setItem('nalu-token', 'browser-token'); localStorage.setItem('nalu-data-owner', 'browser-owner') } })
+  await context.addInitScript(() => {
+    window.__composerEvents = []
+    for (const type of ['focusin', 'focusout', 'input', 'keydown']) document.addEventListener(type, event => { if (window.__composerEvents.length < 40) window.__composerEvents.push({ type, tag: event.target.tagName, value: event.target.value, key: event.key }) }, true)
+  })
   await context.route('**/*', async route => {
     const req = route.request(), url = new URL(req.url())
     if (url.origin !== origin) { if (['http:', 'https:'].includes(url.protocol)) { if (!['fonts.googleapis.com', 'fonts.gstatic.com'].includes(url.hostname)) report.forbidden.push(url.origin); return route.abort() } return route.continue() }
@@ -57,23 +61,20 @@ try {
   })
   page = await context.newPage(); page.setDefaultTimeout(20000)
   page.on('pageerror', error => report.errors.push(error.message))
+  report.navigation = []
+  page.on('framenavigated', frame => { if (frame === page.mainFrame()) report.navigation.push(new URL(frame.url()).pathname) })
   await page.goto(origin)
-  const open = page.getByRole('button', { name: 'Open Nalu chat', exact: true })
-  await expect(open).toBeVisible({ timeout: 60000 }); await open.click()
-  const input = page.locator('.workspace-chat-popover textarea').first()
-  const setup = page.getByRole('button', { name: 'On-device AI setup', exact: true })
-  await expect(setup).toBeVisible(); await expect(setup).toHaveCount(1)
-  await setup.click()
+  const home = page.getByRole('region', { name: 'Your generative workspace' })
+  await expect(home).toBeVisible({ timeout: 60000 })
+  const input = page.locator('.generative-home textarea,.generative-composer textarea').first()
   const localDialog = page.getByRole('dialog', { name: 'Your computer. Your Nalu.', exact: true })
-  await expect(localDialog).toBeVisible(); await expect(localDialog).toHaveCount(1)
-  assert.equal(await localDialog.evaluate(element => !!element.closest('[aria-hidden=true]')), false)
-  await localDialog.getByRole('button', { name: 'Close on-device AI setup' }).click()
+  await expect(page.locator('.workspace-build')).toHaveAttribute('data-build-state', 'ready', { timeout: 30000 })
   await page.evaluate(async () => { const local = await import('/src/lib/localAI.ts'); window.savedDevicePreferences = local.getLocalPreferences(); local.setLocalPreferences({ ...window.savedDevicePreferences, enabled: false }) })
   await input.fill('Hello Nalu.'); await input.press('Enter')
   await expect(localDialog).toBeVisible(); await expect(localDialog).toHaveCount(1)
   await page.keyboard.press('Escape'); await expect(localDialog).toHaveCount(0)
   await page.evaluate(async () => { const local = await import('/src/lib/localAI.ts'); local.setLocalPreferences(window.savedDevicePreferences) })
-  check('Scenic-home chat exposes one visible local AI setup dialog; sending before setup opens it outside hidden workspace layers')
+  check('Ordinary generative chat needs no activation step; explicitly paused inference can open its AI settings outside hidden workspace layers')
   await input.fill(prompt); await input.press('Enter')
   const card = page.getByRole('region', { name: 'Delegated agent work' })
   await expect(card).toContainText('Acorn Coffee', { timeout: 60000 })
@@ -91,7 +92,7 @@ try {
   await card.getByRole('button', { name: 'Stop these agents', exact: true }).click()
   await expect.poll(async () => (await api.store.read('browser-owner')).jobs.filter(job => ['queued', 'running', 'waiting'].includes(job.status)).length).toBe(0)
   await expect(card.getByText('Stopped', { exact: false }).first()).toBeVisible()
-  await page.reload(); await expect(open).toBeVisible(); await open.click()
+  await page.reload(); await expect(home).toBeVisible(); await page.locator('.generative-recent button').first().click()
   await expect(card).toContainText('Acorn Coffee')
   const metadata = await page.evaluate(() => JSON.parse(localStorage.getItem('nalu-chats')).flatMap(chat => chat.messages).find(message => message.delegation)?.delegation)
   assert.equal(metadata.requestId, originalRequest)
@@ -106,8 +107,7 @@ try {
 
   // A new chat avoids the existing conversation's same-target turn guard.
   const newChat = async () => {
-    await page.getByRole('button', { name: 'New conversation or swarm', exact: true }).click()
-    await page.getByRole('button', { name: /New conversation\s*Just you and Nalu/ }).click()
+    await page.getByRole('button', { name: 'New workspace', exact: true }).click()
   }
   await newChat(); plannerHold = deferred()
   const plannersBefore = plannerCount, delegatesBefore = delegateCount
@@ -130,7 +130,7 @@ try {
   check('Stop wins while the scheduling request is delayed; releasing that request cannot create late background work')
   assert.deepEqual(report.errors, []); assert.deepEqual(report.forbidden, [])
 } finally {
-  if (page && !page.isClosed()) { await page.screenshot({ path: output + '/final-state.png' }).catch(() => {}); await writeFile(output + '/page.txt', await page.locator('body').innerText().catch(() => '')) }
+  if (page && !page.isClosed()) { report.device = await page.evaluate(() => ({ preferences: localStorage.getItem('device-local-ai-v1'), chatCount: JSON.parse(localStorage.getItem('nalu-chats') || '[]').length, input: document.querySelector('textarea')?.value, activeElement: document.activeElement?.tagName, events: window.__composerEvents })).catch(() => null); await page.screenshot({ path: output + '/final-state.png' }).catch(() => {}); await writeFile(output + '/page.txt', await page.locator('body').innerText().catch(() => '')) }
   plannerHold?.resolve(); enqueueHold?.resolve(); backgroundHold.resolve()
   await writeFile(output + '/report.json', JSON.stringify(report, null, 2))
   await browser?.close(); await server.close(); api.close?.()
