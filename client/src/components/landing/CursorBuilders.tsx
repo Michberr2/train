@@ -3,7 +3,7 @@ import './cursor-builders.css'
 
 type Point = { x: number; y: number }
 type Kind = 'photo' | 'copy' | 'button' | 'layout' | 'guide' | 'text'
-type Piece = { element: HTMLElement; kind: Kind; order: number; original: string; began?: number }
+type Piece = { element: HTMLElement; kind: Kind; order: number; original: string; began?: number; settled?: boolean }
 type Scene = { section: Element; pieces: Piece[]; began?: number }
 const clamp = (n: number) => Math.max(0, Math.min(1, n))
 const ease = (n: number) => { const p = clamp(n); return p < .5 ? 4 * p ** 3 : 1 - (-2 * p + 2) ** 3 / 2 }
@@ -33,7 +33,7 @@ export default function CursorBuilders({ container, reduced, active, workspace =
     let order = 0
     const registered = new WeakSet<HTMLElement>()
     const wordStyles = new Map<HTMLElement, string>()
-    const workspaceSelectors = '.review-desktop-scene,.review-workspace-header,.review-header-brand,nav,.generative-home-input,.generative-home-footnote,.generative-block,.generative-library-card,.generative-fields,.generative-chart-bar,.generative-table-scroll,.generative-calculation,header,footer,h1,h2,h3,h4,p,small,label,button,input,textarea,select,output,th,td,img,svg,iframe,canvas,.nalu-build-copy'
+    const workspaceSelectors = '.generative-home-input,.generative-home-footnote,.generative-block,.generative-library-card,.generative-fields,.generative-chart-bar,.generative-table-scroll,.generative-calculation,h1,h2,h3,h4,p,small,label,button,input,textarea,select,output,th,td,img,svg,iframe,canvas,.nalu-build-copy'
     const register = () => {
       if (workspace) {
         for (let i = pieces.length - 1; i >= 0; i--) if (!pieces[i].element.isConnected) pieces.splice(i, 1)
@@ -44,7 +44,7 @@ export default function CursorBuilders({ container, reduced, active, workspace =
         for (const word of wordStyles.keys()) if (!word.isConnected) wordStyles.delete(word)
       }
       for (const element of Array.from(host.querySelectorAll<HTMLElement>(workspace ? workspaceSelectors : selectors)).filter(el => !el.closest('.nalu-landing-playground,.nalu-cursor-builders'))) {
-        if (registered.has(element) || element.closest('[data-cursor-exempt],.gm-style,.fallback-tile-map,.generative-motion')) continue
+        if (registered.has(element) || element.closest('[data-cursor-exempt],.gm-style,.fallback-tile-map,.generative-motion') || workspace && element.tagName.toLowerCase() === 'svg' && element.closest('button')) continue
         // Copy is managed by BuildCopy; its internal measurement spans are never jobs.
         if (element.parentElement?.closest('.nalu-build-copy')) continue
         const section = workspace ? element.closest('.generative-block,.generative-library-card,.generative-home,.generative-capabilities,.generative-library,.generative-conversation,.generative-connections-content') || host : element.closest('section,footer')
@@ -57,7 +57,8 @@ export default function CursorBuilders({ container, reduced, active, workspace =
         registered.add(element)
         let scene = scenes.get(section)
         if (!scene) { scene = { section, pieces: [] }; scenes.set(section, scene) }
-        scene.pieces.push(piece); pieces.push(piece); element.dataset.buildPiece = kind
+        scene.pieces.push(piece); pieces.push(piece); element.dataset.buildPiece = kind; if (workspace) element.dataset.buildState = 'waiting'
+        if (workspace && element.closest('.generative-block,.generative-home') && !element.closest('[data-block-type=map]')) element.style.opacity = '0'
         for (const word of element.querySelectorAll<HTMLElement>('.nalu-build-word')) if (!wordStyles.has(word)) wordStyles.set(word, word.getAttribute('style') || '')
       }
       surface.dataset.crewSize = String(pieces.reduce((sum, piece) => sum + (piece.kind === 'photo' ? 3 : 1) + (piece.kind === 'copy' ? piece.element.querySelectorAll('.nalu-build-word').length : 0), 0))
@@ -103,6 +104,8 @@ export default function CursorBuilders({ container, reduced, active, workspace =
       const hostTop = surfaceBox.top, hostLeft = surfaceBox.left
       const localBox = (element: Element) => { const r = element.getBoundingClientRect(); return { x: r.left - hostLeft, y: r.top - hostTop, w: r.width, h: r.height } }
       let running = false, jobs = 0
+      let workers = workspace ? pieces.filter(piece => piece.began !== undefined && !piece.settled && piece.element.isConnected).length : 0
+      const crewLimit = width < 768 ? 4 : 8
       for (const scene of scenes.values()) {
         if (!scene.section.isConnected) { scenes.delete(scene.section); continue }
         const rect = scene.section.getBoundingClientRect(), hero = scene.section.classList.contains('nalu-hero')
@@ -114,7 +117,16 @@ export default function CursorBuilders({ container, reduced, active, workspace =
           const { element, kind, order: id } = piece
           if (!element.isConnected) continue
           const ownBounds = element.getBoundingClientRect()
-          if (workspace && piece.began === undefined && activeRef.current && ownBounds.bottom > 0 && ownBounds.top < height && ownBounds.right > 0 && ownBounds.left < width) piece.began = now
+          if (workspace && piece.began === undefined) {
+            const inView = ownBounds.bottom > hostTop && ownBounds.top < hostTop + height && ownBounds.right > hostLeft && ownBounds.left < hostLeft + width
+            if (!inView) continue
+            const parent = element.parentElement?.closest<HTMLElement>('[data-build-piece]')
+            const parentJob = parent && pieces.find(candidate => candidate.element === parent)
+            if (!activeRef.current || workers >= crewLimit || parentJob && !parentJob.settled) { running = true; continue }
+            piece.began = now; element.dataset.buildState = 'working'; workers++
+          }
+          if (workspace && piece.settled) continue
+          const settle = () => { if (workspace && !piece.settled) { piece.settled = true; element.dataset.buildState = 'settled'; workers-- } }
           const card = element.closest('.nalu-capability-card')
           const cardBox = card?.getBoundingClientRect()
           if (cardBox && visible && t >= 0 && cardBox.left < width * .92 && cardBox.right > width * .08 && piece.began === undefined) piece.began = now
@@ -146,9 +158,10 @@ export default function CursorBuilders({ container, reduced, active, workspace =
           } else if (kind === 'copy') {
             const index = copyIndex++, inButton = !!element.closest('button')
             const rank = card ? Array.from(card.querySelectorAll('.nalu-build-copy')).indexOf(element) : index
-            const start = workspace ? .08 + rank % 8 * .035 : card ? .7 + rank * .3 : inButton ? 5.3 + index * .08 : 1.5 + index * .38
+            const start = workspace ? 0 : card ? .7 + rank * .3 : inButton ? 5.3 + index * .08 : 1.5 + index * .38
             const words = Array.from(element.querySelectorAll<HTMLElement>('.nalu-build-word'))
-            const elapsed = pieceTime - start, seed = agentId % 19
+            const speed = workspace ? Math.max(1, words.reduce((sum, word) => sum + (Number(word.dataset.letters) || 1), 0) / 24) : 1
+            const elapsed = (pieceTime - start) * speed, seed = agentId % 19
             const wordEnds: number[] = []
             let clock = .72, activeWord = 0, finished = false
             const counts = words.map((word, wordIndex) => {
@@ -165,7 +178,7 @@ export default function CursorBuilders({ container, reduced, active, workspace =
             finished = elapsed >= clock
             element.dispatchEvent(new CustomEvent('nalu-build-step', { detail: counts }))
             words.forEach((word, wordIndex) => {
-              const aligned = ease((elapsed - wordEnds[wordIndex] - .3) / .6)
+              const aligned = workspace ? 1 : ease((elapsed - wordEnds[wordIndex] - .3) / .6)
               word.style.transformOrigin = 'left bottom'; word.style.scale = String(mix(.9, 1, aligned)); word.style.translate = `0 ${mix(5, 0, aligned)}px`
               word.dataset.alignment = aligned === 1 ? 'placed' : 'placing'
             })
@@ -179,7 +192,7 @@ export default function CursorBuilders({ container, reduced, active, workspace =
               cursor(agentId, position, clamp(elapsed * 8) * clamp((clock + .6 - elapsed) * 5), elapsed < .72 ? 'set text' : elapsed > clock ? 'finish text' : 'typing', true, elapsed - .58)
               if (elapsed >= .72 && !finished) { ctx.save(); ctx.fillStyle = workspace ? '#283024' : '#ffffff'; ctx.fillRect(target.x, r.top - hostTop + 2, 1.3, r.height); ctx.restore() }
             }
-            words.forEach((word, wordIndex) => {
+            if (!workspace) words.forEach((word, wordIndex) => {
               const local = elapsed - wordEnds[wordIndex] + .35
               if (local >= 0 && local < 1.65 && visible) {
                 running = true; jobs++
@@ -192,8 +205,10 @@ export default function CursorBuilders({ container, reduced, active, workspace =
             })
             if (visible && pieceTime >= 0 && elapsed < clock + 1.7) running = true
             element.style.opacity = pieceTime >= start ? '1' : '0'
+            if (workspace && elapsed >= clock + .6) settle()
           } else if (kind === 'text') {
-            const elapsed = pieceTime - .1, progress = ease(elapsed / 1.8)
+            const elapsed = pieceTime - (workspace ? 0 : .1), progress = ease((elapsed - (workspace ? .15 : 0)) / (workspace ? .7 : 1.8))
+            if (workspace) element.style.opacity = '1'
             // Use the rendered glyph, including real wrapping and nested inline text.
             // The cursor and reveal share this caret instead of tracing an invented line.
             const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
@@ -214,16 +229,18 @@ export default function CursorBuilders({ container, reduced, active, workspace =
               const right = Math.max(0, (target.x - box.x) * sx), top = Math.max(0, (caret.top - hostTop - box.y) * sy), bottom = Math.max(0, (target.y - box.y) * sy)
               element.style.clipPath = progress <= 0 ? 'inset(0 100% 0 0)' : `polygon(0 0,100% 0,100% ${top}px,${right}px ${top}px,${right}px ${bottom}px,0 ${bottom}px)`
             }
-            if (elapsed >= 0 && elapsed < 2.35 && visible && length) {
+            if (elapsed >= 0 && elapsed < (workspace ? 1.1 : 2.35) && visible && length) {
               running = true; jobs++
-              cursor(agentId, elapsed < .25 ? point(entrance(agentId, target), target, elapsed / .25, agentId) : target, clamp(elapsed * 8) * clamp((2.35 - elapsed) * 5), elapsed < .25 ? 'approach text' : 'set copy', id % 5 === 0)
-              if (elapsed > .2 && elapsed < 1.95) selection(box.x, box.y, box.w, box.h, .2, agentId)
+              cursor(agentId, elapsed < .25 ? point(entrance(agentId, target), target, elapsed / .25, agentId) : target, clamp(elapsed * 8) * clamp((2.35 - elapsed) * 5), elapsed < .25 ? 'approach text' : 'set copy', workspace || id % 5 === 0)
+              if (!workspace && elapsed > .2 && elapsed < 1.95) selection(box.x, box.y, box.w, box.h, .2, agentId)
             }
+            if (workspace && elapsed >= 1.1) { element.style.clipPath = ''; settle() }
           } else if (kind === 'guide') {
             element.style.opacity = String(ease((t - 4) / 1.4))
           } else {
-            const index = buttonIndex++, start = workspace ? .08 + id % 10 * .03 : card ? .8 : kind === 'button' ? 2.5 + index * .48 : 1 + index * .32
-            const elapsed = pieceTime - start, draw = ease((elapsed - .8) / 1.2)
+            const index = buttonIndex++, start = workspace ? 0 : card ? .8 : kind === 'button' ? 2.5 + index * .48 : 1 + index * .32
+            const elapsed = pieceTime - start, arrival = workspace ? .25 : .8, duration = workspace ? .35 : 1.2, endTime = workspace ? .8 : 2.75
+            const draw = ease((elapsed - arrival) / duration)
             const dx = (1 - draw) * (id % 2 ? 26 : -22), dy = (1 - draw) * 18
             // A live map stays painted while agents outline its real controls.
             // Moving or fading the map provider's surface would create a blank flash.
@@ -231,20 +248,22 @@ export default function CursorBuilders({ container, reduced, active, workspace =
             if (!liveMap) {
               element.style.transformOrigin = 'top left'; element.style.translate = `${dx}px ${dy}px`
               element.style.scale = kind === 'button' ? `${mix(.12, 1, draw)} ${mix(.2, 1, draw)}` : '1'
-              element.style.opacity = String(clamp((elapsed - .72) * 4))
+              element.style.opacity = String(clamp((elapsed - (workspace ? .2 : .72)) * (workspace ? 8 : 4)))
             }
             if (!workspace) element.inert = elapsed < 2
-            if (elapsed >= 0 && elapsed < 2.75 && visible) {
+            if (elapsed >= 0 && elapsed < endTime && visible) {
               running = true; jobs++
               // Read after applying this frame's transforms. Ancestor transforms,
               // reflow, scrolling and responsive scaling are already in this box.
               const box = localBox(element)
               const startPoint = { x: box.x, y: box.y }
               const end = { x: box.x + box.w, y: box.y + box.h }
-              const pos = elapsed < .65 ? point(entrance(agentId, startPoint), startPoint, elapsed / .65, agentId) : elapsed < .8 ? startPoint : end
-              cursor(agentId, pos, clamp(elapsed * 7) * clamp((2.75 - elapsed) * 3), kind === 'button' ? elapsed < .8 ? 'draw button' : 'size button' : 'place component', true, elapsed - .68)
-              if (elapsed > .72) selection(box.x, box.y, box.w, box.h, clamp((2.7 - elapsed) * 2), agentId)
+              const approach = workspace ? .22 : .65
+              const pos = elapsed < approach ? point(entrance(agentId, startPoint), startPoint, elapsed / approach, agentId) : elapsed < arrival ? startPoint : end
+              cursor(agentId, pos, clamp(elapsed * 7) * clamp((endTime - elapsed) * (workspace ? 8 : 3)), kind === 'button' ? elapsed < arrival ? 'draw button' : 'size button' : 'place component', true, elapsed - (workspace ? .22 : .68))
+              if (elapsed > arrival && elapsed < arrival + duration) selection(box.x, box.y, box.w, box.h, clamp((endTime - elapsed) * 4), agentId)
             }
+            if (workspace && elapsed >= endTime) settle()
           }
         }
         // Keep future scheduled jobs alive through their natural pauses.
@@ -252,9 +271,10 @@ export default function CursorBuilders({ container, reduced, active, workspace =
         if (!hero && !visible && t > 0) scene.began = Math.min(scene.began!, now - 60000)
       }
       if (workspace && activeRef.current) for (const scene of scenes.values()) for (const piece of scene.pieces) {
-        if (piece.began !== undefined && now - piece.began < 3200) running = true
+        if (piece.began !== undefined && !piece.settled) running = true
       }
       surface.dataset.activeJobs = String(jobs)
+      if (workspace) surface.dataset.crewLimit = String(crewLimit)
       if (running) frame = requestAnimationFrame(paint)
     }
     const schedule = () => { if (!frame) frame = requestAnimationFrame(paint) }
@@ -263,7 +283,7 @@ export default function CursorBuilders({ container, reduced, active, workspace =
       const ratio = Math.min(window.devicePixelRatio || 1, 2); surface.width = width * ratio; surface.height = height * ratio
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0); schedule()
     }
-    const replay = () => { for (const scene of scenes.values()) { scene.began = undefined; scene.pieces.forEach(piece => { piece.began = undefined }) }; host.scrollTop = 0; schedule() }
+    const replay = () => { for (const scene of scenes.values()) { scene.began = undefined; scene.pieces.forEach(piece => { piece.began = undefined; piece.settled = false; piece.element.dataset.buildState = 'waiting' }) }; host.scrollTop = 0; schedule() }
     window.addEventListener('nalu-construction-replay', replay)
     host.addEventListener('scroll', schedule, { passive: true, capture: workspace })
     const mutations = workspace ? new MutationObserver(records => {
@@ -274,11 +294,11 @@ export default function CursorBuilders({ container, reduced, active, workspace =
         if (!parent || parent.closest('.nalu-cursor-builders')) continue
         if (record.type === 'characterData' && !parent.closest('.nalu-build-copy')) {
           const piece = pieces.find(piece => piece.element === parent)
-          if (piece) piece.began = performance.now()
+          if (piece) { piece.began = undefined; piece.settled = false; piece.element.dataset.buildState = 'waiting' }
         }
         if (record.type === 'attributes') {
           const piece = pieces.find(piece => piece.element === parent)
-          if (piece) piece.began = performance.now()
+          if (piece) { piece.began = undefined; piece.settled = false; piece.element.dataset.buildState = 'waiting' }
         }
       }
       schedule()
@@ -298,7 +318,7 @@ export default function CursorBuilders({ container, reduced, active, workspace =
             else piece.element.style.removeProperty(property)
           }
         } else { piece.element.setAttribute('style', piece.original); piece.element.inert = false }
-        delete piece.element.dataset.buildPiece
+        delete piece.element.dataset.buildPiece; delete piece.element.dataset.buildState
         if (piece.kind === 'copy') piece.element.dispatchEvent(new CustomEvent('nalu-build-step', { detail: 1 }))
       })
       for (const [word, style] of wordStyles) { word.setAttribute('style', style); delete word.dataset.alignment }

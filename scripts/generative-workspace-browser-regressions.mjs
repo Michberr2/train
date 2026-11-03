@@ -26,6 +26,18 @@ await context.addInitScript(({ layouts }) => {
   // Measure the actual canvas cursor tip against live DOM geometry, rather than
   // asserting that elements merely registered as construction jobs.
   window.__cursorGeometry = []
+  window.__constructionOrderErrors = []
+  window.__maxCrew = 0
+  new MutationObserver(records => {
+    for (const record of records) {
+      const el = record.target
+      if (el.hasAttribute('data-workspace-cursors')) window.__maxCrew = Math.max(window.__maxCrew, Number(el.dataset.activeJobs || 0))
+      if (el.dataset.buildState === 'working') {
+        const parent = el.parentElement?.closest('[data-build-piece]')
+        if (parent && parent.dataset.buildState !== 'settled') window.__constructionOrderErrors.push({element:el.tagName,parent:parent.tagName,state:parent.dataset.buildState})
+      }
+    }
+  }).observe(document, {subtree:true,attributes:true,attributeFilter:['data-active-jobs','data-build-state']})
   const fillText = CanvasRenderingContext2D.prototype.fillText
   CanvasRenderingContext2D.prototype.fillText = function(text, ...args) {
     if ((text === 'Nalu · size button' || text === 'Nalu · set copy' || text === 'Nalu · typing') && this.canvas.hasAttribute('data-workspace-cursors')) {
@@ -142,9 +154,12 @@ try {
  await page.getByRole('button', { name: 'Play cursor construction', exact: true }).click()
  await page.waitForFunction(() => Number(document.querySelector('[data-workspace-cursors]')?.getAttribute('data-active-jobs')) > 0)
  for (const selector of ['input[type=number]', 'input[type=checkbox]', 'th', 'td', '.generative-block', '.nalu-build-copy']) assert.ok(await page.locator(selector + '[data-build-piece]').count(), `cursor covers ${selector}`)
- await page.waitForTimeout(1200)
+ await page.waitForTimeout(3000)
  await page.screenshot({ path: output + '/02-cursor-construction.png' })
+ await page.waitForFunction(()=>['Nalu · size button','Nalu · set copy','Nalu · typing'].every(kind=>window.__cursorGeometry.filter(sample=>sample.kind===kind).length>4),undefined,{timeout:15000})
  const geometry = await page.evaluate(() => window.__cursorGeometry)
+ assert.deepEqual(await page.evaluate(()=>window.__constructionOrderErrors),[],'parent components settle before their descendants start building')
+ assert.ok(await page.evaluate(()=>window.__maxCrew)<=8,'a bounded crew builds the workspace instead of overlapping every job')
  for (const kind of ['Nalu · size button','Nalu · set copy','Nalu · typing']) {
   const samples = geometry.filter(sample => sample.kind === kind)
   assert.ok(samples.length > 4, `measured real ${kind} motion`)
