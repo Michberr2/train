@@ -22,6 +22,7 @@ export const OFFLINE_RELEASE_CHECKS = [
   'local-ai-regressions.mjs',
   'browser-model-download-regressions.mjs',
   'local-tool-grammar-regressions.mjs',
+  'browser-cpu-grammar-regressions.mjs',
   'local-ollama-regressions.mjs',
   'local-ollama-browser-regressions.mjs',
   'local-swarm-browser-regressions.mjs',
