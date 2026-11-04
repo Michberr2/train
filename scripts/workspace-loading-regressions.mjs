@@ -45,10 +45,10 @@ test('the branded opening screen and artifact activity never show the conversati
 test('the dock loads only approved artwork without flashing legacy icons', async () => {
   const html = dock()
   assert.doesNotMatch(html, /<svg|workspace-app-dock-vector/)
-  assert.equal((html.match(/data-icon-state="loading"/g) || []).length, 5)
-  assert.equal((html.match(/data-loaded="false"/g) || []).length, 5)
+  assert.equal((html.match(/data-icon-state="loading"/g) || []).length, 6)
+  assert.equal((html.match(/data-loaded="false"/g) || []).length, 6)
   for (const [label, filename] of [
-    ['Studio', 'studio-glossy-paintbrush.png'], ['Autopilot', 'autopilot-neon-molecule.png'],
+    ['Browser', 'browser.svg'], ['Studio', 'studio-glossy-paintbrush.png'], ['Autopilot', 'autopilot-neon-molecule.png'],
     ['Map', 'map-glossy-blue-pin.png'], ['Memory', 'memory-glossy-brain.png'], ['Skills', 'skills-plug-socket.png'],
   ]) {
     assert.ok(html.includes(`aria-label="${label}"`), `${label} stays accessible before the image loads`)

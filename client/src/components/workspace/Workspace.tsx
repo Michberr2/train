@@ -32,6 +32,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import {
+  Globe,
   GitBranch,
   GitCommit,
   X,
@@ -84,6 +85,7 @@ import { getBrand, ensureDefaultBrand, setBrand, deriveBrand } from './brandKit'
 import BrandBar from './BrandBar'
 // Heavy (three.js / pptxgenjs / docx / xlsx / fabric) — load only when a card is
 // shown, so they never weigh down the main site bundle / slow the whole site.
+const BrowserWorkspacePanel = lazy(() => import('./BrowserWorkspacePanel'))
 const CADCard = lazy(() => import('./CADCard'))
 const SlidesCard = lazy(() => import('./SlidesCard'))
 const SheetCard = lazy(() => import('./SheetCard'))
@@ -102,6 +104,7 @@ const PreviewWorkspaceLiveHub = import.meta.env.DEV ? lazy(() => import('../work
 const PreviewWorkspaceAgentTray = import.meta.env.DEV ? lazy(() => import('../workspace-preview/real/PreviewWorkspaceAgentTray')) : null
 const PreviewWorkspaceAgentScreens = import.meta.env.DEV ? lazy(() => import('../workspace-preview/real/PreviewWorkspaceAgentScreens')) : null
 const PreviewWorkspaceChatPopover = import.meta.env.DEV ? lazy(() => import('../workspace-preview/real/PreviewWorkspaceChatPopover')) : null
+import { BROWSER_TOOLS, isBrowserTool, execBrowserTool, explicitlyUsesBrowser } from './browserWorkspace'
 import { TOOLS, execTool, WEB_TOOLS, execWebTool, isWebTool } from './agentTools'
 import {
   getActiveRepo,
@@ -162,7 +165,7 @@ interface Chat {
   projectId?: string // the project this chat belongs to (undefined = unfiled)
 }
 
-type View = 'chat' | 'studio' | 'map' | 'memory' | 'agents' | 'skills' | 'automations' | 'settings'
+type View = 'browser' | 'chat' | 'studio' | 'map' | 'memory' | 'agents' | 'skills' | 'automations' | 'settings'
 
 const CHATS_KEY = 'nalu-chats'
 const ACTIVE_KEY = 'nalu-active-chat'
@@ -239,10 +242,12 @@ const NAV_ITEMS: { view: View; label: string; icon: LucideIcon }[] = [
   { view: 'map', label: 'Map', icon: MapPin },
   ...(IS_WEB_APP ? [{ view: 'memory' as View, label: 'Memory', icon: Brain }] : []),
   { view: 'agents', label: 'AutoPilot', icon: Bot },
+  { view: 'browser', label: 'Browser', icon: Globe },
   { view: 'skills', label: 'Skills', icon: Wand2 },
 ]
 
 const VIEW_TITLES: Record<Exclude<View, 'chat'>, string> = {
+  browser: 'Browser',
   studio: 'Studio',
   map: 'Map',
   memory: 'Memory',
@@ -1450,6 +1455,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           if (classified) intent = classified
         } catch { /* Keep the conservative single-route fallback. */ }
       }
+      if (!selectedKind && explicitlyUsesBrowser(content)) intent = { kind: 'chat', mode: 'chat', additionalKinds: [] }
       if (resuming) intent = parseStudioIntent(resuming) || intent
       const forcedKind = intent.kind
       // Ask based on the whole brief and conversation, and preserve the pending
@@ -2219,7 +2225,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       // the connected repo and feed results back until it answers with text.
       const repo = activeRepo
       // Web tools are always available (no gaps in data); repo tools add when connected.
-      const tools = repo ? [...WEB_TOOLS, ...TOOLS] : WEB_TOOLS
+      const tools = repo ? [...WEB_TOOLS, ...BROWSER_TOOLS, ...TOOLS] : [...WEB_TOOLS, ...BROWSER_TOOLS]
       const context = repo
         ? {
             repo: `${repo.owner}/${repo.repo}`,
@@ -2318,11 +2324,17 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           acc += `\n\n\`▸ ${tc.function.name}${label ? ` ${label}` : ''}\`\n`
           sawAny = true
           flush()
-          const result = isWebTool(tc.function.name)
+          const result = isBrowserTool(tc.function.name)
+            ? await execBrowserTool(tc, ctrl.signal, sessionToken)
+            : isWebTool(tc.function.name)
             ? await execWebTool(tc)
             : repo
               ? await execTool(tc, repo, changesRef.current)
               : 'Error: connect a repo to use file tools.'
+          if (isBrowserTool(tc.function.name) && !ctrl.signal.aborted) {
+            setAmbientHome(false); setView('browser'); setLauncherOpen(false); setAgentScreensOpen(false); setHasOpenedSpace(true)
+            if (reviewLayout) setReviewChatOpen(true)
+          }
           conv.push({ role: 'tool', tool_call_id: tc.id, content: result })
         }
         setChangeCount(Object.keys(changesRef.current).length)
@@ -3052,6 +3064,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
             <div className="ws-feature-shell"><WorkspaceIntro compact label="AutoPilot" title={reviewLayout ? 'AutoPilot' : 'Leave it with me.'} description="Build and run workflows with your agents and tools."/><AgentsPanel /></div>
           </Suspense>
         )}
+        {view === 'browser' && <Suspense fallback={<div className="p-6">Opening Browser…</div>}><BrowserWorkspacePanel key={sessionToken} token={sessionToken}/></Suspense>}
         {view === 'skills' && <SkillsPanel onDraft={prompt => { setInput(prompt); if (reviewLayout) openSpace('chat'); else setView('chat'); requestAnimationFrame(() => taRef.current?.focus()) }} />}
         {view === 'automations' && <AutomationsPanel />}
         {view === 'settings' && (

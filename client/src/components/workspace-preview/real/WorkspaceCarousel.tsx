@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Globe, ArrowLeft, ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react'
 import './workspace-carousel.css'
 import WorkspaceCoreVisual from './WorkspaceCoreVisual'
 import WorkspaceMapVisual from './WorkspaceMapVisual'
 import WorkspaceExperienceVisual from './WorkspaceExperienceVisual'
 
-export type WorkspaceCarouselView = 'chat' | 'studio' | 'map' | 'agents' | 'memory' | 'skills'
+export type WorkspaceCarouselView = 'browser' | 'chat' | 'studio' | 'map' | 'agents' | 'memory' | 'skills'
 
 const SPACES: { view: WorkspaceCarouselView; name: string; title: string; description: string; action: string }[] = [
   { view: 'chat', name: 'Chat', title: 'Talk it through.', description: 'Research a question, shape an idea, or work out your next move.', action: 'Open Chat' },
@@ -13,6 +13,7 @@ const SPACES: { view: WorkspaceCarouselView; name: string; title: string; descri
   { view: 'agents', name: 'Autopilot', title: 'Put work on autopilot.', description: 'Start with a template. Connect the steps. Run a repeatable workflow.', action: 'Open Autopilot' },
   { view: 'map', name: 'Map', title: 'Explore a place.', description: 'Search places, compare areas, and see the world in 2D or 3D.', action: 'Explore the map' },
   { view: 'memory', name: 'Memory', title: 'Your work, in motion.', description: 'See what’s working, what needs you, and jump back into any conversation.', action: 'Open Memory' },
+  { view: 'browser', name: 'Browser', title: 'Work across your apps.', description: 'Sign in to your websites. Let Nalu research, edit documents, and work in spreadsheets while you watch.', action: 'Open Browser' },
   { view: 'skills', name: 'Skills', title: 'Make Nalu yours.', description: 'Choose the tools Nalu can use for research, creation, and everyday work.', action: 'Choose your skills' },
 ]
 
@@ -68,7 +69,7 @@ export default function WorkspaceCarousel({ onOpen, onClose, initialView = 'stud
               aria-label={active ? `${space.name}, selected` : `Choose ${space.name}: ${space.title.replace(/\.$/, '')}`}
               onClick={() => { if (!suppressClick.current) { if (active) onOpen(space.view); else setSelected(index) } }}>
               <span className="workspace-carousel-card-label"><i/>{space.name}<span>{String(index + 1).padStart(2, '0')}</span></span>
-              {space.view === 'map' ? <WorkspaceMapVisual active={active}/>
+              {space.view === 'browser' ? <div style={{ height: 160, display: 'grid', placeItems: 'center', color: '#78a59a' }}><Globe size={88} strokeWidth={1}/></div> : space.view === 'map' ? <WorkspaceMapVisual active={active}/>
                 : space.view === 'agents' ? <WorkspaceCoreVisual view="agents" active={active}/>
                 : <WorkspaceExperienceVisual view={space.view} active={active}/>}
               <h2>{space.title}</h2><p>{space.description}</p>

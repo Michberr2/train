@@ -7,7 +7,7 @@ import './workspace-core-visual.css'
 type Node = { label: string; detail: string; icon?: LucideIcon; mark?: boolean }
 type Graph = { title: string; control: string; policy: string; nodes: Node[]; feedback?: boolean }
 
-const GRAPHS: Record<WorkspaceCarouselView, Graph> = {
+const GRAPHS: Record<Exclude<WorkspaceCarouselView, 'browser'>, Graph> = {
   chat: {
     title: 'CONVERSATION ENGINE', control: 'Context selection', policy: 'ACCOUNT / HISTORY', feedback: true,
     nodes: [
@@ -64,7 +64,7 @@ const GRAPHS: Record<WorkspaceCarouselView, Graph> = {
 
 /** A decorative architecture miniature, matching the landing page's Nalu Core.
  * Packets illustrate connections; they do not represent live account activity. */
-export default function WorkspaceCoreVisual({ view, active }: { view: WorkspaceCarouselView; active: boolean }) {
+export default function WorkspaceCoreVisual({ view, active }: { view: Exclude<WorkspaceCarouselView, 'browser'>; active: boolean }) {
   const [reduced, setReduced] = useState(() => typeof window === 'undefined' || window.matchMedia('(prefers-reduced-motion: reduce)').matches)
   useEffect(() => {
     const query = window.matchMedia('(prefers-reduced-motion: reduce)')

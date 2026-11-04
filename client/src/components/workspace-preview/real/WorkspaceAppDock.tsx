@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import './workspace-app-dock.css'
 
-export type WorkspaceAppView = 'chat' | 'studio' | 'agents' | 'map' | 'memory' | 'skills'
+export type WorkspaceAppView = 'browser' | 'chat' | 'studio' | 'agents' | 'map' | 'memory' | 'skills'
 
 const APPS: { view: WorkspaceAppView; label: string }[] = [
   { view: 'studio', label: 'Studio' },
+  { view: 'browser', label: 'Browser' },
   { view: 'agents', label: 'Autopilot' },
   { view: 'map', label: 'Map' },
   { view: 'memory', label: 'Memory' },
@@ -12,6 +13,7 @@ const APPS: { view: WorkspaceAppView; label: string }[] = [
 ]
 
 const ICON_ASSETS: Record<WorkspaceAppView, string> = {
+  browser: '/workspace-icons/browser.svg',
   chat: '/workspace-icons/chat-v1.png',
   studio: '/workspace-icons/studio-glossy-paintbrush.png',
   agents: '/workspace-icons/autopilot-neon-molecule.png',

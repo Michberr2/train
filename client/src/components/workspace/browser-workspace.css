@@ -1,0 +1,20 @@
+.nalu-browser { flex:1; min-height:0; overflow:auto; padding:24px; color:#263d4b; background:#f8faf9; }
+.nalu-browser:fullscreen { overflow:auto; }
+.nalu-browser button { display:inline-flex; align-items:center; justify-content:center; gap:7px; border:1px solid #dce4e5; border-radius:10px; padding:9px 12px; background:white; color:#294957; font:inherit; font-size:13px; cursor:pointer; }
+.nalu-browser button:hover { background:#edf4f1; }
+.nalu-browser button:disabled { opacity:.45; cursor:not-allowed; }
+.nalu-browser button:focus-visible,.nalu-browser input:focus-visible,.nalu-browser textarea:focus-visible { outline:2px solid #528878; outline-offset:3px; }
+.nalu-browser-header,.nalu-browser-header>div,.nalu-browser-controls { display:flex; align-items:center; gap:12px; }
+.nalu-browser-header { justify-content:space-between; margin-bottom:18px; }
+.nalu-browser h2 { margin:0; font-size:21px; font-weight:600; }.nalu-browser-header p { margin:3px 0 0; font-size:13px; color:#6c7d85; }
+.nalu-browser-address { display:flex; align-items:center; gap:10px; border:1px solid #dce4e5; border-radius:13px; padding:7px 9px 7px 14px; background:white; }
+.nalu-browser-address input { flex:1; width:0; background:transparent; border:0; color:inherit; font-size:14px; padding:8px 0; }
+.nalu-browser-shortcuts { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }.nalu-browser-shortcuts button { font-size:12px; }
+.nalu-browser-screen { position:relative; overflow:hidden; border:1px solid #dce4e5; border-radius:16px; background:white; }
+.nalu-browser-screen iframe { display:block; width:100%; height:min(65vh,850px); min-height:360px; border:0; }
+.nalu-browser-working { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 16px; background:#edf4f1; font-size:13px; }
+.nalu-browser-empty { min-height:330px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:40px 24px; color:#54766c; }.nalu-browser-empty h3 { font-size:24px; color:#294957; margin:18px 0 10px; }.nalu-browser-empty p { max-width:480px; margin:0 0 18px; font-size:15px; line-height:1.7; }.nalu-browser small { color:#76858a; font-size:12px; line-height:1.6; }
+.nalu-browser-task { margin:20px 0; }.nalu-browser-task label { font-weight:600; font-size:14px; }.nalu-browser-task>div { display:flex; gap:10px; margin:8px 0; align-items:center; }.nalu-browser-task textarea { resize:vertical; min-height:70px; flex:1; min-width:0; border:1px solid #dce4e5; border-radius:12px; padding:12px; background:white; color:#263d4b; font:inherit; font-size:14px; }.nalu-browser-task button { background:#315f51; color:white; padding:13px 17px; }.nalu-browser-task button:hover { background:#244c40; }
+.nalu-browser-error { padding:12px 15px; border:1px solid #eedac6; border-radius:10px; background:#fff6e9; color:#805630; font-size:13px; }
+.nalu-browser-result { padding:18px; background:white; border:1px solid #dce4e5; border-radius:14px; font-size:14px; }.nalu-browser-result>div:first-child { display:flex; justify-content:space-between; align-items:center; }.nalu-browser-result strong { text-transform:capitalize; color:#456e5e; }.nalu-browser-result p { margin:10px 0; }.nalu-browser-result pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; line-height:1.7; }.nalu-browser-result details { margin-top:14px; }.nalu-browser-result ol { padding-left:20px; }.nalu-browser-result li { margin:8px 0; }.nalu-browser-files { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+@media(max-width:640px) { .nalu-browser { padding:14px; }.nalu-browser-header { align-items:flex-start; }.nalu-browser-header p { display:none; }.nalu-browser-controls { flex-wrap:wrap; justify-content:flex-end; gap:5px; }.nalu-browser-header button { padding:7px; font-size:11px; }.nalu-browser-task>div { flex-direction:column; align-items:stretch; }.nalu-browser-screen iframe { min-height:400px; }.nalu-browser-working { flex-wrap:wrap; } }
