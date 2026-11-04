@@ -8,18 +8,20 @@ import { BrowserWorkspaceStore, type BrowserWorkspaceState } from './_browserWor
 import { BrowserTaskStore, browserBinding } from './_browserTasks'
 
 const CLOUD = 'https://api.browser-use.com/api/v2'
+const NALU_CLOUD = 'https://nalu-browser.nalu.workers.dev'
+const usesNaluCloud = () => !!process.env.NALU_BROWSER_SERVICE_KEY?.trim()
 const id = (v: unknown): v is string => typeof v === 'string' && /^[a-zA-Z0-9-]{1,128}$/.test(v)
 const clipped = (v: unknown, n = 16000) => typeof v === 'string' ? v.slice(0, n) : ''
 export function browserHttpUrl(value: unknown): string {
   try { const u = new URL(String(value)); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password ? u.href : '' } catch { return '' }
 }
 export function browserLiveUrl(value: unknown): string {
-  try { const u = new URL(String(value)); return u.protocol === 'https:' && !u.username && !u.password && (u.hostname === 'live.browser-use.com' || u.hostname.endsWith('.browser-use.com')) ? u.href : '' } catch { return '' }
+  try { const u = new URL(String(value)); return u.protocol === 'https:' && !u.username && !u.password && (u.hostname === 'live.browser.run' || u.hostname === 'live.browser-use.com' || u.hostname.endsWith('.browser-use.com')) ? u.href : '' } catch { return '' }
 }
 class BrowserError extends Error { constructor(readonly status: number, message: string) { super(message) } }
 class ProviderRejected extends Error {}
-export async function browserProvider(key: string, path: string, signal: AbortSignal, body?: unknown, method = body ? 'POST' : 'GET'): Promise<any> {
-  const response = await abortableWork(() => fetch(CLOUD + path, { method, signal, redirect: 'error', headers: { 'Content-Type': 'application/json', 'X-Browser-Use-API-Key': key }, ...(body ? { body: JSON.stringify(body) } : {}) }), signal, r => { void r.body?.cancel().catch(() => {}) })
+export async function browserProvider(key: string, path: string, signal: AbortSignal, body?: unknown, method = body ? 'POST' : 'GET', owner?: string): Promise<any> {
+  const response = await abortableWork(() => fetch((owner && usesNaluCloud() ? NALU_CLOUD : CLOUD) + path, { method, signal, redirect: 'error', headers: { 'Content-Type': 'application/json', ...(owner && usesNaluCloud() ? { Authorization: `Bearer ${key}`, 'X-Nalu-Owner': owner } : { 'X-Browser-Use-API-Key': key }) }, ...(body ? { body: JSON.stringify(body) } : {}) }), signal, r => { void r.body?.cancel().catch(() => {}) })
   if (!response.ok) { void response.body?.cancel().catch(() => {}); if (response.status >= 400 && response.status < 500) throw new ProviderRejected(); throw new Error('Browser provider unavailable') }
   const reader = response.body?.getReader(); if (!reader) throw new Error('Empty browser response')
   let size = 0; const chunks: Uint8Array[] = []
@@ -53,10 +55,10 @@ export async function browserWorkspace(req: any, res: any, body: any) {
     let backend: ReturnType<typeof connectionBackend> | undefined; let store: BrowserWorkspaceStore | undefined, owner = '', lease = ''
     let state: BrowserWorkspaceState | undefined, quota: Awaited<ReturnType<typeof reserveDailyQuota>> | undefined
     let submitted = false, rejectedMutation = false, live = '', active = false
-    const key = (process.env.BROWSER_USE_API_KEY || process.env.BROWSERUSE_API_KEY || '').trim()
+    const key = (process.env.NALU_BROWSER_SERVICE_KEY || process.env.BROWSER_USE_API_KEY || process.env.BROWSERUSE_API_KEY || '').trim()
     const call = async (path: string, payload?: unknown, method?: string) => {
       signal.throwIfAborted()
-      try { return await browserProvider(key, path, signal, payload, method) }
+      try { return await browserProvider(key, path, signal, payload, method, owner) }
       catch (error) { if (payload && error instanceof ProviderRejected) rejectedMutation = true; throw error }
     }
     try {
@@ -71,7 +73,7 @@ export async function browserWorkspace(req: any, res: any, body: any) {
       const ledger = async () => {
         if (!state!.taskId || !state!.remoteTaskId || !state!.sessionId) return
         await new BrowserTaskStore(backend!.client).save(owner, { id: state!.taskId, title: clipped(state!.task, 200), status: state!.status === 'finished' ? 'waiting' : state!.status || 'waiting', detail: state!.result || 'Open Browser to see progress or take control.', meta: {
-          provider: 'cloud', remoteId: state!.remoteTaskId, sessionId: state!.sessionId,
+          provider: usesNaluCloud() ? 'nalu-browser' : 'cloud', remoteId: state!.remoteTaskId, sessionId: state!.sessionId,
           binding: browserBinding(key, owner, state!.taskId, state!.remoteTaskId, state!.sessionId), result: state!.result, steps: state!.steps,
         } })
       }

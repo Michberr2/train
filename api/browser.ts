@@ -1,6 +1,6 @@
 // Account-owned remote browser jobs. Provider acceptance is queued work, never
 // proof that a requested real-world action succeeded. No implicit retries.
-import { browserWorkspace, WORKSPACE_BROWSER_ACTIONS } from './_browserWorkspace'
+import { browserWorkspace, browserProvider, WORKSPACE_BROWSER_ACTIONS } from './_browserWorkspace'
 import { randomUUID } from 'node:crypto'
 import { cors } from './_cors'
 import { readToken } from './_db'
@@ -93,15 +93,17 @@ export default async function handler(req: any, res: any) {
         const saved = await store.get(owner, body.task_id)
         if (!saved) return res.status(404).json({ error: 'Browser task not found.' })
         task = saved
-        if (task.meta.provider === 'cloud') {
-          if (!validBrowserBinding(cloudKey, owner, task)) return res.status(409).json({ error: 'This task cannot be verified with the current browser connection.' })
-          const data = await provider(`${CLOUD}/tasks/${task.meta.remoteId}`, cloudKey, signal, action === 'cancel' ? { action: 'stop_task_and_session' } : undefined, action === 'cancel' ? 'PATCH' : 'GET')
+        if (task.meta.provider === 'cloud' || task.meta.provider === 'nalu-browser') {
+          const privateCloud = task.meta.provider === 'nalu-browser'
+          const providerKey = privateCloud ? (process.env.NALU_BROWSER_SERVICE_KEY || '').trim() : cloudKey
+          if (!validBrowserBinding(providerKey, owner, task)) return res.status(409).json({ error: 'This task cannot be verified with the current browser connection.' })
+          const data = privateCloud ? await browserProvider(providerKey, `/tasks/${task.meta.remoteId}`, signal, action === 'cancel' ? { action: 'stop' } : undefined, action === 'cancel' ? 'PATCH' : 'GET', owner) : await provider(`${CLOUD}/tasks/${task.meta.remoteId}`, cloudKey, signal, action === 'cancel' ? { action: 'stop_task_and_session' } : undefined, action === 'cancel' ? 'PATCH' : 'GET')
           if (data.id !== task.meta.remoteId || data.sessionId !== task.meta.sessionId) throw new Error('Unexpected provider task')
           task.status = cloudStatus(data)
           task.detail = task.status === 'done' ? 'Browser agent reported completion. Review the result.' : task.status === 'waiting' ? 'The provider has not confirmed a successful outcome.' : `Browser task ${task.status}.`
           task.meta.result = text(data.output)
           task.meta.steps = Array.isArray(data.steps) ? data.steps.slice(-MAX_STEPS).map((s: any) => text(s?.nextGoal, 1000)) : []
-          if (['queued', 'running'].includes(task.status)) {
+          if (!privateCloud && ['queued', 'running'].includes(task.status)) {
             const session = await provider(`${CLOUD}/sessions/${task.meta.sessionId}`, cloudKey, signal).catch(() => null)
             if (session?.id === task.meta.sessionId) task.meta.live_url = httpUrl(session.liveUrl)
           } else task.meta.live_url = ''

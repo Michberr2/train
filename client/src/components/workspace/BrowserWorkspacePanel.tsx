@@ -35,7 +35,7 @@ export default function BrowserWorkspacePanel({ token }: { token: string | null 
     } catch (e) { if (mounted.current) setError((e as Error).message) }
     finally { mutation.current = false; if (mounted.current) setBusy(false) }
   }
-  const live = (() => { try { const u = new URL(state?.live_url || ''); return u.protocol === 'https:' && u.hostname.endsWith('.browser-use.com') ? u.href : '' } catch { return '' } })()
+  const live = (() => { try { const u = new URL(state?.live_url || ''); return u.protocol === 'https:' && (u.hostname === 'live.browser.run' || u.hostname.endsWith('.browser-use.com')) ? u.href : '' } catch { return '' } })()
   return <div className="nalu-browser" ref={panel}>
     <header className="nalu-browser-header"><div><Globe size={22}/><div><h2>Your browser</h2><p>One private workspace for you and Nalu.</p></div></div>
       <div className="nalu-browser-controls">

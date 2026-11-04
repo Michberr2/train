@@ -5,7 +5,7 @@ import Module from 'node:module'
 import { EventEmitter } from 'node:events'
 import { DatabaseSync } from 'node:sqlite'
 import { readFileSync } from 'node:fs'
-const savedFetch = globalThis.fetch, savedKey = process.env.BROWSER_USE_API_KEY
+const savedFetch = globalThis.fetch, savedKey = process.env.BROWSER_USE_API_KEY, savedServiceKey = process.env.NALU_BROWSER_SERVICE_KEY
 const compiled = await build({ stdin: { contents: "export {default as browser} from './api/browser'; export * from './api/_browserWorkspace'; export * from './api/_browserWorkspaceStore'; export {CloudflareStore} from './_cloudflareStore'", resolveDir: process.cwd(), loader: 'ts' }, bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', plugins: [{ name: 'boundaries', setup(b) {
   const sources = { './_db': `export const readToken=r=>(r.headers.authorization||'').replace(/^Bearer /,'');`, './_connectionBackend': `export const connectionBackend=()=>globalThis.fixture.backend();`, './_limits': `export const reserveDailyQuota=(...a)=>globalThis.fixture.quota(...a); export const studioLimitMessage=()=>'';`, './_cloudflareStore': `export class CloudflareStore {query(...a){return globalThis.fixture.query(...a)} batch(s){return Promise.resolve({results:s.map(x=>globalThis.fixture.query(x.sql,x.params))})}}`, '@vercel/functions': 'export const waitUntil=()=>{};' }
   b.onResolve({ filter: /.*/ }, a => a.path in sources ? { path: a.path, namespace: 'boundary' } : undefined)
@@ -19,7 +19,7 @@ function reset(useCloud = true) {
   db.exec(readFileSync('cloudflare/nalu-data/migrations/0018_browser_workspaces.sql', 'utf8'))
   db.exec("CREATE TABLE nalu_tasks(id TEXT PRIMARY KEY,user_id TEXT,source TEXT,title TEXT,detail TEXT,status TEXT,progress REAL,events TEXT DEFAULT '[]',meta TEXT DEFAULT '{}',created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP)")
   calls = []; tasks = new Map(); sessions = new Map(); quotaOk = true; count = 0; refunds = 0; gate = null; cloud = useCloud
-  process.env.BROWSER_USE_API_KEY = 'test-provider-key'
+  process.env.BROWSER_USE_API_KEY = 'test-provider-key'; delete process.env.NALU_BROWSER_SERVICE_KEY
   const query = (sql, params = []) => ({ results: db.prepare(sql).all(...params) })
   globalThis.fixture = { query, backend: () => ({ connect: async () => {}, close: async () => {}, userId: async token => ['owner', 'other'].includes(token) ? token : null,
     client: cloud ? new api.CloudflareStore() : { query: async (sql, p = []) => {
@@ -29,7 +29,7 @@ function reset(useCloud = true) {
     } } }), quota: async () => ({ ok: quotaOk, signedIn: true, status: 429, release: async () => { refunds++ } }) }
   globalThis.fetch = async (url, options) => {
     const path = new URL(url).pathname.replace('/api/v2', ''), body = options.body ? JSON.parse(options.body) : undefined
-    calls.push({ path, method: options.method, body }); assert.equal(options.headers['X-Browser-Use-API-Key'], 'test-provider-key')
+    calls.push({ path, method: options.method, body }); if (process.env.NALU_BROWSER_SERVICE_KEY) { assert.equal(new URL(url).origin, 'https://nalu-browser.nalu.workers.dev'); assert.equal(options.headers.Authorization, 'Bearer test-service-key'); assert.ok(['owner','other'].includes(options.headers['X-Nalu-Owner'])) } else assert.equal(options.headers['X-Browser-Use-API-Key'], 'test-provider-key')
     await gate?.(path, body)
     if (path === '/profiles') return Response.json({ id: `profile-${++count}` })
     if (path === '/sessions') { const id = `session-${++count}`; const s = { id, status: 'active', liveUrl: `https://live.browser-use.com/${id}`, tasks: [], profileId: body.profileId }; sessions.set(id, s); return Response.json(s) }
@@ -99,5 +99,16 @@ try {
   for (const url of ['javascript:alert(1)', 'https://evil.example.com', 'https://browser-use.com.evil.example/', 'https://u:p@live.browser-use.com/']) assert.equal(api.browserLiveUrl(url), '')
   assert.match(api.browserLiveUrl('https://live.browser-use.com/view'), /^https:/)
  })
+ await test('Cloudflare service uses verified owner headers and native task status/cancellation', async () => {
+  process.env.NALU_BROWSER_SERVICE_KEY = 'test-service-key'
+  const result = await run('workspace_run', { task: 'Read a website' }); assert.equal(result.code, 200)
+  const taskId = state().taskId
+  assert.equal(JSON.parse(db.prepare('SELECT meta FROM nalu_tasks').get().meta).provider, 'nalu-browser')
+  assert.equal((await run('status', { task_id: taskId })).code, 200)
+  assert.equal((await run('status', { task_id: taskId }, 'other')).code, 404)
+  assert.equal((await run('cancel', { task_id: taskId })).data.status, 'cancelled')
+  assert.equal(api.browserLiveUrl('https://live.browser.run/ui/view'), 'https://live.browser.run/ui/view')
+  assert.equal(api.browserLiveUrl('https://live.browser.run.evil.example/'), '')
+ })
  console.log(`PASS ${total} browser workspace integration groups; synthetic provider only`)
-} finally { db?.close(); globalThis.fetch = savedFetch; if (savedKey === undefined) delete process.env.BROWSER_USE_API_KEY; else process.env.BROWSER_USE_API_KEY = savedKey }
+} finally { if (savedServiceKey === undefined) delete process.env.NALU_BROWSER_SERVICE_KEY; else process.env.NALU_BROWSER_SERVICE_KEY = savedServiceKey; db?.close(); globalThis.fetch = savedFetch; if (savedKey === undefined) delete process.env.BROWSER_USE_API_KEY; else process.env.BROWSER_USE_API_KEY = savedKey }
