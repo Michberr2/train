@@ -70,7 +70,7 @@ export async function browserWorkspace(req: any, res: any, body: any) {
       const save = () => store!.save(owner, lease, state!)
       const ledger = async () => {
         if (!state!.taskId || !state!.remoteTaskId || !state!.sessionId) return
-        await new BrowserTaskStore(backend!.client).save(owner, { id: state!.taskId, title: clipped(state!.task, 200), status: state!.status || 'waiting', detail: state!.result || 'Open Browser to see progress or take control.', meta: {
+        await new BrowserTaskStore(backend!.client).save(owner, { id: state!.taskId, title: clipped(state!.task, 200), status: state!.status === 'finished' ? 'waiting' : state!.status || 'waiting', detail: state!.result || 'Open Browser to see progress or take control.', meta: {
           provider: 'cloud', remoteId: state!.remoteTaskId, sessionId: state!.sessionId,
           binding: browserBinding(key, owner, state!.taskId, state!.remoteTaskId, state!.sessionId), result: state!.result, steps: state!.steps,
         } })

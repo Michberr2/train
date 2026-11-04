@@ -79,7 +79,7 @@ try {
  })
  await test('completion requires explicit success; output downloads are account scoped', async () => {
   await run('workspace_run', { task: 'Make a workbook' }); const task = tasks.get(state().remoteTaskId); task.status = 'finished'; task.output = 'Saved in OneDrive'; task.outputFiles = [{ id: 'file-1', fileName: 'budget.xlsx' }]
-  assert.equal((await run('workspace_status')).data.status, 'finished'); task.isSuccess = true
+  assert.equal((await run('workspace_status')).data.status, 'finished'); assert.equal(db.prepare('SELECT status FROM nalu_tasks').get().status, 'waiting'); task.isSuccess = true
   assert.equal((await run('workspace_status')).data.status, 'done')
   assert.equal((await run('workspace_download', { file_id: 'file-1' }, 'other')).code, 404)
   assert.equal((await run('workspace_download', { file_id: 'file-2' })).code, 404)
