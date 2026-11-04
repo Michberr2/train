@@ -1,3 +1,4 @@
+import { rememberCompletedAnswer } from '@nalu/ai-runtime/memory-runtime'
 import { executeSwarmWork } from '../../../shared/swarmExecution'
 import type { SwarmDeviceJob } from '../../../shared/swarmDevice'
 import { DEVICE_SWARM_PARALLELISM } from '../../../shared/swarmDevice'
@@ -73,6 +74,12 @@ class LocalSwarmSlot {
         try { await call({ action: 'device-result', jobId: job.id, leaseToken: job.leaseToken, result }); break }
         catch (error) { if (attempt >= 2 || signal.aborted || !(error instanceof SwarmRequestError && error.uncertain)) throw error }
       }
+      if (job.studio && record(result) && record(result.payload)) {
+        try { current(); await rememberCompletedAnswer({ messages: [{ role: 'user', content: job.input }], memoryScope: { projectId: job.projectId, agentId: job.speaker, channelId: job.thread }, memorySourceId: job.id }, 'Saved Studio creation: ' + JSON.stringify({ name: result.payload.name || job.studio.kind, kind: job.studio.kind, taskId: job.studio.taskId, sourceJobId: job.studio.sourceJobId }), 'reviewed', signal) } catch { if (!signal.aborted && sameSwarmAccount(this.options.account, this.options.readAccount())) this.options.error('The creation is saved, but this agent’s memory could not be updated.') }
+      }
+      if (record(result) && result.status === 'done' && typeof result.content === 'string') {
+        try { current(); await rememberCompletedAnswer({ messages: [{ role: 'user', content: job.input }], memoryScope: { projectId: job.projectId, agentId: job.speaker, channelId: job.thread }, memorySourceId: job.id }, result.content, job.kind === 'reply' ? 'completed' : 'reviewed', signal) } catch { if (!signal.aborted && sameSwarmAccount(this.options.account, this.options.readAccount())) this.options.error('The saved work completed, but this agent’s memory could not be updated.') }
+      }
     } catch (error) {
       if (!signal.aborted && sameSwarmAccount(this.options.account, this.options.readAccount())) {
         this.options.error(error instanceof Error ? error.message : 'The local Swarm attempt could not finish.')
@@ -101,15 +108,16 @@ export async function executeLocalSwarmJob(job: SwarmDeviceJob, options: { signa
   if (job.studio) {
     current()
     const { endpoint, kind } = studioRoute(job.studio.kind)
-    const response = await handleLocalAIRequest(`/api/${endpoint}`, JSON.stringify({ prompt: job.input, messages: job.context, material: `PROJECT BRIEF:\n${job.brief}`, memory: '', images: [], ...(kind ? { kind } : {}) }), signal)
+    const response = await handleLocalAIRequest(`/api/${endpoint}`, JSON.stringify({ prompt: job.input, messages: job.context, material: `PROJECT BRIEF:\n${job.brief}`, memory: '', images: [], ...(kind ? { kind } : {}) }), signal, undefined, { memoryScope: { projectId: job.projectId, agentId: job.speaker, channelId: job.thread }, memorySourceId: job.id })
     const payload: unknown = await response.json()
     if (!response.ok || !record(payload)) throw new Error(record(payload) && typeof payload.error === 'string' ? payload.error : 'The local creation was incomplete.')
     return { payload }
   }
-  return executeSwarmWork({ ...job, timeoutMs: 900000, signal, onProgress: options.onProgress }, {
+  let stage: import('../../../shared/swarmExecution').SwarmExecutionProgress['stage'] = 'planning'
+  return executeSwarmWork({ ...job, timeoutMs: 900000, signal, onProgress: async progress => { stage = progress.stage; await options.onProgress?.(progress) } }, {
     complete: async (messages, settings) => {
       current()
-      const response = requestLocalChat({ messages, assistantName: job.speaker, localRole: settings.json ? 'reasoning' : job.kind === 'reply' ? undefined : 'writing', maxTokens: settings.maxTokens,
+      const response = requestLocalChat({ messages, assistantName: job.speaker, memoryScope: { projectId: job.projectId, agentId: stage === 'reviewing' ? job.speaker + '/checker' : job.speaker, channelId: job.thread }, remember: false, localRole: settings.json ? 'reasoning' : job.kind === 'reply' ? undefined : 'writing', maxTokens: settings.maxTokens,
         ...(settings.json ? { jsonSchema: settings.jsonSchema || { type: 'object' } } : {}) }, settings.signal)
       const answer = await readChatStream(response.body!, { signal: settings.signal })
       current()

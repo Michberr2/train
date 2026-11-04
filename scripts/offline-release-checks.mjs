@@ -6,6 +6,8 @@ import { parseReleaseArguments, selectReleaseChecks } from './lib/release-check-
 // account mutations, provider credentials and public-domain changes are excluded.
 const cwd = fileURLToPath(new URL('../', import.meta.url))
 export const OFFLINE_RELEASE_CHECKS = [
+  'check-ai-runtime-release.mjs',
+  'ai-runtime-release-regressions.mjs',
   'deploy-release-regressions.mjs',
   'login-access-regressions.mjs',
   'generative-ui-regressions.mjs',
@@ -22,7 +24,6 @@ export const OFFLINE_RELEASE_CHECKS = [
   'local-ai-regressions.mjs',
   'browser-model-download-regressions.mjs',
   'local-tool-grammar-regressions.mjs',
-  'browser-cpu-grammar-regressions.mjs',
   'local-ollama-regressions.mjs',
   'local-ollama-browser-regressions.mjs',
   'local-swarm-browser-regressions.mjs',

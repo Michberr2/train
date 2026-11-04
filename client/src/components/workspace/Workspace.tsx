@@ -810,7 +810,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   const [saveState, setSaveState] = useState(getSyncState)
   const [deviceAIState, setDeviceAIState] = useState(getLocalAIState)
   useEffect(() => {
-    const update = () => { const next = getLocalAIState(); setDeviceAIState(previous => previous.phase === next.phase && previous.backend === next.backend ? previous : next) }
+    const update = () => { const next = getLocalAIState(); setDeviceAIState(previous => previous.phase === next.phase && previous.backend === next.backend && previous.activity === next.activity ? previous : next) }
     window.addEventListener('nalu-local-ai', update)
     return () => window.removeEventListener('nalu-local-ai', update)
   }, [])
@@ -2403,7 +2403,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
           thinkLevel,
           undefined, // specialist — keyword-routed for normal chat
           true, // opt into cross-chat memory: this is the main interactive turn
-          reviewLayout && !previewLayout ? { systemPrompt: String(conv.find(m => m.role === 'system')?.content || '') } : undefined,
+          reviewLayout && !previewLayout ? { systemPrompt: String(conv.find(m => m.role === 'system')?.content || ''), workspaceInstruction: STREAMING_UI_INSTRUCTION, memoryScope: { projectId: existing?.projectId || 'chat:' + chatId, agentId: 'nalu-main', channelId: 'chat:' + chatId }, memorySourceId: assistantMessageId } : undefined,
         )
         // Keep partial text visible, but never recover or execute actions from an
         // interrupted response. onError above already provides the retry message.
@@ -2882,7 +2882,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     const ui = !hasArtifact && !current?.clarify && (current?.generativeUi || streaming) ? generated?.generativeUi : undefined
     return <GenerativeCanvas ui={ui} values={generated?.uiValues || {}} text={workspaceText(current?.content || '') || (!streaming && current?.content.includes('```nalu_ui') && !current.generativeUi ? 'Nalu could not finish the workspace layout. Your question is saved. Retry to finish it.' : '')}
       title={messages.slice().reverse().find(m => m.role === 'user')?.content || 'A little space to think'} busy={streaming}
-      status={deviceAIState.phase === 'checking' ? 'Checking this computer’s available hardware…' : deviceAIState.phase === 'loading' ? `Preparing Nalu on this computer${deviceAIState.backend === 'cpu' ? '’s CPU' : deviceAIState.backend === 'gpu' ? '’s GPU' : ''}. Model files download when first needed and stay cached here.` : deviceAIState.phase === 'generating' && deviceAIState.backend === 'cpu' ? 'Nalu is thinking on this computer’s CPU…' : undefined}
+      status={deviceAIState.phase === 'checking' ? 'Checking this computer’s available hardware…' : deviceAIState.phase === 'loading' ? `Preparing Nalu on this computer${deviceAIState.backend === 'cpu' ? '’s CPU' : deviceAIState.backend === 'gpu' ? '’s GPU' : ''}. Model files download when first needed and stay cached here.` : deviceAIState.phase === 'generating' ? deviceAIState.activity === 'planning' ? 'Nalu is choosing the right specialist and tools…' : deviceAIState.activity === 'reviewing' ? 'Nalu’s checker is reviewing the result…' : deviceAIState.backend === 'cpu' ? 'Nalu’s specialist is working on this computer’s CPU…' : 'Nalu’s specialist is working on your request…' : undefined}
       partial={!!ui && generated?.uiComplete === false && !streaming} loading={current?.loading}
       composer={renderGenerativeComposer()} agents={<Suspense fallback={<p>Opening your project agents…</p>}><FullPageSwarm swarm={liveSwarm} navigationKey={0} onOpenChat={selectChat} availableChatIds={chats.map(chat => chat.id)}/></Suspense>} artifacts={artifacts ? <CardErrorBoundary label="Your creation"><Suspense fallback={<MediaLoader kind={current?.loading || 'design'} action="opening"/>}>{artifacts}</Suspense></CardErrorBoundary> : undefined}
       clarification={current?.clarify && !current.clarify.answered && !streaming ? <ClarifyBlock questions={current.clarify.questions} onSubmit={answers => submitClarify(index, answers)}/> : undefined}

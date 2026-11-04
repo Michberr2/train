@@ -6,7 +6,7 @@ import { requestChat } from './chatRequest'
 // A user message can carry text + images (OpenAI vision parts). /api/chat routes
 // any message containing an image part to the Nalu Vision model.
 import { getModelSettings } from '../../lib/naluSettings'
-import { buildChatMemory } from './crossChatMemory'
+import type { AgentMemoryScope } from '@nalu/ai-runtime/memory'
 import { readChatStream } from './chatStream'
 
 export type ContentPart =
@@ -361,18 +361,17 @@ export async function streamChat(
   think?: number, // 0 off · 1 think · 2 ultrathink · 3 packmind
   // Agent pipelines force a specific Nalu specialist (bypasses keyword routing).
   specialist?: string,
-  // Only the MAIN interactive chat turn opts into cross-chat memory — NOT helper
-  // calls (captions, titles) or agent-pipeline steps, which shouldn't carry it.
+  // Memory is scoped to the selected logical agent and conversation.
   wantMemory?: boolean,
   // Per-call overrides of the user's global model settings. AutoPilot pipeline
   // steps can research current facts using just their task instruction; attached
   // records and prior outputs stay out of public search queries.
-  overrides?: { webSearch?: boolean; researchPrompt?: string; systemPrompt?: string },
+  overrides?: { webSearch?: boolean; researchPrompt?: string; systemPrompt?: string; workspaceInstruction?: string; memoryScope?: AgentMemoryScope; memorySourceId?: string },
 ): Promise<TurnResult> {
   const { onDelta, onReasoning, onError, onRoute, signal } = handlers
   let res: Response
   try {
-    res = await requestChat(JSON.stringify({ messages, model, useMemory: !!wantMemory, ...(tools && tools.length ? { tools } : {}), ...(context || {}), ...(think && think > 0 ? { think: true, thinkLevel: think } : {}), ...(specialist ? { specialist } : {}), ...(() => { const s = getModelSettings(); return { reasoning: s.reasoning, maxTokens: s.maxTokens, webSearch: overrides?.webSearch ?? s.webSearch, ...(overrides?.researchPrompt !== undefined ? { researchPrompt: overrides.researchPrompt } : {}), ...([overrides?.systemPrompt, s.systemPrompt].filter(Boolean).length ? { systemPrompt: [overrides?.systemPrompt, s.systemPrompt].filter(Boolean).join('\n\n') } : {}) } })(), ...(wantMemory ? (() => { try { const mem = buildChatMemory(messages); return mem ? { memory: mem } : {} } catch { return {} } })() : {}) }), signal)
+    res = await requestChat(JSON.stringify({ messages, model, useMemory: !!wantMemory, ...(tools && tools.length ? { tools } : {}), ...(context || {}), ...(think && think > 0 ? { think: true, thinkLevel: think } : {}), ...(specialist ? { specialist } : {}), ...(() => { const s = getModelSettings(); return { ...(overrides?.workspaceInstruction ? { workspaceInstruction: overrides.workspaceInstruction } : {}), reasoning: s.reasoning, maxTokens: s.maxTokens, webSearch: overrides?.webSearch ?? s.webSearch, ...(overrides?.researchPrompt !== undefined ? { researchPrompt: overrides.researchPrompt } : {}), ...([overrides?.systemPrompt, s.systemPrompt].filter(Boolean).length ? { systemPrompt: [overrides?.systemPrompt, s.systemPrompt].filter(Boolean).join('\n\n') } : {}) } })(), ...(wantMemory && overrides?.memoryScope ? { memoryScope: overrides.memoryScope, memorySourceId: overrides.memorySourceId } : {}) }), signal)
   } catch (cause) {
     const error = signal?.aborted ? undefined : cause instanceof Error ? cause.message : 'Nalu could not start the local model. Open Settings → On-device AI.'
     if (error) onError?.(error)

@@ -1,0 +1,10 @@
+{
+  "package": "@nalu/ai-runtime",
+  "version": "0.1.0",
+  "sourceRepository": "https://github.com/Michberr2/naluai",
+  "sourceCommit": "c49bab0b25719e6434ac0524628ba8f8067222fa",
+  "dirty": false,
+  "development": false,
+  "archive": "nalu-ai-runtime-0.1.0.tgz",
+  "sha256": "7a9febdaa95115abe9ca8c700c72a5bc9af2b086de8bf818293d82b214f9b7fe"
+}

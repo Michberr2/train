@@ -46,7 +46,7 @@ export class WebWorkerMLCEngine {
 await build({ entryPoints: ['client/src/lib/localAI.ts', 'client/src/lib/localAIProtocol.ts', 'client/src/components/workspace/chatStream.ts', 'client/src/components/workspace/chatRequest.ts'], outdir: directory, bundle: true, format: 'esm', platform: 'browser', write: true, outExtension: { '.js': '.mjs' }, plugins: [{ name: 'synthetic-browser-engine', setup(build) { build.onResolve({ filter: /^@mlc-ai\/web-llm$/ }, () => ({ path: 'engine', namespace: 'fixture' })); build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: fake, loader: 'js' })) } }] })
 // Bundle a single entry so the request adapter and runtime share session state.
 const entry = join(directory, 'entry.ts')
-await writeFile(entry, ['client/src/lib/localAI.ts', 'client/src/lib/localAIProtocol.ts', 'client/src/lib/streamingLocalMessage.ts', 'client/src/lib/localAIRequests.ts', 'client/src/lib/localArtifactPlans.ts', 'client/src/lib/localArtifactFidelity.ts', 'client/src/lib/localSwarmPlan.ts', 'client/src/components/workspace/chatStream.ts', 'client/src/components/workspace/chatRequest.ts'].map(path => `export * from ${JSON.stringify(join(process.cwd(), path))};`).join('\n'))
+await writeFile(entry, ['client/src/lib/localAI.ts', 'client/src/lib/localAIProtocol.ts', 'client/src/lib/streamingLocalMessage.ts', 'client/src/lib/localAIRequests.ts', 'client/src/lib/localArtifactPlans.ts', 'client/src/lib/localArtifactFidelity.ts', 'client/src/lib/localSwarmPlan.ts', 'client/src/lib/localCoordinator.ts', 'client/src/components/workspace/chatStream.ts', 'client/src/components/workspace/chatRequest.ts'].map(path => `export * from ${JSON.stringify(join(process.cwd(), path))};`).join('\n'))
 await build({ entryPoints: [entry], outfile: join(directory, 'test.mjs'), bundle: true, format: 'esm', platform: 'browser', plugins: [{ name: 'synthetic-browser-engine', setup(build) { build.onResolve({ filter: /^@mlc-ai\/web-llm$/ }, () => ({ path: 'engine', namespace: 'fixture' })); build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: fake, loader: 'js' })) } }] })
 const local = await import(pathToFileURL(join(directory, 'test.mjs')))
 const request = (content = 'Hello', extra = {}) => ({ messages: [{ role: 'user', content }], ...extra })
@@ -88,6 +88,32 @@ try {
   control.next = ['<th', 'ink>', '\n', '</thi', 'nk>', '\n4']
   assert.equal((await answer(request())).text, '4')
   check('Real SSE contract, clean template output, and cleared conversation cache')
+  const displayPolicy = 'FULL_UI_POLICY_FOR_ROUTING_TEST'
+  const adaptive = request('What is 2 plus 2? Answer in one sentence.', { tools: [tool], workspaceInstruction: displayPolicy, systemPrompt: displayPolicy + '\n\nPreserve the user’s facts.', messages: [{ role: 'system', content: displayPolicy }, { role: 'user', content: 'What is 2 plus 2? Answer in one sentence.' }] })
+  const routed = local.applySpecialistPlan(adaptive, { expert: 'conversation', tools: [], presentation: 'text' })
+  assert.equal(routed.localRole, 'conversation'); assert.deepEqual(routed.tools, [])
+  assert.doesNotMatch(routed.systemPrompt, /FULL_UI_POLICY/); assert.match(routed.systemPrompt, /Preserve the user/)
+  assert.equal(routed.messages[1].content, adaptive.messages[1].content)
+  assert.equal(adaptive.systemPrompt.startsWith(displayPolicy), true)
+  assert.throws(() => local.applySpecialistPlan(adaptive, { expert: 'unknown', tools: [], presentation: 'text' }), /invalid specialist plan/)
+  assert.throws(() => local.applySpecialistPlan(adaptive, { expert: 'code', tools: ['unknown'], presentation: 'text' }), /invalid specialist plan/)
+  const search = { type: 'function', function: { name: 'web_search', description: 'Search public sources.', parameters: { type: 'object' } } }
+  assert.throws(() => local.applySpecialistPlan({ ...adaptive, tools: [search], webSearch: false }, { expert: 'conversation', tools: ['web_search'], presentation: 'text' }), /invalid specialist plan/)
+  control.responses = [[JSON.stringify({ expert: 'conversation', tools: [], presentation: 'text' })], ['2 plus 2 is 4.']]
+  const coordinated = await local.readChatStream((await local.requestChat(JSON.stringify(adaptive))).body, {})
+  assert.equal(coordinated.text, '2 plus 2 is 4.'); assert.equal(coordinated.error, undefined)
+  assert.match(control.inputs.at(-2).messages[0].content, /Nalu’s coordinator/)
+  assert.doesNotMatch(control.inputs.at(-2).messages[0].content, /FULL_UI_POLICY/)
+  assert.doesNotMatch(control.inputs.at(-1).messages[0].content, /FULL_UI_POLICY|Available tools/)
+  assert.equal(control.inputs.at(-1).response_format, undefined)
+  const beforeFence = control.inputs.length
+  const releaseBetweenStages = () => { if (control.inputs.length > beforeFence && local.getLocalAIState().phase === 'ready') { window.removeEventListener('nalu-local-ai', releaseBetweenStages); local.resetLocalAI() } }
+  window.addEventListener('nalu-local-ai', releaseBetweenStages)
+  control.responses = [[JSON.stringify({ expert: 'conversation', tools: [], presentation: 'text' })]]
+  const fenced = await local.readChatStream((await local.requestChat(JSON.stringify(adaptive))).body, {})
+  assert.equal(fenced.text, ''); assert.equal(control.inputs.length, beforeFence + 1, 'A session reset after planning cannot start the expert')
+  check('A real coordinator pass narrows specialist tools and display context without dropping user facts; invalid plans and session resets cannot start specialist work')
+
   const reviewedAnswer = async signal => local.readChatStream((await local.requestChat(JSON.stringify(request('Write JavaScript without mutating input. Return source only.')), signal)).body, { signal })
   let priorCalls = control.inputs.length
   control.responses = [['UNREVIEWED_MUTATING_DRAFT'], [JSON.stringify({ assessment: 'The corrected source copies the input.', answer: 'function copy(items) { return items.slice(); }', complete: true })]]
@@ -101,7 +127,7 @@ try {
   control.responses = [['PRIVATE_BAD_DRAFT'], ['not valid review JSON']]
   const failedReview = await reviewedAnswer()
   assert.equal(failedReview.text, '')
-  assert.match(failedReview.error, /coding review was incomplete/)
+  assert.match(failedReview.error, /specialist review was incomplete/)
   let releaseReview
   control.holdReview = new Promise(resolve => { releaseReview = resolve })
   control.responses = [['PRIVATE_CANCELLED_DRAFT'], [JSON.stringify({ assessment: 'Reviewed.', answer: 'LATE_REVIEW', complete: true })]]
@@ -280,7 +306,7 @@ try {
   const cpu = await answer(request('Hello'))
   assert.equal(cpu.text, 'CPU fixture answer'); assert.equal(cpu.error, undefined)
   assert.equal(local.getLocalAIState().backend, 'cpu')
-  assert.equal(control.cpuRequests.find(message => message.type === 'load').model, 'onnx-community/Qwen3-1.7B-ONNX')
+  assert.equal(control.cpuRequests.find(message => message.type === 'load').model, 'Qwen3.5-0.8B-Q8_0-GGUF')
   control.cpuHold = true
   const cpuStop = new AbortController(), stoppedCPU = answer(request('Hold this CPU reply'), cpuStop.signal)
   while (!control.cpuRelease) await tick()

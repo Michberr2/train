@@ -9,7 +9,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@huggingface/transformers": "4.3.2",
     "@mlc-ai/web-llm": "0.2.87",
     "@types/three": "^0.184.1",
     "docx": "^9.7.1",
@@ -32,7 +31,7 @@
     "remark-math": "^6.0.0",
     "simple-icons": "^13.21.0",
     "three": "^0.184.0",
-    "@mlc-ai/web-xgrammar": "0.1.27"
+    "@nalu/ai-runtime": "file:../vendor/nalu-ai-runtime-0.1.0.tgz"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",

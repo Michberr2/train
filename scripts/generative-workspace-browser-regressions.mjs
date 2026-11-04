@@ -32,6 +32,7 @@ await context.route('**/*', async route => {
  if (url.pathname === '/__nalu_local_entry') return route.fulfill({ json: { ok: true, token: 'isolated-generative-test', user: { id: 'isolated-generative-owner', displayName: 'Local test' } } })
  if (url.pathname === '/__fixture-local-model') {
   const body = request.postDataJSON()
+  if (body.messages?.some(m => m.role === 'system' && m.content.includes('Nalu’s coordinator'))) return route.fulfill({json:{completion:JSON.stringify({expert:'conversation',tools:[],presentation:'workspace'})}})
   await page.evaluate(value => window.__uiCalls.push(value), body)
   if (!body.messages?.some(m => m.role === 'system' && m.content.includes('generative Nalu workspace'))) return route.fulfill({json:{completion:'Fixture helper'}})
   const turn = body.messages.filter(m => m.role === 'user').length
