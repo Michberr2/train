@@ -69,7 +69,7 @@ export default function WorkspaceCarousel({ onOpen, onClose, initialView = 'stud
               aria-label={active ? `${space.name}, selected` : `Choose ${space.name}: ${space.title.replace(/\.$/, '')}`}
               onClick={() => { if (!suppressClick.current) { if (active) onOpen(space.view); else setSelected(index) } }}>
               <span className="workspace-carousel-card-label"><i/>{space.name}<span>{String(index + 1).padStart(2, '0')}</span></span>
-              {space.view === 'browser' ? <div style={{ height: 160, display: 'grid', placeItems: 'center', color: '#78a59a' }}><Globe size={88} strokeWidth={1}/></div> : space.view === 'map' ? <WorkspaceMapVisual active={active}/>
+              {space.view === 'browser' ? <div className="workspace-experience-visual" style={{ display: 'grid', placeItems: 'center', color: '#78a59a' }}><Globe style={{ width: '100%', height: '100%', maxWidth: 88, maxHeight: 88 }} strokeWidth={1}/></div> : space.view === 'map' ? <WorkspaceMapVisual active={active}/>
                 : space.view === 'agents' ? <WorkspaceCoreVisual view="agents" active={active}/>
                 : <WorkspaceExperienceVisual view={space.view} active={active}/>}
               <h2>{space.title}</h2><p>{space.description}</p>

@@ -40,7 +40,7 @@ async function checkCarouselFit(page){
  for(const viewport of [{width:1728,height:906},{width:1440,height:900},{width:1366,height:768},{width:390,height:844},{width:390,height:667}]){
   await page.setViewportSize(viewport)
   await carousel.press('Home')
-  for(const name of ['Chat','Studio','Autopilot','Map','Memory','Skills']){
+  for(const name of ['Chat','Studio','Autopilot','Map','Memory','Browser','Skills']){
    await expect(carousel.getByRole('button',{name:`${name}, selected`,exact:true})).toHaveCount(1)
    const geometry=await carousel.evaluate(root=>{
     const rect=element=>{const box=element.getBoundingClientRect();return{x:box.x,y:box.y,width:box.width,height:box.height,right:box.right,bottom:box.bottom}}
@@ -85,7 +85,7 @@ async function checkCarouselFit(page){
  await page.setViewportSize(originalViewport)
  await carousel.getByRole('button',{name:'Show Studio',exact:true}).click()
  await page.emulateMedia({reducedMotion:'no-preference'})
- console.log('PASS carousel fit: six selections at five desktop/mobile viewport sizes')
+ console.log('PASS carousel fit: seven selections at five desktop/mobile viewport sizes')
 }
 try{
  await server.listen();origin=`http://127.0.0.1:${server.httpServer.address().port}`;browser=await chromium.launch()
