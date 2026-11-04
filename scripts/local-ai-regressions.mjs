@@ -181,7 +181,7 @@ try {
   await answer(request('Solve this equation'))
   assert.equal(control.reloads.length, loadedWriter, 'Writer and thinker share one GPU load, with separate cleared contexts')
   await answer(request('Debug this TypeScript code'))
-  assert.match(control.reloads.at(-1), /Qwen2.5-Coder-3B/); assert.ok(control.unloaded > 0)
+  assert.match(control.reloads.at(-1), /Qwen2.5-Coder-1\.5B/); assert.ok(control.unloaded > 0)
   check('Specialist switches unload the previous GPU model')
   let release
   control.holdToken = new Promise(resolve => { release = resolve })
