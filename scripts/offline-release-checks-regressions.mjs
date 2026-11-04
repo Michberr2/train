@@ -57,7 +57,7 @@ test('waiver skips every reviewed browser invocation, including all map variants
   const f = fixture(), result = runOfflineReleaseChecks({ ...f, browserTestSkipReason: reason })
   assert.deepEqual(result.skipped, commands.filter(command => browserNames.has(command[0])))
   assert.deepEqual(result.checked, commands.filter(command => !browserNames.has(command[0])))
-  assert.equal(result.skipped.filter(command => command[0] === 'map-browser-verify.mjs').length, 5)
+  assert.equal(result.skipped.filter(command => command[0] === 'map-browser-verify.mjs').length, 6)
   assert.ok(result.skipped.some(command => command[0] === 'map-browser-verify.mjs' && command[1] === '--recovery'))
   for (const command of result.checked) assert.ok(!browserNames.has(command[0]))
   for (const name of ['browser-image-cost-regressions.mjs', 'chrome-action-regressions.mjs', 'website-download-runtime-regressions.mjs', 'website-generation-regressions.mjs', 'website-behavior-regressions.mjs']) assert.ok(result.checked.some(command => command[0] === name), name + ' remains a required non-browser regression')

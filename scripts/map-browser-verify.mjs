@@ -11,6 +11,7 @@ import tailwindConfig from '../client/tailwind.config.js'
 import { chromium, expect } from '@playwright/test'
 import { fileURLToPath } from 'node:url'
 
+const instantCheck = process.argv.includes('--instant')
 const recoveryCheck = process.argv.includes('--recovery')
 const cameraCheck = process.argv.includes('--camera')
 const layerCheck = process.argv.includes('--layers')
@@ -117,7 +118,7 @@ try {
     }
     class Map extends Evented {
       overlayMapTypes = new Collection()
-      constructor(element, options) { super(); this.center = options.center; this.zoom = options.zoom; state.maps.push(this); element.dataset.mockMap = 'ready' }
+      constructor(element, options) { super(); this.center = options.center; this.zoom = options.zoom; state.maps.push(this); state.previewAtSdkStart = !!document.querySelector('[aria-label="Immediate map"]'); element.dataset.mockMap = 'ready' }
       getCenter() { return point(this.center) }
       getZoom() { return this.zoom }
       getBounds() { return new Bounds(this.center) }
@@ -156,6 +157,7 @@ try {
     } }
   }
   await page.addInitScript(installSdk)
+  if (instantCheck) await page.addInitScript(() => { window.google.maps.version = 'controlled-instant-map' })
   await page.addInitScript(recovery => {
     localStorage.setItem('nalu-map-active-layers', '["osm"]')
     localStorage.setItem('nalu-map-shapes', recovery ? JSON.stringify([{t:'marker',cat:'area',lat:28.4,lng:-81.4}]) : '{"malformed":true}')
@@ -163,6 +165,7 @@ try {
     localStorage.setItem('nalu-token','map-compat-token')
   }, recoveryCheck)
   await page.route('**/*', async (route) => {
+    if (instantCheck && new URL(route.request().url()).hostname === 'tile.openstreetmap.org') return route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7QAAAABJRU5ErkJggg==','base64')})
     if (recoveryCheck && new URL(route.request().url()).hostname === 'maps.googleapis.com') return route.fulfill({contentType:'text/javascript',body:`(${installSdk.toString()})();`})
     if (new URL(route.request().url()).hostname !== '127.0.0.1') return route.abort()
     return route.continue()
@@ -200,7 +203,27 @@ try {
   })
   await page.goto(origin + '/__map-test')
   await page.getByRole('button', { name: /^Layers/ }).waitFor()
-  if (recoveryCheck) {
+  if (instantCheck) {
+    const immediate=page.getByRole('region',{name:'Immediate map',exact:true})
+    await expect(immediate).toBeVisible()
+    assert.equal(await page.evaluate(()=>window.__mapTest.previewAtSdkStart),true,'real street surface is mounted before the full map SDK initializes')
+    await page.waitForFunction(()=>[...document.querySelectorAll('.map-instant-surface img')].some(i=>i.complete&&i.naturalWidth>0))
+    const surface=immediate.getByRole('region',{name:'Interactive fallback map',exact:true})
+    await surface.focus();await page.keyboard.press('ArrowRight')
+    await immediate.getByRole('button',{name:'Zoom in',exact:true}).click()
+    await expect.poll(()=>page.evaluate(()=>window.__mapTest.maps.at(-1).zoom)).toBe(7)
+    const camera=await page.evaluate(()=>{const m=window.__mapTest.maps.at(-1);return {center:m.center,zoom:m.zoom}})
+    await page.evaluate(()=>window.__mapTest.maps.at(-1).listeners.filter(l=>l.type==='tilesloaded'&&!l.removed).forEach(l=>l.callback()))
+    await expect(immediate).toHaveCount(0)
+    await expect(page.locator('.map-2d-viewport')).toHaveAttribute('aria-hidden','false')
+    assert.deepEqual(await page.evaluate(()=>{const m=window.__mapTest.maps.at(-1);return {center:m.center,zoom:m.zoom}}),camera)
+    await page.evaluate(()=>window.gm_authFailure())
+    await expect(page.getByRole('region',{name:'Resilient map workspace'})).toBeVisible()
+    await expect(page.getByText('Opening backup map…',{exact:true})).toHaveCount(0)
+    await expect(page.getByText('Loading map…',{exact:true})).toHaveCount(0)
+    assert.deepEqual(errors,[])
+    console.log('PASS street map is present before SDK initialization, renders tiles and responds to pan/zoom while full tiles load; promotion preserves camera; failed provider keeps a usable map without a loading/failure flash')
+  } else if (recoveryCheck) {
     const savedShapes = await page.evaluate(() => localStorage.getItem('nalu-map-shapes'))
     const original = page.getByRole('textbox',{name:'Map search',exact:true})
     await original.fill('existing cafes');await original.press('Enter')

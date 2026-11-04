@@ -4,18 +4,26 @@ import { mapPlaceUrl, type MapPlace } from './mapRequests'
 import './fallback-map.css'
 type View = { lat: number; lng: number; zoom: number }
 export type MapRecoveryState = { query: string; snapshot: PlaceSnapshot | null; view: View }
-export default function FallbackMap({ query: initialQuery, reason, onPrimary, initialSnapshot, initialView }: { query?: string; reason: string; initialSnapshot?: PlaceSnapshot | null; initialView?: View | null; onPrimary: (state: MapRecoveryState) => void }) {
+export default function FallbackMap({ query: initialQuery, reason, onPrimary, initialSnapshot, initialView, surfaceOnly = false, onViewChange }: { query?: string; reason: string; initialSnapshot?: PlaceSnapshot | null; initialView?: View | null; onPrimary: (state: MapRecoveryState) => void; surfaceOnly?: boolean; onViewChange?: (view: View) => void }) {
   const [query, setQuery] = useState(initialQuery || ''), [snapshot, setSnapshot] = useState<PlaceSnapshot | null>(() => initialSnapshot || (initialQuery ? cachedPlaces(initialQuery, initialView) : null))
   const [view, setView] = useState<View>(() => {
     const cached = initialSnapshot || (initialQuery ? cachedPlaces(initialQuery, initialView) : null)
-    return placesViewport(cached?.results || [], 700, 500) || initialView || { lat: 30, lng: 0, zoom: 2 }
+    return initialView || placesViewport(cached?.results || [], 700, 500) || { lat: 30, lng: 0, zoom: 2 }
   })
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [selected, setSelected] = useState<string>()
   const [tiles, setTiles] = useState({ loaded: 0, failed: false, attempt: 0 }), [offline, setOffline] = useState(!navigator.onLine)
   const host = useRef<HTMLDivElement>(null), [size, setSize] = useState({ width: 700, height: 500 })
   const search = useRef<AbortController | null>(null)
   const drag = useRef<{ x: number; y: number; center: { x: number; y: number }; moved: boolean }>()
-  const run = async (text: string) => {
+  const viewCallback = useRef(onViewChange); viewCallback.current = onViewChange
+  useEffect(() => {
+    if (surfaceOnly && initialSnapshot) setSnapshot(initialSnapshot)
+  }, [surfaceOnly, initialSnapshot])
+  useEffect(() => {
+    if (surfaceOnly && initialView) setView(v => v.lat === initialView.lat && v.lng === initialView.lng && v.zoom === initialView.zoom ? v : initialView)
+  }, [surfaceOnly, initialView?.lat, initialView?.lng, initialView?.zoom])
+  useEffect(() => { if (surfaceOnly) viewCallback.current?.(view) }, [surfaceOnly, view.lat, view.lng, view.zoom])
+  const run = async (text: string, fit = true) => {
     if (!text.trim()) return
     search.current?.abort(); const request = new AbortController(); search.current = request
     setBusy(true); setError('')
@@ -24,12 +32,12 @@ export default function FallbackMap({ query: initialQuery, reason, onPrimary, in
       if (search.current !== request || request.signal.aborted) return
       setSnapshot(data)
       const next = placesViewport(data.results, size.width, size.height)
-      if (next) setView(next)
+      if (next && fit) setView(next)
       if (!data.results.length) setError('No matching places were returned. Try a more specific city or category.')
     } catch (e) { if (!request.signal.aborted) setError(e instanceof Error ? e.message : 'Search is unavailable. Try again.') }
     finally { if (search.current === request) setBusy(false) }
   }
-  useEffect(() => { if (initialQuery) { setQuery(initialQuery); void run(initialQuery) }; return () => search.current?.abort() }, [initialQuery])
+  useEffect(() => { if (initialQuery && !surfaceOnly) { setQuery(initialQuery); void run(initialQuery, !initialSnapshot || initialSnapshot.query !== initialQuery) }; return () => search.current?.abort() }, [initialQuery, surfaceOnly])
   useEffect(() => {
     if (!host.current) return
     const resize = new ResizeObserver(entries => { const r = entries[0].contentRect; if (r.width && r.height) setSize({ width: r.width, height: r.height }) })
@@ -40,12 +48,12 @@ export default function FallbackMap({ query: initialQuery, reason, onPrimary, in
       setOffline(!navigator.onLine)
       if (navigator.onLine) {
         setTiles(t => ({ loaded: 0, failed: false, attempt: t.attempt + 1 }))
-        if (query) void run(query)
+        if (query && !surfaceOnly) void run(query, false)
       }
     }
     window.addEventListener('online', update); window.addEventListener('offline', update)
     return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update) }
-  }, [query, view.lat, view.lng, view.zoom])
+  }, [query, view.lat, view.lng, view.zoom, surfaceOnly])
   const center = project(view.lat, view.lng, view.zoom), world = 256 * 2 ** view.zoom
   const visibleTiles: { x: number; y: number; left: number; top: number; worldX: number }[] = []
   for (let y = Math.floor((center.y - size.height / 2) / 256); y <= Math.floor((center.y + size.height / 2) / 256); y++) {
@@ -58,15 +66,15 @@ export default function FallbackMap({ query: initialQuery, reason, onPrimary, in
     return { left: dx + size.width / 2, top: at.y - center.y + size.height / 2 }
   }
   const choose = (p: MapPlace) => { setSelected(p.id); setView(v => ({ ...v, lat: p.lat, lng: p.lng, zoom: Math.max(v.zoom, 14) })) }
-  return <section className="fallback-map" aria-label="Resilient map workspace">
-    <div className="fallback-map-toolbar"><span>{offline ? 'Offline map' : 'Backup map'} · {reason}</span><button onClick={() => onPrimary({ query, snapshot, view })}>Retry full map</button></div>
-    <div className="fallback-map-body"><aside aria-label="Map search and results"><form onSubmit={e => { e.preventDefault(); void run(query) }}><label>Find a place<input aria-label="Map search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Restaurants in Dallas"/></label><button disabled={busy || !query.trim()}>{busy ? 'Searching…' : 'Search'}</button>{busy && <button type="button" onClick={() => { search.current?.abort(); setBusy(false) }}>Stop</button>}</form>
+  return <section className={`fallback-map${surfaceOnly ? ' fallback-map-surface-only' : ''}`} aria-label={surfaceOnly ? 'Immediate map' : 'Resilient map workspace'}>
+    {!surfaceOnly && <div className="fallback-map-toolbar"><span>{offline ? 'Offline map' : 'Backup map'} · {reason}</span><button onClick={() => onPrimary({ query, snapshot, view })}>Retry full map</button></div>}
+    <div className="fallback-map-body">{!surfaceOnly && <aside aria-label="Map search and results"><form onSubmit={e => { e.preventDefault(); void run(query) }}><label>Find a place<input aria-label="Map search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Restaurants in Dallas"/></label><button disabled={busy || !query.trim()}>{busy ? 'Searching…' : 'Search'}</button>{busy && <button type="button" onClick={() => { search.current?.abort(); setBusy(false) }}>Stop</button>}</form>
       {error && <p role="status">{error}</p>}
       {snapshot && <p className="fallback-map-notice">Showing: {snapshot.query}</p>}
       {snapshot?.cached && <p className="fallback-map-notice" role="status">Saved results from {new Date(snapshot.savedAt).toLocaleString()}. Live availability and ratings may have changed.</p>}
       {snapshot?.source === 'osm' && <p className="fallback-map-notice">Locations from OpenStreetMap; ratings are unavailable. These are not ranked recommendations.</p>}
       <div className="fallback-map-results">{snapshot?.results.map((p, i) => <article key={p.id}><button aria-label={`Show ${p.name} on map`} aria-pressed={selected === p.id} onClick={() => choose(p)}><b>{i + 1}. {p.name}</b><span>{p.address}</span>{p.rating != null && <small>Rating {p.rating}</small>}</button><a href={mapPlaceUrl(p)} target="_blank" rel="noreferrer">Directions ↗</a></article>)}</div>
-    </aside><div ref={host} className="fallback-tile-map" role="region" aria-label="Interactive fallback map" tabIndex={0}
+    </aside>}<div ref={host} className="fallback-tile-map" role="region" aria-label="Interactive fallback map" tabIndex={0}
       onPointerDown={e => { if ((e.target as Element).closest('button,a')) return; e.currentTarget.setPointerCapture(e.pointerId); drag.current = { x: e.clientX, y: e.clientY, center, moved: false } }}
       onPointerMove={e => { if (!drag.current) return; const dx = e.clientX - drag.current.x, dy = e.clientY - drag.current.y; drag.current.moved ||= Math.abs(dx) + Math.abs(dy) > 3; setView(v => ({ ...unproject(drag.current!.center.x - dx, drag.current!.center.y - dy, v.zoom), zoom: v.zoom })) }}
       onPointerUp={() => { drag.current = undefined }} onPointerCancel={() => { drag.current = undefined }}

@@ -17,16 +17,20 @@ export function useTheme() {
 }
 
 export default function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [isDark, setIsDark] = useState(false)
-  const [mounted, setMounted] = useState(false)
+  const [isDark, setIsDark] = useState(() => {
+    try { return localStorage.getItem('nalu-theme') === 'dark' } catch { return false }
+  })
 
   useEffect(() => {
-    const saved = localStorage.getItem('nalu-theme')
-    const dark = saved === 'dark'
-    setIsDark(dark)
-    if (dark) document.documentElement.classList.add('dark')
-    setMounted(true)
+    const restore = () => {
+      try { setIsDark(localStorage.getItem('nalu-theme') === 'dark') } catch { /* Keep the current appearance if storage is unavailable. */ }
+    }
+    const storage = (event: StorageEvent) => { if (event.key === 'nalu-theme' || event.key === null) restore() }
+    window.addEventListener('nalu-hydrated', restore)
+    window.addEventListener('storage', storage)
+    return () => { window.removeEventListener('nalu-hydrated', restore); window.removeEventListener('storage', storage) }
   }, [])
+  useEffect(() => { document.documentElement.classList.toggle('dark', isDark) }, [isDark])
 
   const toggleTheme = useCallback((e?: React.MouseEvent) => {
     const newDark = !isDark
@@ -37,14 +41,15 @@ export default function ThemeProvider({ children }: { children: React.ReactNode 
       if (newDark) document.documentElement.classList.add('dark')
       else document.documentElement.classList.remove('dark')
       setIsDark(newDark)
-      localStorage.setItem('nalu-theme', newDark ? 'dark' : 'light')
+      try { localStorage.setItem('nalu-theme', newDark ? 'dark' : 'light') } catch { /* The selected appearance still works for this visit. */ }
     }
 
     const doc = document as typeof document & {
       startViewTransition?: (cb: () => void) => ViewTransition
     }
 
-    if (doc.startViewTransition) {
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (doc.startViewTransition && !reduced) {
       const transition = doc.startViewTransition(applyTheme)
       transition.ready.then(() => {
         const radius = Math.hypot(
@@ -64,17 +69,15 @@ export default function ThemeProvider({ children }: { children: React.ReactNode 
             pseudoElement: '::view-transition-new(root)',
           }
         )
-      })
+      }).catch(() => { /* A newer transition can replace this animation. */ })
     } else {
-      document.documentElement.classList.add('theme-transitioning')
+      if (!reduced) document.documentElement.classList.add('theme-transitioning')
       applyTheme()
       setTimeout(() => {
         document.documentElement.classList.remove('theme-transitioning')
       }, 700)
     }
   }, [isDark])
-
-  if (!mounted) return <>{children}</>
 
   return (
     <ThemeContext.Provider value={{ isDark, toggleTheme }}>

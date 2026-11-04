@@ -120,7 +120,7 @@ try {
   assert.equal(waivedReceipt.browserTests.reason, waiverReason)
   assert.ok(waivedReceipt.browserTests.skippedChecks.some(command => command[0] === 'flow-cross-client-integration.mjs'))
   assert.ok(waivedReceipt.browserTests.skippedChecks.some(command => command[0] === 'attachment-extraction-regressions.mjs'))
-  assert.equal(waivedReceipt.browserTests.skippedChecks.filter(command => command[0] === 'map-browser-verify.mjs').length, 5)
+  assert.equal(waivedReceipt.browserTests.skippedChecks.filter(command => command[0] === 'map-browser-verify.mjs').length, 6)
   assert.ok(waivedReceipt.browserTests.skippedChecks.some(command => command[0] === 'map-browser-verify.mjs' && command[1] === '--recovery'))
   assert.deepEqual(waived.calls.filter(call => call.command === process.execPath).map(call => call.args), [
     ['scripts/offline-release-checks.mjs', '--no-browser', waiverReason],
