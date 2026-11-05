@@ -12,6 +12,7 @@ export const BROWSER_EXECUTING_SCRIPTS = Object.freeze([
   'logo-generation-controls-regressions.mjs',
   'attachment-extraction-regressions.mjs',
   'catalogue-browser-regressions.mjs',
+  'shopping-local-browser-regressions.mjs',
   'chrome-content-regressions.mjs',
   'studio-runtime-regressions.mjs',
   'workspace-swarm-studio-browser.mjs',

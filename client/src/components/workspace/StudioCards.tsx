@@ -1713,20 +1713,41 @@ function storeLink(retailer: string | undefined, query: string): string {
   return `https://www.google.com/search?tbm=shop&q=${q}`
 }
 
-// Keyless image generation (Pollinations/FLUX) — a stable seed keeps the image
-// from changing on every re-render.
-const seedOf = (s: string) => {
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0
-  return Math.abs(h) % 100000
-}
-const genImg = (prompt: string, w: number, h: number, seed: string) =>
-  `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&nologo=true&model=flux&seed=${seedOf(seed)}`
-const productImg = (it: ShopItem) =>
-  genImg(`professional e-commerce product photo of ${it.name}, ${it.category || 'home furnishing'}, on a clean light studio background, soft shadow, centered, no text, no watermark`, 256, 256, it.name)
-const roomImg = (art: ShoppingArt) => {
-  const feature = (art.items || []).slice(0, 6).map((i) => i.name).join(', ')
-  return genImg(`photorealistic interior design magazine photograph of a beautifully styled ${art.title || 'room'}, ${art.summary || ''}, furnished with ${feature}, natural window light, wide angle, elegant, high-end, no text, no people`, 1024, 576, (art.title || '') + feature)
+// Shopping records contain text and retailer searches, not source photographs.
+// Viewing one must not invent a product image or trigger a remote model. This
+// local illustration keeps the room preview useful until the real 3D view opens.
+function ShoppingScenePreview({ items, groups }: { items: number; groups: number }) {
+  return <div className="relative aspect-video w-full overflow-hidden bg-[#f4efe6]" data-shopping-local-preview>
+    <svg viewBox="0 0 1024 576" className="h-full w-full" role="img" aria-label="Room planning illustration">
+      <path fill="#e7ded1" d="M0 0h1024v576H0z" />
+      <path fill="#f5f0e8" d="M0 0h650v370H0z" />
+      <path fill="#ede4d7" d="M650 0h374v370H650z" />
+      <path fill="#d5c8b7" d="M0 370h1024v206H0z" />
+      <path fill="#e3dacb" d="m276 417 440-10 155 113H122z" />
+      <path fill="#ccd7c8" d="M112 65h182v208H112z" />
+      <path fill="#e4e9df" d="M126 79h154v179H126z" />
+      <path stroke="#f5f0e8" strokeWidth="9" d="M203 79v179M126 168h154" />
+      <rect x="337" y="218" width="315" height="163" rx="24" fill="#a8b2a0" />
+      <rect x="347" y="310" width="295" height="85" rx="17" fill="#89967f" />
+      <rect x="320" y="287" width="46" height="111" rx="18" fill="#98a58d" />
+      <rect x="622" y="287" width="46" height="111" rx="18" fill="#98a58d" />
+      <path stroke="#716853" strokeWidth="10" d="M350 395v24m292-24v24" />
+      <rect x="372" y="246" width="92" height="66" rx="12" fill="#e2d1b9" />
+      <rect x="493" y="246" width="106" height="66" rx="12" fill="#c0c8b7" />
+      <ellipse cx="495" cy="438" rx="123" ry="29" fill="#b49672" />
+      <path stroke="#8b7357" strokeWidth="13" d="m415 444-9 49m173-49 9 49" />
+      <path stroke="#8e826d" strokeWidth="8" d="M763 204v207" />
+      <path fill="#ede0bc" d="m724 125-28 86h134l-28-86z" />
+      <ellipse cx="763" cy="414" rx="42" ry="9" fill="#9b8f7b" />
+      <rect x="854" y="318" width="48" height="67" rx="9" fill="#b98e72" />
+      <path stroke="#77896a" strokeWidth="6" d="M878 324v-91" />
+      <path fill="#93a383" d="M878 286c-58-2-66-40-59-57 33 2 56 26 59 57m0-23c52-4 61-37 55-51-31 1-50 23-55 51" />
+    </svg>
+    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/[0.55] to-transparent px-5 pb-4 pt-12 text-white">
+      <div className="text-sm font-medium">Plan your space</div>
+      <div className="mt-1 text-xs text-white/80">{items} {items === 1 ? 'item' : 'items'} · {groups} {groups === 1 ? 'category' : 'categories'}</div>
+    </div>
+  </div>
 }
 const roomVideoPrompt = (art: ShoppingArt) => {
   const feature = (art.items || []).slice(0, 6).map((i) => i.name).join(', ')
@@ -1750,8 +1771,8 @@ export function ShoppingCard({ art }: { art: ShoppingArt }) {
     void navigator.clipboard?.writeText(`${title}\n${art.summary || ''}\n\n${lines.join('\n')}`)
   }
 
-  // "See it in a room" — a real 3D room with the pieces auto-placed (the literal
-  // version), plus an AI-rendered scene + on-demand walkthrough video.
+  // The room illustration stays local; the existing 3D planner places the
+  // supplied items when opened. Video generation still requires an explicit click.
   const [show3d, setShow3d] = useState(scoped)
   const roomPlan = useMemo(() => planRoomFromItems(items), [items])
   const [video, setVideo] = useState<{ state: 'idle' | 'loading' | 'done' | 'error'; url?: string; msg?: string }>({ state: 'idle' })
@@ -1775,8 +1796,7 @@ export function ShoppingCard({ art }: { art: ShoppingArt }) {
       subtitle={`${items.length} item${items.length === 1 ? '' : 's'}${art.budget ? ` · ${art.budget}` : ''}`}
       actions={<ActionBtn onClick={copyList}><Copy size={13} /> Copy list</ActionBtn>}
     >
-      {/* See the items in a room: a real 3D room with the pieces auto-placed
-          (walk it / record it), plus an AI-rendered scene + walkthrough video. */}
+      {/* Local illustration and the existing interactive 3D room. */}
       <div className="border-b border-glass/[0.08] bg-canvas p-4 sm:p-5">
         <div className="relative overflow-hidden rounded-xl border border-glass/10 bg-glass/[0.03]">
           {show3d ? (
@@ -1788,18 +1808,7 @@ export function ShoppingCard({ art }: { art: ShoppingArt }) {
           ) : video.state === 'done' && video.url ? (
             <video src={video.url} controls autoPlay loop className="aspect-video w-full bg-black" />
           ) : (
-            <img
-              src={scoped ? undefined : roomImg(art)}
-              alt={`${title} — styled room`}
-              loading="lazy"
-              className="aspect-video w-full object-cover"
-              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
-            />
-          )}
-          {!show3d && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-3">
-              <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-glass/90">The room, furnished</div>
-            </div>
+            <ShoppingScenePreview items={items.length} groups={groups.length} />
           )}
         </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -1819,7 +1828,7 @@ export function ShoppingCard({ art }: { art: ShoppingArt }) {
             </button>
           )}
           {video.state === 'error' && <span className="text-[11px] text-red-300">{video.msg}</span>}
-          <span className="ml-auto text-[10px] text-dim">{show3d ? 'Furnish · Walk through · Record tour' : 'AI-rendered preview'}</span>
+          <span className="ml-auto text-[10px] text-dim">{show3d ? 'Furnish · Walk through · Record tour' : 'Room illustration · Open 3D to arrange your items'}</span>
         </div>
       </div>
       <div className="bg-canvas px-4 pb-4 pt-3 sm:px-5">
@@ -1836,14 +1845,10 @@ export function ShoppingCard({ art }: { art: ShoppingArt }) {
                   const href = storeLink(it.retailer, it.query || it.name)
                   return (
                     <div key={i} className="group flex items-center gap-3 px-3.5 py-3 transition-colors hover:bg-glass/[0.03] sm:px-4">
-                      <a href={href} target="_blank" rel="noopener noreferrer" className="shrink-0">
-                        <img
-                          src={scoped ? undefined : productImg(it)}
-                          alt={it.name}
-                          loading="lazy"
-                          className="h-12 w-12 rounded-lg border border-glass/10 bg-glass/[0.04] object-cover sm:h-14 sm:w-14"
-                          onError={(e) => { const t = e.currentTarget as HTMLImageElement; t.style.visibility = 'hidden' }}
-                        />
+                      <a href={href} target="_blank" rel="noopener noreferrer" aria-label={`Find ${it.name}`} className="shrink-0">
+                        <span aria-hidden="true" data-shopping-item-placeholder className="flex h-12 w-12 items-center justify-center rounded-lg border border-accent/20 bg-accent/[0.08] text-accent sm:h-14 sm:w-14">
+                          <ShoppingBag size={21} strokeWidth={1.3} />
+                        </span>
                       </a>
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-baseline gap-x-2">

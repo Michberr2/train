@@ -46,6 +46,7 @@ export const OFFLINE_RELEASE_CHECKS = [
   'browser-workspace-regressions.mjs',
   'browser-decision-regressions.mjs',
   'cloudflare-browser-regressions.mjs',
+  'shopping-local-browser-regressions.mjs',
   'logo-generation-controls-regressions.mjs',
   'attachment-extraction-regressions.mjs',
   'catalogue-browser-regressions.mjs',
