@@ -4,11 +4,13 @@ import { getToken } from '../../lib/localAuth'
 // panel to the separately developed local-model loader.
 const onDeviceOnly = () => { try { return JSON.parse(localStorage.getItem('device-local-ai-v1') || '{}').enabled !== false } catch { return true } }
 const endpoint = 'http://127.0.0.1:8877/device'
-let connection: { token: string; device: string } | null = null
+let connection: { token: string; device: string; onlineAI?: boolean } | null = null
+export const browserOnlineAIAllowed = () => !!connection && connection.token === getToken() && connection.onlineAI === true
+export function allowBrowserOnlineAI(allowed: boolean) { if (connection?.token === getToken()) connection.onlineAI = allowed }
 // Capability stays in this tab's memory; it is never synced or added to chat.
 export const deviceConnected = () => !!connection && connection.token === getToken()
 export async function deviceRequest(action: string, data: Record<string, unknown> = {}, signal?: AbortSignal, token = getToken()) {
-  if (['workspace_run', 'workspace_resume'].includes(action) && onDeviceOnly()) throw new Error('This browser runs on your computer, but its agent currently uses Nalu’s online AI. Turn off on-device-only AI in Settings to run the agent. No page data was sent.')
+  if (['workspace_run', 'workspace_resume'].includes(action) && onDeviceOnly() && !browserOnlineAIAllowed()) throw new Error('This browser runs on your computer, but its agent currently uses Nalu’s online AI. Enable “Allow online AI for browser tasks” in the Browser panel to run this agent; other AI stays local. No page data was sent.')
   if (!token || token !== getToken()) throw Error('Sign in again to connect this computer.')
   if (action !== 'pair' && (!connection || connection.token !== token)) throw Error('Connect this computer in the Browser panel first.')
   let response: Response

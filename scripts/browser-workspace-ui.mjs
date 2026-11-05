@@ -20,7 +20,7 @@ try {
   const page = await browser.newPage({ viewport: { width, height: 1000 } }); const calls = [], errors = []
   let state = { configured: true, active: false, status: 'idle', steps: [], agents: [{ id: 'main', status: 'idle' }] }
   page.on('pageerror', e => errors.push(e.message))
-  await page.addInitScript(() => { localStorage.setItem('nalu-token', 'owner'); localStorage.setItem('device-local-ai-v1', JSON.stringify({ enabled: false })) })
+  await page.addInitScript(() => { localStorage.setItem('nalu-token', 'owner'); localStorage.setItem('device-local-ai-v1', JSON.stringify({ enabled: true })) })
   const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2mAAAAABJRU5ErkJggg=='
   await page.route('http://127.0.0.1:8877/device', async route => {
    const body = route.request().postDataJSON(); calls.push(body); assert.equal(route.request().headers().authorization, 'Bearer owner')
@@ -40,6 +40,7 @@ try {
   await page.getByRole('button', { name: 'Open browser', exact: true }).click()
   await expect(page.getByAltText('Live browser on this computer')).toBeVisible()
   await page.getByLabel('What should this agent do?').fill('Add a monthly expense summary and verify it saved')
+  await page.getByRole('checkbox', { name: 'Allow online AI for browser tasks' }).check()
   await page.getByRole('button', { name: 'Run task', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Run task', exact: true })).toBeDisabled()
   await expect(page.getByText('Nalu is working on this computer.')).toBeVisible()
@@ -56,6 +57,7 @@ try {
   assert.equal(await page.evaluate(() => window.browserTools.explicitlyUsesBrowser('Update my budget in Excel Online')), true)
   await page.getByRole('button', { name: 'Close browser', exact: true }).click()
   await expect(page.getByAltText('Live browser on this computer')).toHaveCount(0)
+  await page.getByRole('checkbox', { name: 'Allow online AI for browser tasks' }).uncheck()
   await page.evaluate(() => localStorage.setItem('device-local-ai-v1', JSON.stringify({ enabled: true })))
   const beforeLocal = calls.length
   const localResult = await page.evaluate(() => window.browserTools.execBrowserTool({ id: 'local-check', function: { name: 'browser_work', arguments: JSON.stringify({ task: 'Do not send page data online' }) } }))

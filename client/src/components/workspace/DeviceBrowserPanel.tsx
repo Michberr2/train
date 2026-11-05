@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { Globe, Hand, ArrowRight, Plus, Square } from 'lucide-react'
-import { deviceConnected, deviceRequest } from './deviceBrowser'
+import { deviceConnected, deviceRequest, browserOnlineAIAllowed, allowBrowserOnlineAI } from './deviceBrowser'
 import { getToken } from '../../lib/localAuth'
 import './browser-workspace.css'
 
 type State = { tabs?: { index: number; title: string; active: boolean }[]; cursor?: { x: number; y: number }; active?: boolean; status: string; image?: string | null; url?: string; detail?: string; result?: string; task?: string; steps?: string[]; agents?: { id: string; status: string; active: boolean }[] }
 export default function DeviceBrowserPanel({ token }: { token: string | null }) {
+  const [onlineAI, setOnlineAI] = useState(browserOnlineAIAllowed)
   const [connected, setConnected] = useState(deviceConnected), [code, setCode] = useState('')
   const [state, setState] = useState<State | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [agent, setAgent] = useState('main'), [url, setUrl] = useState('https://www.microsoft365.com/'), [task, setTask] = useState(''), [reply, setReply] = useState('')
   const generation = useRef(0), mutation = useRef(false), sequence = useRef(0), inputQueue = useRef(Promise.resolve())
   const running = ['running', 'queued'].includes(state?.status || '')
-  useEffect(() => { setConnected(deviceConnected()); setState(null); generation.current++ }, [token])
+  useEffect(() => { setConnected(deviceConnected()); setOnlineAI(browserOnlineAIAllowed()); setState(null); generation.current++ }, [token])
   useEffect(() => {
     setState(null); const revision = ++generation.current, controller = new AbortController(); let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
@@ -32,7 +33,7 @@ export default function DeviceBrowserPanel({ token }: { token: string | null }) 
       if (action !== 'workspace_takeover') await inputQueue.current.catch(() => {})
       const value = await deviceRequest(action, { ...data, agent_id: agent }, undefined, token)
       if (token !== getToken() || revision !== generation.current) return
-      if (action === 'pair') { setConnected(true); setCode('') }
+      if (action === 'pair') { setConnected(true); setOnlineAI(false); setCode('') }
       else if (action === 'disconnect') { setConnected(false); setState(null) }
       else setState(old => ({ ...old, ...value, ...(!value.active ? { image: null } : {}) }))
     } catch (e) { if (revision === generation.current) setError((e as Error).message) }
@@ -87,6 +88,7 @@ export default function DeviceBrowserPanel({ token }: { token: string | null }) 
       {state?.detail && <p role="status">{state.detail}</p>}
       {['paused', 'needs_help'].includes(state?.status || '') && <div className="nalu-browser-address"><input aria-label="Reply to Nalu" value={reply} onChange={e => setReply(e.target.value)} maxLength={2000} placeholder="Optional reply or clarification"/><button disabled={busy} onClick={() => { void act('workspace_resume', { reply }); setReply('') }}>Continue task</button></div>}
       <form className="nalu-browser-task" onSubmit={e => { e.preventDefault(); void act('workspace_run', { task }) }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" style={{ width: 'auto', flex: 'none' }} checked={onlineAI} disabled={busy || running} onChange={e => { allowBrowserOnlineAI(e.target.checked); setOnlineAI(e.target.checked) }}/>Allow online AI for browser tasks</label><small>This permission lasts for this connection only. It allows page text and screenshots to reach Nalu’s online AI; other AI settings stay unchanged.</small>
         <label htmlFor="device-browser-task">What should this agent do?</label><div><textarea id="device-browser-task" value={task} onChange={e => setTask(e.target.value)} maxLength={6000} required placeholder="Find the document, make the requested changes, and verify it saved."/><button disabled={busy || running || !task.trim()}>Run task<ArrowRight size={16}/></button></div>
         <small>Keep the companion running. The browser runs here; Nalu’s online AI receives page content and screenshots. Take control to help or sign in.</small>
       </form>

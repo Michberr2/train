@@ -39,6 +39,9 @@ observation and can include a user clarification.
 The current agent uses Nalu's online model providers. Observations and screenshots
 leave the device for inference; cookies and profile files do not. On-device-only
 AI settings block agent start/resume instead of silently using online models.
+The user can explicitly select “Allow online AI for browser tasks” in the Browser
+panel. That exception is scoped to the current account connection in tab memory,
+resets on re-pairing, and does not change other AI preferences.
 Manual viewing and control remain available. Both the browser and the companion
 must stay running. An idle connection expires after fifteen minutes without a
 website request; closing/restarting the companion stops its in-memory tasks.
