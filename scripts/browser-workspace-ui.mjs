@@ -20,7 +20,7 @@ try {
   const page = await browser.newPage({ viewport: { width, height: 1000 } }); const calls = [], errors = []
   let state = { configured: true, active: false, status: 'idle', steps: [], agents: [{ id: 'main', status: 'idle' }] }
   page.on('pageerror', e => errors.push(e.message))
-  await page.addInitScript(() => localStorage.setItem('nalu-token', 'owner'))
+  await page.addInitScript(() => { localStorage.setItem('nalu-token', 'owner'); localStorage.setItem('device-local-ai-v1', JSON.stringify({ enabled: false })) })
   const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2mAAAAABJRU5ErkJggg=='
   await page.route('http://127.0.0.1:8877/device', async route => {
    const body = route.request().postDataJSON(); calls.push(body); assert.equal(route.request().headers().authorization, 'Bearer owner')
@@ -62,6 +62,8 @@ try {
   assert.match(localResult, /No page data was sent/)
   assert.equal(calls.length, beforeLocal)
   await page.evaluate(() => localStorage.removeItem('device-local-ai-v1'))
+  const defaultResult = await page.evaluate(() => window.browserTools.execBrowserTool({ id: 'default-local-check', function: { name: 'browser_work', arguments: JSON.stringify({ task: 'Keep the default local-only mode' }) } }))
+  assert.match(defaultResult, /No page data was sent/)
   await page.evaluate(() => localStorage.setItem('nalu-token', 'other'))
   await page.getByRole('button', { name: 'Open browser', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Sign in again')

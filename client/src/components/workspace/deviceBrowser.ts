@@ -2,7 +2,7 @@ import { getToken } from '../../lib/localAuth'
 
 // Honor the existing device preference without coupling the released Browser
 // panel to the separately developed local-model loader.
-const onDeviceOnly = () => { try { return JSON.parse(localStorage.getItem('device-local-ai-v1') || '{}').enabled === true } catch { return false } }
+const onDeviceOnly = () => { try { return JSON.parse(localStorage.getItem('device-local-ai-v1') || '{}').enabled !== false } catch { return true } }
 const endpoint = 'http://127.0.0.1:8877/device'
 let connection: { token: string; device: string } | null = null
 // Capability stays in this tab's memory; it is never synced or added to chat.
