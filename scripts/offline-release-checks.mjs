@@ -43,6 +43,7 @@ export const OFFLINE_RELEASE_CHECKS = [
   'quota-regressions.mjs',
   'voice-provider-regressions.mjs',
   'browser-image-cost-regressions.mjs',
+  'shopping-local-browser-regressions.mjs',
   'logo-generation-controls-regressions.mjs',
   'attachment-extraction-regressions.mjs',
   'catalogue-browser-regressions.mjs',
