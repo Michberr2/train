@@ -11,11 +11,12 @@ export interface WorkspaceAccountMenuProps {
   onLogout: () => void
   onRetrySave: () => void
   onSpaces?: () => void
+  onWork?: () => void
   className?: string
 }
 
 /** Account navigation only. The authenticated workspace owns every action. */
-export default function WorkspaceAccountMenu({ displayName, saveState, onSettings, onLogout, onRetrySave, onSpaces, className = '' }: WorkspaceAccountMenuProps) {
+export default function WorkspaceAccountMenu({ displayName, saveState, onSettings, onLogout, onRetrySave, onSpaces, onWork, className = '' }: WorkspaceAccountMenuProps) {
   const { isDark, toggleTheme } = useTheme()
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
@@ -58,8 +59,9 @@ export default function WorkspaceAccountMenu({ displayName, saveState, onSetting
     {open && <section ref={panel} id={id} className="workspace-account-panel" role="dialog" aria-labelledby={`${id}-title`} tabIndex={-1}>
       <header><h2 id={`${id}-title`} title={name}>{name}</h2><p>Nalu account</p></header>
       <div className="workspace-account-actions">
-        <button type="button" aria-pressed={isDark} onClick={() => toggleTheme()}>{isDark ? <Sun size={16} aria-hidden="true"/> : <Moon size={16} aria-hidden="true"/>}<span>{isDark ? 'Light frame' : 'Dark frame'}</span></button>
+        <button type="button" aria-pressed={isDark} onClick={() => toggleTheme()}>{isDark ? <Sun size={16} aria-hidden="true"/> : <Moon size={16} aria-hidden="true"/>}<span>{isDark ? 'Light mode' : 'Dark mode'}</span></button>
         {onSpaces && <button type="button" onClick={() => select(onSpaces)}><Grid2X2 size={16} aria-hidden="true"/><span>All workspaces</span></button>}
+        {onWork && <button type="button" aria-label="Track all agent work" onClick={() => select(onWork)}><Grid2X2 size={16} aria-hidden="true"/><span>Agent work</span></button>}
         <button ref={settings} type="button" onClick={() => select(onSettings)}><Settings size={16} aria-hidden="true"/><span>Settings</span></button>
         <a href="/download.html" target="_blank" rel="noreferrer" onClick={close}><Download size={16} aria-hidden="true"/><span>Download Nalu Desktop</span></a>
         <a href="/privacy.html" target="_blank" rel="noreferrer" onClick={close}><Shield size={16} aria-hidden="true"/><span>Privacy Policy</span></a>

@@ -1,10 +1,12 @@
 /** Swarm presentation contract. No fixtures, storage, network, or execution. */
+import type { SwarmWorkPlan } from '../../../../../shared/swarmWorkPlan'
 /** Built-in and user-created dog agents share this identifier contract. */
 export type SwarmAgentId = string
 export type SwarmThread = 'group' | SwarmAgentId
 export type SwarmTaskStatus = 'queued' | 'running' | 'waiting' | 'done' | 'paused' | 'failed' | 'cancelled'
 export interface SwarmProject {
   id: string; requestId?: string; title: string; brief: string; members: SwarmAgentId[]; agentProfiles?: Record<string, SwarmAgentProfile>; createdAt: number; updatedAt: number
+  delegation?: { requestId: string; hash: string; key: string }
 }
 export interface SwarmDogAppearance { coat: number; ears: number; markings: number; eyes: number }
 export interface SwarmAgentProfile { name: string; personality: string; appearance: SwarmDogAppearance }
@@ -58,6 +60,8 @@ export interface SwarmController {
   send: (text?: string) => boolean | Promise<boolean>
   stop: () => void
   createProject: (title: string, brief: string) => string | null | Promise<string | null>
+  delegateWork?: (plan: SwarmWorkPlan, sourceRequestId?: string) => Promise<string[]>
+  stopDelegation?: (sourceRequestId: string) => Promise<void>
   addAgent?: (name: string, personality: string, appearance: SwarmDogAppearance) => void | Promise<void>
   addTask: (title: string, assignee: SwarmAgentId) => void | Promise<void>
   /** Manual tracking in sample mode. Live execution status is read-only in UI. */
@@ -70,9 +74,9 @@ export interface SwarmController {
   stopProjectTask?: (projectId: string, taskId: string) => void | Promise<void>
   shareTask?: (taskId: string) => void | Promise<void>
   continueStudio?: (taskId: string) => Promise<void>
-  getArtifact?: (taskId: string, executionId: string, signal?: AbortSignal) => Promise<SwarmArtifactResponse>
-  loadArtifactMedia?: (taskId: string, executionId: string, media: SwarmMedia, signal?: AbortSignal) => Promise<Blob>
-  updateArtifact?: (taskId: string, executionId: string, revision: number, payload: Record<string, unknown>) => Promise<number>
+  getArtifact?: (taskId: string, executionId: string, signal?: AbortSignal, room?: SwarmRoomReference) => Promise<SwarmArtifactResponse>
+  loadArtifactMedia?: (taskId: string, executionId: string, media: SwarmMedia, signal?: AbortSignal, room?: SwarmRoomReference) => Promise<Blob>
+  updateArtifact?: (taskId: string, executionId: string, revision: number, payload: Record<string, unknown>, room?: SwarmRoomReference) => Promise<number>
   busyTaskIds?: readonly string[]
 }
 

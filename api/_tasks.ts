@@ -99,6 +99,7 @@ export async function handleTaskAction(client: Client | CloudflareStore, userId:
       for (let i = 0; i < 6 && typeof flows === 'string'; i++) { try { flows = JSON.parse(flows) } catch { flows = null } }
       const flow = Array.isArray(flows) ? flows.find((f: any) => f && String(f.id) === flowId) : null
       if (!flow) { bad(res, 'pipeline not found', 404); return true }
+      if (flow.executionMode === 'device') { bad(res, 'This workflow runs on the user’s computer. Open Nalu in the browser; no cloud task was queued.', 409); return true }
       if (mode === 'resume') {
         if (!Number.isFinite(flow.run?.startedAt) || flow.run.startedAt <= 0) { bad(res, 'pipeline has no saved run to resume', 409); return true }
         resumeStartedAt = flow.run.startedAt

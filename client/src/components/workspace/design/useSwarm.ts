@@ -4,6 +4,8 @@ import { sessionWasCleared } from '../../../lib/sync'
 import { SwarmClient, emptySwarmSnapshot } from './swarmClient'
 import { sameSwarmAccount, type SwarmAccount } from './swarmTransport'
 import { selectSwarmMessages, selectSwarmPending, selectSwarmTasks, swarmRoomId, type SwarmController } from './swarmTypes'
+import { LocalSwarmRunner } from '../../../lib/localSwarm'
+import { getLocalPreferences } from '../../../lib/localAI'
 
 const subscribeEmpty = () => () => {}
 const getEmpty = () => emptySwarmSnapshot
@@ -28,6 +30,7 @@ export default function useSwarm({ accountId, enabled = true, active = false }: 
   useEffect(() => {
     if (!client) return
     client.start()
+    const device = new LocalSwarmRunner({ account: client.account, readAccount: () => latest.current.enabled ? currentAccount(latest.current.accountId) : null, update: client.receiveDeviceUpdate, error: client.reportDeviceError })
     let stopped = false, loading = false, reloadRequested = false, timer: ReturnType<typeof setTimeout> | undefined
     const load = async () => {
       clearTimeout(timer)
@@ -39,6 +42,8 @@ export default function useSwarm({ accountId, enabled = true, active = false }: 
       if (stopped || !client.isCurrent()) return
       const state = client.getSnapshot().state
       const pending = client.hasPendingRequests() || state.turns.some(turn => turn.status === 'pending') || state.tasks.some(task => task.status === 'running' || task.status === 'queued' && !!task.executionId)
+      device.observe(state)
+      if (pending) void device.pump()
       const requested = reloadRequested; reloadRequested = false
       if (requested || latest.current.active || pending) timer = setTimeout(load, requested ? 0 : document.visibilityState === 'hidden' ? 12000 : pending ? 2000 : 6000)
     }
@@ -53,6 +58,7 @@ export default function useSwarm({ accountId, enabled = true, active = false }: 
     window.addEventListener('storage', changed)
     window.addEventListener('nalu-session-cleared', changed)
     window.addEventListener('nalu-hydrated', changed)
+    window.addEventListener('nalu-local-ai', refresh)
     window.addEventListener('online', refresh)
     window.addEventListener('focus', visible)
     document.addEventListener('visibilitychange', visible)
@@ -61,11 +67,12 @@ export default function useSwarm({ accountId, enabled = true, active = false }: 
     const watch = setInterval(() => { if (!client.isCurrent()) changed(new Event('account')) }, 1000)
     void load()
     return () => {
-      stopped = true; clearTimeout(timer); clearInterval(watch); client.dispose()
+      stopped = true; clearTimeout(timer); clearInterval(watch); device.stop(); client.dispose()
       wake.current = () => {}
       window.removeEventListener('storage', changed)
       window.removeEventListener('nalu-session-cleared', changed)
       window.removeEventListener('nalu-hydrated', changed)
+      window.removeEventListener('nalu-local-ai', refresh)
       window.removeEventListener('online', refresh)
       window.removeEventListener('focus', visible)
       document.removeEventListener('visibilitychange', visible)
@@ -83,6 +90,11 @@ export default function useSwarm({ accountId, enabled = true, active = false }: 
   const { state, preferences: prefs } = snapshot
   const room = swarmRoomId(prefs.activeProjectId, prefs.recipient)
   const mutate = <T,>(action: () => Promise<T>) => { const pending = action(); void pending.finally(() => wake.current()).catch(() => {}); return pending }
+  const readyForModel = () => {
+    if (getLocalPreferences().enabled) return true
+    window.dispatchEvent(new Event('nalu-local-ai-setup'))
+    return false
+  }
   return {
     state, activeProjectId: prefs.activeProjectId, recipient: prefs.recipient,
     messages: selectSwarmMessages(state, prefs.activeProjectId, prefs.recipient), tasks: selectSwarmTasks(state, prefs.activeProjectId),
@@ -92,21 +104,23 @@ export default function useSwarm({ accountId, enabled = true, active = false }: 
     creating: snapshot.creating, setCreating: value => client?.setCreating(value), loading: !client || snapshot.loading, error: snapshot.error,
     refresh: () => wake.current(),
     selectProject: id => client?.selectProject(id), selectRecipient: thread => client?.selectRecipient(thread), navigate: (id, thread) => client?.navigate(id, thread),
-    send: text => client ? mutate(() => client.send(text)) : false,
+    send: text => client && readyForModel() ? mutate(() => client.send(text)) : false,
     stop: () => { client?.stop(); wake.current() },
     createProject: (title, brief) => client ? mutate(() => client.createProject(title, brief)) : null,
+    delegateWork: (plan, sourceRequestId) => readyForModel() && client ? mutate(() => client.delegateWork(plan, sourceRequestId)) : Promise.resolve([]),
+    stopDelegation: client ? sourceRequestId => mutate(() => client.stopDelegation(sourceRequestId)) : undefined,
     addAgent: (name, personality, appearance) => client ? mutate(() => client.addAgent(name, personality, appearance)) : undefined,
     addTask: (title, assignee) => client ? mutate(() => client.addTask(title, assignee)) : undefined,
     updateTask: () => { /* Server execution alone owns live task status. */ },
     assignTask: (id, assignee) => { client?.assignTask(id, assignee); wake.current() },
     recentRooms: prefs.recentRooms, busyTaskIds: snapshot.busyTaskIds,
-    startTask: id => client ? mutate(() => client.startTask(id)) : undefined,
+    startTask: id => client && readyForModel() ? mutate(() => client.startTask(id)) : undefined,
     stopTask: id => client ? mutate(() => client.stopTask(id)) : undefined,
     stopProjectTask: (projectId, taskId) => client ? mutate(() => client.stopProjectTask(projectId, taskId)) : undefined,
     shareTask: id => client ? mutate(() => client.shareTask(id)) : undefined,
-    continueStudio: client ? id => mutate(() => client.continueStudio(id)) : undefined,
+    continueStudio: client ? async id => { if (readyForModel()) await mutate(() => client.continueStudio(id)) } : undefined,
     getArtifact: client?.getArtifact,
     loadArtifactMedia: client?.loadArtifactMedia,
-    updateArtifact: client ? (id, executionId, revision, payload) => mutate(() => client.updateArtifact(id, executionId, revision, payload)) : undefined,
+    updateArtifact: client ? (id, executionId, revision, payload, room) => mutate(() => client.updateArtifact(id, executionId, revision, payload, room)) : undefined,
   }
 }

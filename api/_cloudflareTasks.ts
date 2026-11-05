@@ -38,6 +38,7 @@ export async function handleCloudflareTasks(store: CloudflareStore, owner: strin
     if (pipeline) {
       const flow = flowArray(await new CloudflareFlows(store).read(owner))?.find(item => String(item.id) === flowId)
       if (!flow) return error('pipeline not found',404)
+      if (flow.executionMode === 'device') return error('This workflow runs on the user’s computer. Open Nalu in the browser; no cloud task was queued.',409)
       if (mode === 'resume') {
         if (!Number.isFinite(flow.run?.startedAt) || flow.run.startedAt <= 0) return error('pipeline has no saved run to resume',409)
         resumeStartedAt = flow.run.startedAt

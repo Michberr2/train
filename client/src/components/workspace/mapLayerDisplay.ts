@@ -15,9 +15,9 @@ export function mapLayerZoomRange(layer: MapLayerSummary) {
   return [layer.minZoom, cap] as const
 }
 
-export function readMapDisplay() {
+export function readMapDisplay(key = 'nalu-map-display') {
   try {
-    const data = JSON.parse(localStorage.getItem('nalu-map-display') || '{}')
+    const data = JSON.parse(localStorage.getItem(key) || '{}')
     const opacity: Record<string, number> = {}
     if (data && typeof data === 'object') {
       for (const [key, value] of Object.entries(data.opacity || {})) if (typeof value === 'number' && Number.isFinite(value)) opacity[key] = Math.max(0, Math.min(1, value))

@@ -13,6 +13,33 @@ const json = (value, status = 200) => new Response(JSON.stringify(value), { stat
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes }); return { promise, resolve } }
 const make = request => new SwarmClient({ account, readAccount: () => account, request, uuid: () => 'stable-id' })
 
+test('inline artifacts use their explicit project room without navigating away or exposing unshared private work', async () => {
+  let current = state([savedTask()]), revision = 1
+  current.projects.push({ ...current.projects[0], id: 'other', title: 'Other project' })
+  current.tasks.push({ ...savedTask(), id: 'shared', threads: ['Milo', 'group'] })
+  const calls = []
+  const client = make(async (_url, options) => {
+    const body = JSON.parse(options.body); calls.push(body)
+    if (body.action === 'list') return json({ state: current, revision })
+    if (body.action === 'artifact') return json({ artifact: artifact(), revision: current.tasks.find(task => task.id === body.taskId).artifact.revision })
+    assert.equal(body.action, 'update-artifact'); assert.equal(body.projectId, 'launch'); assert.equal(body.taskId, 'shared')
+    current = { ...current, tasks: current.tasks.map(task => task.id === 'shared' ? { ...task, artifact: { ...task.artifact, revision: 2 } } : task) }; revision++
+    return json({ state: current, revision })
+  })
+  await client.refresh(); client.navigate('other', 'Rocky'); client.setDraft('Keep this unrelated private draft')
+  const room = { projectId: 'launch', thread: 'group' }
+  await assert.rejects(client.getArtifact('shared', 'studio-job'), /selected conversation/)
+  await assert.rejects(client.getArtifact('draft', 'studio-job', undefined, room), /selected conversation/)
+  await assert.rejects(client.getArtifact('shared', 'studio-job', undefined, { projectId: 'foreign', thread: 'group' }), /not available/)
+  assert.equal(calls.filter(body => body.action === 'artifact').length, 0)
+  assert.equal((await client.getArtifact('shared', 'studio-job', undefined, room)).artifact.payload.title, 'Launch brief')
+  assert.equal(await client.updateArtifact('shared', 'studio-job', 1, { title: 'Revised brief', blocks: [] }, room), 2)
+  assert.equal(client.getSnapshot().preferences.activeProjectId, 'other')
+  assert.equal(client.getSnapshot().preferences.recipient, 'Rocky')
+  assert.equal(client.getSnapshot().preferences.drafts['other::Rocky'], 'Keep this unrelated private draft')
+  client.dispose()
+})
+
 test('Studio continuation sends the exact waiting source and reconciles lost acceptance without inventing completion', async () => {
   let current = state(), revision = 1, body
   const client = make(async (_url, options) => {
@@ -22,7 +49,7 @@ test('Studio continuation sends the exact waiting source and reconciles lost acc
   })
   await client.refresh(); client.navigate('launch', 'Milo')
   await assert.rejects(client.continueStudio('draft'))
-  assert.deepEqual(body, { action: 'continue-studio', projectId: 'launch', taskId: 'draft', sourceJobId: 'source-job', requestId: 'stable-id' })
+  assert.deepEqual(body, { action: 'continue-studio', projectId: 'launch', taskId: 'draft', sourceJobId: 'source-job', requestId: 'stable-id', executionMode: 'device' })
   assert.equal(client.getSnapshot().state.tasks[0].status, 'waiting')
   assert.equal(client.hasPendingRequests(), true)
   current = state([task({ status: 'queued', executionId: 'studio-job', executionRequestId: body.requestId })]); revision++
@@ -40,7 +67,7 @@ test('artifact reads require the current explicit room and exact execution; stal
   client.navigate('launch', 'Milo')
   await assert.rejects(client.getArtifact('draft', 'foreign-job'), /changed/)
   const read = client.getArtifact('draft', 'studio-job')
-  assert.deepEqual(body, { action: 'artifact', projectId: 'launch', taskId: 'draft', executionId: 'studio-job' })
+  assert.deepEqual(body, { action: 'artifact', projectId: 'launch', taskId: 'draft', executionId: 'studio-job', executionMode: 'device' })
   current = state([savedTask(2)]); revision++; await client.refresh()
   waiting.resolve(json({ artifact: artifact(), revision: 1 }))
   await assert.rejects(read, /newer creation/)
@@ -71,7 +98,7 @@ test('artifact saves include full payload and artifact revision, preserve metada
   await client.refresh(); client.navigate('launch', 'Milo')
   const payload = { ...artifact().payload, title: 'Edited title', diagnostics: { preserved: true } }
   assert.equal(await client.updateArtifact('draft', 'studio-job', 1, payload), 2)
-  assert.deepEqual(submitted, { action: 'update-artifact', projectId: 'launch', taskId: 'draft', executionId: 'studio-job', revision: 1, payload })
+  assert.deepEqual(submitted, { action: 'update-artifact', projectId: 'launch', taskId: 'draft', executionId: 'studio-job', revision: 1, payload, executionMode: 'device' })
   await assert.rejects(client.updateArtifact('draft', 'studio-job', 1, payload), /newer saved/)
   assert.equal(client.getSnapshot().state.tasks[0].chatId, undefined)
   client.dispose()

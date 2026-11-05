@@ -11,6 +11,8 @@ import tailwindConfig from '../client/tailwind.config.js'
 import { chromium, expect } from '@playwright/test'
 import { fileURLToPath } from 'node:url'
 
+const instantCheck = process.argv.includes('--instant')
+const recoveryCheck = process.argv.includes('--recovery')
 const cameraCheck = process.argv.includes('--camera')
 const layerCheck = process.argv.includes('--layers')
 const comparisonCheck = process.argv.includes('--comparisons')
@@ -36,7 +38,7 @@ const fixture = `import React from 'react'; import { createRoot } from 'react-do
 import MapPanel from '/src/components/workspace/MapPanel.tsx'; import '/src/globals.css';
 function App() { const [shown, show] = React.useState(true); return React.createElement(React.Fragment, null,
   React.createElement('button', { onClick: () => show(!shown) }, shown ? 'Unmount map' : 'Mount map'),
-  React.createElement('div', { style: { display: 'flex', height: '90vh' } }, shown ? React.createElement(MapPanel) : null)); }
+  React.createElement('div', { style: { display: 'flex', height: '90vh' } }, shown ? React.createElement(MapPanel, ${recoveryCheck ? "{request:{key:1,query:'initial embedded cafes'}}" : 'null'}) : null)); }
 createRoot(document.getElementById('root')).render(React.createElement(React.StrictMode, null, React.createElement(App)));`
 const cacheDir = await mkdtemp(join(tmpdir(), 'nalu-map-browser-'))
 const server = await createServer({
@@ -89,10 +91,8 @@ try {
     }
     await expect(page.getByRole('button', { name: 'Show search panel', exact: true })).toBeVisible()
   }
-  await page.addInitScript(() => {
-    localStorage.setItem('nalu-map-active-layers', '["osm"]')
-    localStorage.setItem('nalu-map-shapes', '{"malformed":true}')
-    const state = window.__mapTest = { maps: [], markers: [], data: [], infos: [], opened: [], removed: 0 }
+  const installSdk = () => {
+    const state = window.__mapTest ||= { maps: [], markers: [], data: [], infos: [], opened: [], removed: 0 }
     const point = (value) => ({ lat: () => value.lat, lng: () => value.lng })
     class Evented {
       listeners = []
@@ -118,7 +118,7 @@ try {
     }
     class Map extends Evented {
       overlayMapTypes = new Collection()
-      constructor(element, options) { super(); this.center = options.center; this.zoom = options.zoom; state.maps.push(this); element.dataset.mockMap = 'ready' }
+      constructor(element, options) { super(); this.center = options.center; this.zoom = options.zoom; state.maps.push(this); state.previewAtSdkStart = !!document.querySelector('[aria-label="Immediate map"]'); element.dataset.mockMap = 'ready' }
       getCenter() { return point(this.center) }
       getZoom() { return this.zoom }
       getBounds() { return new Bounds(this.center) }
@@ -155,8 +155,18 @@ try {
       Size: class {}, SymbolPath: { CIRCLE: 'circle' },
       event: { clearInstanceListeners(item) { if (item) item.listeners?.forEach((listener) => { listener.removed = true; state.removed++ }) }, removeListener(listener) { listener.removed = true; state.removed++ } },
     } }
-  })
+  }
+  await page.addInitScript(installSdk)
+  if (instantCheck) await page.addInitScript(() => { window.google.maps.version = 'controlled-instant-map' })
+  await page.addInitScript(recovery => {
+    localStorage.setItem('nalu-map-active-layers', '["osm"]')
+    localStorage.setItem('nalu-map-shapes', recovery ? JSON.stringify([{t:'marker',cat:'area',lat:28.4,lng:-81.4}]) : '{"malformed":true}')
+    localStorage.setItem('nalu-data-owner','map-compat-owner')
+    localStorage.setItem('nalu-token','map-compat-token')
+  }, recoveryCheck)
   await page.route('**/*', async (route) => {
+    if (instantCheck && new URL(route.request().url()).hostname === 'tile.openstreetmap.org') return route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7QAAAABJRU5ErkJggg==','base64')})
+    if (recoveryCheck && new URL(route.request().url()).hostname === 'maps.googleapis.com') return route.fulfill({contentType:'text/javascript',body:`(${installSdk.toString()})();`})
     if (new URL(route.request().url()).hostname !== '127.0.0.1') return route.abort()
     return route.continue()
   })
@@ -193,7 +203,51 @@ try {
   })
   await page.goto(origin + '/__map-test')
   await page.getByRole('button', { name: /^Layers/ }).waitFor()
-  if (comparisonCheck) {
+  if (instantCheck) {
+    const immediate=page.getByRole('region',{name:'Immediate map',exact:true})
+    await expect(immediate).toBeVisible()
+    assert.equal(await page.evaluate(()=>window.__mapTest.previewAtSdkStart),true,'real street surface is mounted before the full map SDK initializes')
+    await page.waitForFunction(()=>[...document.querySelectorAll('.map-instant-surface img')].some(i=>i.complete&&i.naturalWidth>0))
+    const surface=immediate.getByRole('region',{name:'Interactive fallback map',exact:true})
+    await surface.focus();await page.keyboard.press('ArrowRight')
+    await immediate.getByRole('button',{name:'Zoom in',exact:true}).click()
+    await expect.poll(()=>page.evaluate(()=>window.__mapTest.maps.at(-1).zoom)).toBe(7)
+    const camera=await page.evaluate(()=>{const m=window.__mapTest.maps.at(-1);return {center:m.center,zoom:m.zoom}})
+    await page.evaluate(()=>window.__mapTest.maps.at(-1).listeners.filter(l=>l.type==='tilesloaded'&&!l.removed).forEach(l=>l.callback()))
+    await expect(immediate).toHaveCount(0)
+    await expect(page.locator('.map-2d-viewport')).toHaveAttribute('aria-hidden','false')
+    assert.deepEqual(await page.evaluate(()=>{const m=window.__mapTest.maps.at(-1);return {center:m.center,zoom:m.zoom}}),camera)
+    await page.evaluate(()=>window.gm_authFailure())
+    await expect(page.getByRole('region',{name:'Resilient map workspace'})).toBeVisible()
+    await expect(page.getByText('Opening backup map…',{exact:true})).toHaveCount(0)
+    await expect(page.getByText('Loading map…',{exact:true})).toHaveCount(0)
+    assert.deepEqual(errors,[])
+    console.log('PASS street map is present before SDK initialization, renders tiles and responds to pan/zoom while full tiles load; promotion preserves camera; failed provider keeps a usable map without a loading/failure flash')
+  } else if (recoveryCheck) {
+    const savedShapes = await page.evaluate(() => localStorage.getItem('nalu-map-shapes'))
+    const original = page.getByRole('textbox',{name:'Map search',exact:true})
+    await original.fill('existing cafes');await original.press('Enter')
+    await expect(page.getByRole('button',{name:'Show existing cafes on map',exact:true})).toBeVisible()
+    await page.evaluate(() => window.gm_authFailure())
+    await expect(page.getByRole('region',{name:'Resilient map workspace'})).toBeVisible()
+    const backup = page.getByRole('region',{name:'Resilient map workspace'})
+    await backup.getByRole('textbox',{name:'Map search',exact:true}).fill('replacement cafes in Dallas')
+    await backup.getByRole('button',{name:'Search',exact:true}).click()
+    await expect(backup.getByRole('button',{name:'Show replacement cafes on map',exact:true})).toBeVisible()
+    const fallbackCamera=page.getByRole('region',{name:'Interactive fallback map'})
+    await fallbackCamera.focus();await page.keyboard.press('ArrowRight')
+    await page.getByRole('button',{name:'Zoom in',exact:true}).click()
+    const camera=(await page.locator('.fallback-map-coordinate').innerText()).match(/(-?[\d.]+), (-?[\d.]+) · zoom (\d+)/)
+    await backup.getByRole('button',{name:'Retry full map',exact:true}).click()
+    await expect(page.getByRole('button',{name:/^Layers/})).toBeVisible({timeout:30000})
+    await expect(page.getByRole('textbox',{name:'Map search',exact:true})).toHaveValue('replacement cafes in Dallas')
+    await expect(page.getByRole('button',{name:'Show replacement cafes on map',exact:true})).toBeVisible()
+    const restored=await page.evaluate(()=>{const map=window.__mapTest.maps.at(-1);return {center:map.center,zoom:map.zoom,layers:map.overlayMapTypes.values.length,savedShapes:localStorage.getItem('nalu-map-shapes'),shapeMarkers:window.__mapTest.markers.filter(m=>m.map===map&&!m.__id).length}})
+    assert.ok(Math.abs(restored.center.lat-Number(camera[1]))<.0001);assert.ok(Math.abs(restored.center.lng-Number(camera[2]))<.0001);assert.equal(restored.zoom,Number(camera[3]))
+    assert.equal(restored.layers,1);assert.equal(restored.savedShapes,savedShapes);assert.equal(restored.shapeMarkers,1)
+    assert.deepEqual(errors,[])
+    console.log('PASS full map recovers the backup search, actual pins and camera while preserving previous layers and saved drawings')
+  } else if (comparisonCheck) {
     const input = page.getByRole('textbox', { name: 'Map search', exact: true })
     await input.fill('compare Orlando and Tampa'); await input.press('Enter')
     const table = page.getByRole('table').filter({ has: page.getByRole('columnheader', { name: 'Median rent', exact: true }) })

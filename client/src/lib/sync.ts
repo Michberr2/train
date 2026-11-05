@@ -16,6 +16,8 @@ import { getToken } from './localAuth'
 import { idbGetChats, idbSetChats, idbClearChats, quarantineUnownedData, recoverUnownedData, idbGetAccountJournal, idbQueueSync, idbAckSync, idbArchiveAccount } from './chatStore'
 import { syncBodies } from './syncPayload'
 
+import { handleLocalAIRequest, isLocalAIPath, needsLocalAI } from './localAIRequests'
+
 const PREFIX = 'nalu-'
 // Never sync these: the session token, and regeneratable render caches that would only
 // bloat the DB + every hydrate and crowd out the real data in the first-paint budget.
@@ -170,10 +172,18 @@ function installApiAuth(): void {
   if (fetchPatched || typeof window === 'undefined') return
   fetchPatched = true
   const orig = window.fetch.bind(window)
-  window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     try {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url
       if (url && (url.startsWith('/api/') || url.startsWith(`${location.origin}/api/`))) {
+        const path = new URL(url, location.origin).pathname
+        const method = init?.method || (input instanceof Request ? input.method : 'GET')
+        if (method.toUpperCase() === 'POST' && isLocalAIPath(path)) {
+          const owner = getToken()
+          const raw = typeof init?.body === 'string' ? init.body : input instanceof Request ? await input.clone().text() : '{}'
+          if (owner !== getToken()) throw new DOMException('Account changed', 'AbortError')
+          if (needsLocalAI(path, method, raw)) return handleLocalAIRequest(path, raw, init?.signal || (input instanceof Request ? input.signal : undefined))
+        }
         const token = getToken()
         if (token) {
           const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined))
@@ -181,7 +191,13 @@ function installApiAuth(): void {
           return orig(input, { ...init, headers })
         }
       }
-    } catch { /* fall through to the original call */ }
+    } catch (error) {
+      // A local inference failure must never become a cloud request.
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      const value = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      const path = new URL(value, location.origin).pathname
+      if (isLocalAIPath(path)) return Response.json({ error: error instanceof Error ? error.message : 'Local AI request failed.' }, { status: 503 })
+    }
     return orig(input, init)
   }) as typeof window.fetch
 }
@@ -445,6 +461,7 @@ export async function loadFromServer(): Promise<void> {
           origSet(k, mergeProjects(local, sv, k))
         }
         else if (k === BRAND_KEY && Object.prototype.hasOwnProperty.call(pending, k)) { /* keep this owner's unsent explicit selection */ }
+        else if (k === 'nalu-theme' && (Object.prototype.hasOwnProperty.call(pending, k) || Object.prototype.hasOwnProperty.call(inFlightEntries, k))) { /* A late hydrate must not replace a theme the user just selected. */ }
         else { try { origSet(k, sv) } catch { /* oversized local cache — keep server copy, skip locally */ } }
       }
     }

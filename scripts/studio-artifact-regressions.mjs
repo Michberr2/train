@@ -56,6 +56,14 @@ try {
     localStorage.setItem('nalu-chats', JSON.stringify(artifacts.map(({ id, title, art }) => ({ id, title, createdAt: Date.now(), messages: [{ role: 'user', content: `Show ${title}.` }, { role: 'assistant', content: '', design: art }] }))))
   }, { artifacts })
   await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async value => { window.__copiedFixture = value } } }))
+  await page.addInitScript(() => {
+    if (window.top !== window) return
+    window.__studioNavigation = []
+    document.addEventListener('click', event => {
+      const button = event.target.closest?.('button')
+      if (button && /Your creations|^Create$|Studio|All workspaces/.test(button.textContent.trim())) window.__studioNavigation.push({ label: button.textContent.trim(), pressed: button.getAttribute('aria-pressed'), view: document.querySelector('.nalu-workspace')?.getAttribute('data-workspace-view') })
+    }, true)
+  })
   // Do not intercept ordinary same-origin static assets: exercise the CDN and
   // the deployed lazy chunks normally, while every account/API call is mocked.
   await page.route(url => url.origin !== origin && !['data:', 'blob:'].includes(url.protocol), route => {
@@ -88,6 +96,11 @@ try {
   }
   const galleryButton = title => page.getByRole('button').filter({ has: page.getByText(title, { exact: true }) }).last()
   const selectStudio = async () => {
+    if (await page.getByRole('region', {name: 'Your generative workspace'}).count()) {
+      await page.getByRole('button', {name: 'Capabilities', exact: true}).click()
+      await page.getByRole('button', {name: 'Open Studio', exact: true}).click()
+      return
+    }
     // The authenticated app starts with scenery even with a saved view.
     // Wait for that shell before checking lazy navigation, then enter Studio
     // through the account menu's workspace picker, preserving the scenic home.
@@ -105,7 +118,10 @@ try {
       return
     }
     const dock = page.getByRole('navigation', { name: 'Workspace navigation', exact: true })
-    if (await dock.count()) await dock.getByRole('button', { name: 'Studio', exact: true }).click()
+    if (await dock.getByRole('button', { name: 'Capabilities', exact: true }).count()) {
+      await dock.getByRole('button', { name: 'Capabilities', exact: true }).click()
+      await page.getByRole('button', { name: 'Open Studio', exact: true }).click()
+    } else if (await dock.count()) await dock.getByRole('button', { name: 'Studio', exact: true }).click()
     else if (await page.locator('.nalu-workspace').getAttribute('data-workspace-view') !== 'studio') {
       if (await page.getByRole('button', { name: 'Account options', exact: true }).count()) {
         await page.getByRole('button', { name: 'Account options', exact: true }).click()
@@ -292,8 +308,8 @@ try {
       details.studio = true
       await overlay.screenshot({ path: join(output, `${id}-studio.png`) })
       await overlay.getByRole('button', { name: 'Open in chat', exact: true }).click()
-      if (art.html) await page.locator('.ws-chat-thread:visible').frameLocator('iframe[title="Nalu Design"]').getByRole('heading', { level: 1 }).waitFor()
-      else await page.locator('.ws-chat-thread:visible').getByText(id === 'brand' ? art.brand.name : art.name || art.title, { exact: false }).first().waitFor()
+      if (art.html) await page.locator('.generative-canvas:visible,.ws-chat-thread:visible').first().frameLocator('iframe[title="Nalu Design"]').getByRole('heading', { level: 1 }).waitFor()
+      else await page.locator('.generative-canvas:visible,.ws-chat-thread:visible').first().getByText(id === 'brand' ? art.brand.name : art.name || art.title, { exact: false }).first().waitFor()
       details.chat = true
       const saved = await page.evaluate(id => JSON.parse(localStorage.getItem('nalu-chats')).find(chat => chat.id === id).messages[1].design, id)
       assert.deepEqual(saved, art, 'opening/exporting a saved creation must preserve the complete source artifact')
@@ -301,7 +317,7 @@ try {
       report.tested.push(details)
       console.log(`Checked ${id}: Studio + chat; ${details.downloads.join(', ') || 'interactive preview'}`)
     } catch (error) {
-      report.findings.push({ kind: id, label: 'UI/export flow', error: error.message })
+      report.findings.push({ kind: id, label: 'UI/export flow', error: error.message, navigation: await page.evaluate(() => window.__studioNavigation.slice(-20)) })
       await page.screenshot({ path: join(output, `${id}-failure.png`) }).catch(() => {})
       await page.evaluate(() => localStorage.setItem('nalu-view', 'studio'))
       await page.reload({ waitUntil: 'domcontentloaded' })

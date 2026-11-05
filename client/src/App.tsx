@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import LoadingScreen from './components/LoadingScreen'
+import { WorkspaceBuildLoading } from './components/workspace/design/WorkspaceBuild'
 import LandingPage from './components/landing/LandingPage'
 import { useAuth } from './components/AuthProvider'
 
@@ -10,7 +10,7 @@ export default function App() {
 
   // Keep the authenticated workspace and account lifecycle separate from the public story.
   if (user) {
-    return <Suspense fallback={<LoadingScreen />}><Workspace key={user.id} user={user} onLogout={signOut} /></Suspense>
+    return <Suspense fallback={<WorkspaceBuildLoading />}><Workspace key={user.id} user={user} onLogout={signOut} /></Suspense>
   }
   return <LandingPage />
 }

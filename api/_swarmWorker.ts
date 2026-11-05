@@ -1,3 +1,4 @@
+import { finishSwarmJob } from './_swarmCompletion'
 import { connectionBackend } from './_connectionBackend'
 import { SwarmStore, type SwarmJob, type SwarmSnapshot } from './_swarmStore'
 import { appendSwarmResult, swarmContext } from './_swarm'
@@ -45,25 +46,11 @@ function noteUnconfirmedRefund(snapshot: SwarmSnapshot, failed: SwarmJob, now: n
 }
 
 /** The lease predicate is checked in the same atomic write as every result. */
-export function finishSwarmJob(snapshot: SwarmSnapshot, id: string, result: SwarmExecutionResult, now: number) {
-  const job = snapshot.jobs.find(item => item.id === id)
-  if (!job) throw new Error('Swarm work no longer exists.')
-  job.status = result.status; job.result = result.content; job.summary = result.summary; job.updatedAt = now
-  job.artifact = result.artifact; job.progress = result.status === 'done' ? 1 : undefined
-  delete job.leaseToken; delete job.leaseUntil
-  const turn = snapshot.state.turns.find(item => item.id === job.turnId)
-  if (turn) { turn.status = 'completed'; turn.updatedAt = now }
-  const task = snapshot.state.tasks.find(item => item.id === job.taskId && item.executionId === job.id)
-  if (task) {
-    task.status = result.status; task.summary = result.summary; task.updatedAt = now; task.progress = job.progress
-    if (result.artifact?.type === 'needs-workspace') task.handoff = { studioKind: result.artifact.studioKind, prompt: result.artifact.prompt, reason: result.artifact.reason }
-    else delete task.handoff
-  }
-  appendSwarmResult(snapshot, job, result.content, now)
-}
+export { finishSwarmJob } from './_swarmCompletion'
 
 export async function executeLeasedSwarmJob(store: WorkerStore, owner: string, job: SwarmJob,
   options: { execute?: Execute; executeStudio?: ExecuteStudio; timeoutMs?: number; heartbeatMs?: number; now?: () => number } = {}) {
+  if (job.executionMode === 'device') throw new Error('Device Swarm work cannot use a server model worker.')
   const execute = options.execute || executeSwarmWork, now = options.now || Date.now
   if (!job.leaseToken) throw new Error('Swarm execution requires a durable claim.')
   const token = job.leaseToken, controller = new AbortController()

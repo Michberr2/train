@@ -1,0 +1,10 @@
+.nalu-delegated-work { margin: 18px 0; border: 1px solid color-mix(in srgb, currentColor 15%, transparent); border-radius: 20px; padding: 18px; color: inherit; }
+.nalu-delegated-work > header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.nalu-delegated-work > article { padding: 14px 0; border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent); margin-top: 14px; }
+.nalu-delegated-work > article > h4 { font-weight: 650; margin: 0 0 10px; }
+.nalu-delegated-work > button, .nalu-delegated-work > header > button, .nalu-delegated-work > article > button, .nalu-chat-creation > button { padding: 7px 10px; border-radius: 10px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); font-size: 12px; margin-top: 8px; }
+.nalu-delegated-work button:disabled { opacity: .55; }
+.nalu-delegated-task { margin: 10px 0; overflow-wrap: anywhere; }
+.nalu-delegated-task > span { font-size: 11px; opacity: .75; }
+.nalu-delegated-task > p { margin: 5px 0; font-size: 13px; }
+.nalu-delegated-task > small { display: block; opacity: .7; }

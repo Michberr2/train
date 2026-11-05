@@ -4,6 +4,10 @@ import assert from 'node:assert/strict'
 // synthetic website-runtime tests do not launch a browser and must still run.
 export const BROWSER_EXECUTING_SCRIPTS = Object.freeze([
   'cursor-build-browser-regressions.mjs',
+  'local-swarm-browser-regressions.mjs',
+  'local-ollama-browser-regressions.mjs',
+  'chat-swarm-browser-regressions.mjs',
+  'artifact-build-browser-regressions.mjs',
   'adaptive-workspace-browser-regressions.mjs',
   'logo-generation-controls-regressions.mjs',
   'attachment-extraction-regressions.mjs',
@@ -17,7 +21,9 @@ export const BROWSER_EXECUTING_SCRIPTS = Object.freeze([
   'studio-artifact-regressions.mjs',
   'autopilot-output-browser-regressions.mjs',
   'map-browser-verify.mjs',
+  'map-fallback-browser-regressions.mjs',
   'workspace-shell-browser-regressions.mjs',
+  'generative-workspace-browser-regressions.mjs',
   'flow-cross-client-integration.mjs',
 ])
 const browserScripts = new Set(BROWSER_EXECUTING_SCRIPTS)

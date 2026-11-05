@@ -1,4 +1,6 @@
-import type { CSSProperties, ReactNode } from 'react'
+import { useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useReducedMotion } from 'framer-motion'
+import CursorBuilders from '../../landing/CursorBuilders'
 import { BACKGROUNDS } from '../../../lib/backgroundAssets'
 import '../../workspace-preview/real/workspace-refined.css'
 import '../../workspace-preview/real/workspace-scenic.css'
@@ -22,13 +24,21 @@ import './workspace-studio-interior.css'
 import './workspace-map-memory-interior.css'
 import './workspace-utility-interior.css'
 import './workspace-adaptive.css'
+import './generative-workspace.css'
+import './workspace-generative-theme.css'
+import './workspace-page-layouts.css'
 
 /** Shared visual surface only. Authentication, storage and network access stay
  * with the caller; importing this component never initializes sample data. */
 export default function WorkspaceDesignSurface({ children, preview = false }: { children: ReactNode; preview?: boolean }) {
-  return <div className="nalu-design-review workspace-design-surface" data-workspace-design="true" data-workspace-preview={preview || undefined}
-    style={{ '--review-scene': `url(${BACKGROUNDS['/images/bg-sandy-beach.png'].large})` } as CSSProperties}>
+  const host = useRef<HTMLDivElement>(null)
+  const [paused, setPaused] = useState(false)
+  const prefersReduced = useReducedMotion()
+  const reduced = paused || !!prefersReduced
+  return <div ref={host} className="nalu-design-review workspace-design-surface" data-workspace-design="true" data-generative-workspace="true" data-workspace-preview={preview || undefined}
+    style={{ '--review-scene': `url(${BACKGROUNDS['/images/bg-meadow-sunset.png'].large})` } as CSSProperties}>
     <div className="review-desktop-scene" aria-hidden="true" />
     {children}
+    {!preview && <><button className="generative-motion" aria-label={paused ? 'Play cursor construction' : 'Pause cursor construction'} aria-pressed={paused} disabled={!!prefersReduced} onClick={() => setPaused(value => !value)}><span>MOTION</span><span>{reduced ? 'OFF' : 'ON'}</span></button><CursorBuilders container={host} reduced={reduced} active workspace/></>}
   </div>
 }

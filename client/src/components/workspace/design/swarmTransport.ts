@@ -24,6 +24,7 @@ function validMember(project: Record<string, unknown>, member: unknown): boolean
 export function isLiveSwarmState(value: unknown): value is SwarmState {
   if (!record(value) || value.mode !== 'live' || value.version !== 1 || !Array.isArray(value.projects) || !Array.isArray(value.tasks) || !Array.isArray(value.messages) || !Array.isArray(value.turns)) return false
   if (!value.projects.every(p => record(p) && id(p.id) && typeof p.title === 'string' && typeof p.brief === 'string' && time(p.createdAt) && time(p.updatedAt) && Array.isArray(p.members) && p.members.length > 0 && p.members.length <= 1000 && p.members.every(member => validMember(p, member)))) return false
+  if (!value.projects.every(p => p.delegation === undefined || record(p.delegation) && typeof p.delegation.requestId === 'string' && /^[\w:-]{8,100}$/.test(p.delegation.requestId) && typeof p.delegation.hash === 'string' && /^[a-f0-9]{64}$/.test(p.delegation.hash) && typeof p.delegation.key === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(p.delegation.key))) return false
   const projects = new Map(value.projects.map(p => [p.id, p]))
   const room = (projectId: unknown, thread: unknown) => typeof projectId === 'string' && projects.has(projectId) && (thread === 'group' || projects.get(projectId)!.members.includes(thread))
   if (!value.tasks.every(t => record(t) && id(t.id) && room(t.projectId, t.assignee) && typeof t.title === 'string' && typeof t.summary === 'string' && time(t.updatedAt) && ['queued', 'running', 'waiting', 'done', 'paused', 'failed', 'cancelled'].includes(String(t.status)) && (t.threads === undefined || Array.isArray(t.threads) && t.threads.length > 0 && t.threads.every(thread => room(t.projectId, thread))) && (t.progress === undefined || typeof t.progress === 'number' && Number.isFinite(t.progress)) && (t.chatId === undefined || id(t.chatId)) && (t.artifact === undefined || record(t.artifact) && id(t.artifact.executionId) && id(t.artifact.studioKind) && Number.isSafeInteger(t.artifact.revision) && Number(t.artifact.revision) >= 1))) return false
@@ -34,14 +35,14 @@ export function isLiveSwarmState(value: unknown): value is SwarmState {
     return new Set(rows.map(row => row.id)).size === rows.length
   })
 }
-async function requestSwarmValue(account: SwarmAccount, body: Record<string, unknown>, signal: AbortSignal, readAccount: () => SwarmAccount | null, request: typeof fetch = fetch): Promise<unknown> {
+export async function requestSwarmValue(account: SwarmAccount, body: Record<string, unknown>, signal: AbortSignal, readAccount: () => SwarmAccount | null, request: typeof fetch = fetch): Promise<unknown> {
   const current = () => {
     if (!sameSwarmAccount(account, readAccount())) throw new SwarmSessionChanged()
     if (signal.aborted) throw new SwarmRequestError('The request was not confirmed. Please try again.', 0, true)
   }
   current()
   let response: Response
-  try { response = await request('/api/swarm', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${account.token}` }, body: JSON.stringify(body), signal }) }
+  try { response = await request('/api/swarm', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${account.token}` }, body: JSON.stringify({ ...body, executionMode: 'device' }), signal }) }
   catch { current(); throw new SwarmRequestError('The request was not confirmed. Check your connection and try again.', 0, true) }
   current()
   const value: unknown = await response.json().catch(() => null)

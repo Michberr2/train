@@ -122,6 +122,15 @@ try {
     assert.deepEqual(f.stages.map(stage => stage.stage), ['planning', 'writing', 'reviewing', 'done'])
     assert.equal(f.calls.length, 3); assert.equal(f.researchCalls.length, 0)
   })
+  await check('text requested about an artifact stays a text task rather than creating that artifact', async () => {
+    for (const input of ['Write a three-item checklist for reviewing a draft website. Return the checklist itself.', 'Draft a concise summary of the report.', 'Write a code example for a game.']) {
+      const f = fixture([plan('write'), 'Requested text draft.', review('Complete requested text.')])
+      const result = await executeSwarmWork({ ...base, kind: 'task', input })
+      assert.equal(result.status, 'done')
+      assert.equal(result.artifact.type, 'text')
+      assert.equal(f.calls.length, 3)
+    }
+  })
   await check('research uses bounded source helper with same signal and reviewed cited output', async () => {
     const content = 'A supported recommendation. [Official facts](https://agency.gov/facts)'
     const f = fixture([plan('research'), content, review(content)])

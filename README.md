@@ -235,3 +235,47 @@ research and browser work, and incomplete requests release their reserved quota.
 After changing browser packages or function configuration, exercise a real
 candidate `/api/design` request and inspect its runtime results before publishing;
 a successful bundle does not prove Chromium can launch on the deployment host.
+
+
+### Local generative workspace
+
+Run `node scripts/dev-workspace.mjs` to develop the authenticated web UI at
+`http://127.0.0.1:5197` with live reload. Its `/api` transport uses the existing
+Nalu production account and skill API, so work saved there is real account data.
+The public sites are not published by this command.
+
+To enable the **Enter local workspace** button, supply `NALU_DEV_OWNER_PASSWORD`
+in the local server process environment. Do not put it in source or a `VITE_`
+variable. The server binds to loopback, checks same-origin requests, and keeps
+that credential in server memory. The button and its module are omitted from
+production builds; the helper endpoint exists only in this development server.
+
+The generative interface accepts a bounded declarative layout, never executable
+model-generated code. Complete blocks appear from the response stream as they
+arrive. Calculations, checklists, form inputs and sorting preferences save with
+the conversation; existing artifact skills keep their original execution paths.
+Maps, workflow controls, project agents and account connections can be embedded
+on demand. A stopped response keeps its usable partial workspace.
+
+Checks: `node scripts/generative-ui-regressions.mjs` and
+`node scripts/generative-workspace-browser-regressions.mjs`. The browser suite
+starts its own loopback Vite server and uses isolated account/model transports.
+
+The authenticated surface shares the login page’s cursor construction engine.
+It discovers newly streamed elements and builds text, controls, tables, charts,
+and layout as they arrive. Motion can be paused; reduced-motion preferences show
+complete usable content immediately. Cursor animation never submits user actions.
+
+Maps automatically switch to a key-free, WebGL-free street map when the primary
+SDK, credentials or street tiles fail. Place searches retry twice at most, then
+recover matching saved results for the current account. The eight most recent
+successful searches are retained locally, with a saved timestamp displayed during
+an outage. Reconnecting refreshes the backup map's current search. Loaded street
+tiles remain visible offline; if tiles cannot load, pins, coordinates, directions
+links and camera controls remain usable. New searches and uncached streets still
+require an internet connection. Advanced map layers remain available through the
+full map, with a retry control in the backup view.
+
+Map resilience checks: `node scripts/map-reliability-regressions.mjs` and
+`node scripts/map-fallback-browser-regressions.mjs` cover account isolation,
+provider failures, failed tiles, offline use and reconnection using isolated data.

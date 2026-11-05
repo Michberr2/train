@@ -6,8 +6,11 @@ import { parseReleaseArguments, selectReleaseChecks } from './lib/release-check-
 // account mutations, provider credentials and public-domain changes are excluded.
 const cwd = fileURLToPath(new URL('../', import.meta.url))
 export const OFFLINE_RELEASE_CHECKS = [
+  'check-ai-runtime-release.mjs',
+  'ai-runtime-release-regressions.mjs',
   'deploy-release-regressions.mjs',
   'login-access-regressions.mjs',
+  'generative-ui-regressions.mjs',
   'offline-release-checks-regressions.mjs',
   'cursor-build-browser-regressions.mjs',
   'adaptive-workspace-browser-regressions.mjs',
@@ -16,6 +19,16 @@ export const OFFLINE_RELEASE_CHECKS = [
   'project-data-regressions.mjs',
   'cloudflare-store-regressions.mjs',
   'chat-handler-regressions.mjs',
+  'chat-protocol-regressions.mjs',
+  'agent-action-contract-regressions.mjs',
+  'local-ai-regressions.mjs',
+  'browser-model-download-regressions.mjs',
+  'local-tool-grammar-regressions.mjs',
+  'local-ollama-regressions.mjs',
+  'local-ollama-browser-regressions.mjs',
+  'local-swarm-browser-regressions.mjs',
+  'chat-swarm-browser-regressions.mjs',
+  'artifact-build-browser-regressions.mjs',
   'chat-verifier-regressions.mjs',
   'chat-budget-regressions.mjs',
   'chat-length-regressions.mjs',
@@ -58,6 +71,7 @@ export const OFFLINE_RELEASE_CHECKS = [
   'map-plan-regressions.mjs',
   'map-places-recovery-regressions.mjs',
   'map-search-recovery-regressions.mjs',
+  'map-reliability-regressions.mjs',
   'chrome-action-regressions.mjs',
   'chrome-content-regressions.mjs',
   'studio-cancellation-regressions.mjs',
@@ -89,10 +103,14 @@ export const OFFLINE_RELEASE_CHECKS = [
   'studio-artifact-regressions.mjs',
   'autopilot-output-browser-regressions.mjs',
   'map-browser-verify.mjs',
+  'map-fallback-browser-regressions.mjs',
+  ['map-fallback-browser-regressions.mjs', '--no-key'],
   ['map-browser-verify.mjs', '--camera'],
   ['map-browser-verify.mjs', '--layers'],
   ['map-browser-verify.mjs', '--comparisons'],
-  'workspace-shell-browser-regressions.mjs',
+  ['map-browser-verify.mjs', '--recovery'],
+  ['map-browser-verify.mjs', '--instant'],
+  'generative-workspace-browser-regressions.mjs',
 ]
 export function runOfflineReleaseChecks({ browserTestSkipReason, run = spawnSync, log = console.log, sourceEnv = process.env } = {}) {
   const plan = selectReleaseChecks(OFFLINE_RELEASE_CHECKS, browserTestSkipReason)

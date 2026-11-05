@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@mlc-ai/web-llm": "0.2.87",
     "@types/three": "^0.184.1",
     "docx": "^9.7.1",
     "exceljs": "^4.4.0",
@@ -29,7 +30,8 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "simple-icons": "^13.21.0",
-    "three": "^0.184.0"
+    "three": "^0.184.0",
+    "@nalu/ai-runtime": "file:../vendor/nalu-ai-runtime-0.1.1.tgz"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",

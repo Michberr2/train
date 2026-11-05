@@ -28,7 +28,15 @@ const frame = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n
 const entry = `import React from'react';import{createRoot}from'react-dom/client';import AgentsPanel from'/src/components/workspace/AgentsPanel.tsx';import'/src/globals.css';createRoot(document.getElementById('root')).render(React.createElement(AgentsPanel));`
 const cacheDir = await mkdtemp(join(tmpdir(), 'nalu-autopilot-browser-'))
 const server = await createServer({ configFile: false, root, cacheDir, css: { postcss: { plugins: [tailwindcss({ ...tailwindConfig, content: [`${root}/src/**/*.{js,ts,jsx,tsx}`] })] } }, plugins: [react(), {
-  name: 'autopilot-output-fixture', resolveId(id) { if (id === '/@output-fixture') return '\0output-fixture' }, load(id) { if (id === '\0output-fixture') return entry },
+  // This suite verifies output files and account persistence with deterministic
+  // tokens. Local engine/session behavior is covered by local-ai-regressions.
+  name: 'autopilot-output-fixture', enforce: 'pre', resolveId(id, importer) {
+    if (id === '/@output-fixture') return '\0output-fixture'
+    if (id === './chatRequest' && importer?.endsWith('/agentApi.ts')) return '\0output-token-stream'
+  }, load(id) {
+    if (id === '\0output-fixture') return entry
+    if (id === '\0output-token-stream') return `export function requestChat(body,signal){return fetch('/__fixture-model',{method:'POST',headers:{'Content-Type':'application/json'},body,signal})}`
+  },
   configureServer(vite) { vite.middlewares.use('/__output-fixture', async (_, res) => { res.setHeader('Content-Type', 'text/html'); res.end(await vite.transformIndexHtml('/__output-fixture', '<!doctype html><html><body><main id="root" style="height:100vh"></main><script type="module" src="/@output-fixture"></script></body></html>')) }) },
 }], server: { host: '127.0.0.1', port: 0, strictPort: false } })
 let origin
@@ -47,14 +55,14 @@ try {
   await page.route('**/*', async route => {
     const request = route.request(), url = new URL(request.url())
     if (url.origin !== origin) return route.abort()
-    if (!url.pathname.startsWith('/api/')) return route.continue()
+    if (!url.pathname.startsWith('/api/') && url.pathname !== '/__fixture-model') return route.continue()
     const body = request.method() === 'POST' ? request.postDataJSON() : {}
     report.calls.push({ path: url.pathname, action: body?.action })
     if (url.pathname === '/api/task-attachments') {
       const response = await attachments.request({ method: request.method(), token: request.headers().authorization?.replace(/^Bearer /, ''), body, query: Object.fromEntries(url.searchParams) })
       return route.fulfill({ status: response.code, headers: response.headers, json: response.body })
     }
-    if (url.pathname === '/api/chat') {
+    if (url.pathname === '/__fixture-model') {
       const prompt = body.messages.at(-1).content
       const result = /meetings\/reservations/.test(prompt) ? [{ title: 'Café, review; plan 🐺', start: '2026-09-10T09:30', end: '2026-09-10T10:15', description: 'Exact source.\nKeep details.' }] : /CONTACTS/.test(prompt) ? [{ name: 'Café Wolf', org: 'R&D, LLC', email: 'wolf@example.test', phone: '+15555550123' }] : /inbox-organization/.test(prompt) ? [{ name: 'Receipts & invoices', from: 'receipts@example.test', subject: 'R&D <invoice>', label: 'Finance/Receipts', archive: true }] : { name: 'Café 🐺', revenue: 12, cost: 5 }
       return route.fulfill({ contentType: 'text/event-stream', body: frame('delta', { text: JSON.stringify(result) }) + frame('finish', { reason: 'stop' }) + frame('done', { ok: true }) })
@@ -73,7 +81,11 @@ try {
   await page.getByRole('button', { name: 'Run', exact: true }).waitFor()
   await page.getByRole('button', { name: 'Run', exact: true }).click()
   const storedFlow = () => page.evaluate(() => JSON.parse(localStorage.getItem('nalu-agent-flows'))[0])
-  await expect.poll(async () => (await storedFlow()).run?.status, { timeout: 90000 }).toBe('done')
+  await expect.poll(async () => {
+    const state = await storedFlow()
+    if (state.run?.status === 'error') throw new Error(`Output fixture failed: ${JSON.stringify(state.run)}`)
+    return state.run?.status
+  }, { timeout: 90000 }).toBe('done')
   const metas = await page.evaluate(() => JSON.parse(localStorage.getItem('nalu-agent-output-meta') || '[]'))
   assert.equal(metas.length, kinds.length)
   assert.equal(attachments.db.attachments.size, kinds.length)

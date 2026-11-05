@@ -1,0 +1,50 @@
+/* Layout follows the requested tool; a question requesting a map opens the full-page map. */
+.generative-map-details:not([hidden]){display:contents;}
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .nalu-workspace:has(.generative-canvas[data-layout=map]){padding:0;gap:0;}
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .nalu-workspace:has(.generative-canvas[data-layout=map])>.review-workspace-header{padding-inline:24px;}
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .nalu-workspace:has(.generative-canvas[data-layout=map])>.ws-main{padding:0;border:0;border-radius:0;overflow:hidden;}
+.generative-canvas[data-layout=map]{position:relative;height:100%;min-height:0;padding:0;display:flex;flex-direction:column;}
+.generative-canvas[data-layout=map]>.generative-canvas-header{flex-shrink:0;min-height:56px;padding:10px 24px;background:var(--gw-panel);color:var(--gw-ink);border-bottom:1px solid var(--gw-line);gap:16px;}
+.generative-canvas[data-layout=map] .generative-canvas-header :is(.generative-eyebrow,p){display:none;}
+.generative-canvas[data-layout=map] .generative-canvas-header h1{font-size:18px;margin:0;letter-spacing:-.025em;}
+.generative-canvas[data-layout=map] .generative-canvas-toolbar button{color:var(--gw-ink);border-color:var(--gw-line);padding:8px 10px;}
+.generative-canvas[data-layout=map]>.generative-grid{position:relative;display:block;flex:1;min-height:0;}
+.generative-canvas[data-layout=map]>.generative-grid>[data-block-type=map]{position:absolute;inset:0;display:flex;flex-direction:column;padding:0;margin:0;border:0;border-radius:0;box-shadow:none;animation:none;}
+.generative-canvas[data-layout=map] [data-block-type=map]>h2{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);}
+.generative-canvas[data-layout=map] .generative-live-map{flex:1;height:100%;min-height:0;border:0;}
+.generative-canvas[data-layout=map]>.generative-composer{position:absolute;bottom:12px;left:16px;right:16px;width:min(640px,calc(100% - 32px));margin:0 auto;z-index:12;}
+.generative-canvas[data-layout=map] .generative-map-details:not([hidden]){position:absolute;right:16px;top:16px;bottom:100px;z-index:14;display:flex;flex-direction:column;width:min(380px,calc(100% - 32px));overflow:auto;gap:12px;box-shadow:0 12px 40px #0004;}
+.generative-canvas[data-layout=map] .generative-map-details>.generative-block{flex-shrink:0;}
+/* Analysis uses a numerical worksheet; prose uses a reading column. */
+.generative-canvas[data-layout=analysis] [data-block-type=calculator]{border-top:4px solid var(--gw-accent);padding-top:24px;}
+.generative-canvas [data-block-type=metrics]{background:var(--gw-subtle);border:0;border-left:3px solid var(--gw-accent);}
+.generative-canvas [data-block-type=table]{grid-column:1/-1;border-radius:0;}
+.generative-canvas[data-layout=document] [data-block-type=text]{max-width:900px;margin-inline:auto;width:100%;padding:clamp(24px,4vw,56px);}
+.generative-canvas [data-block-type=checklist]{border-top:0;border-bottom:3px solid var(--gw-accent);}
+.generative-canvas[data-layout=operations] :is([data-block-type=workflow],[data-block-type=agents]){grid-column:1/-1;padding:0;overflow:hidden;}
+.generative-canvas[data-layout=operations] :is([data-block-type=workflow],[data-block-type=agents])>h2{padding:20px 24px;margin:0;border-bottom:1px solid var(--gw-line);}
+/* Studio keeps the artwork on a drafting surface and the brief in a rail. */
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .ws-studio-preview-body{background-color:var(--gw-subtle);background-image:radial-gradient(var(--gw-line) .6px,transparent .6px);background-size:18px 18px;}
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .ws-studio-brief{border-left:1px solid var(--gw-line);background:var(--gw-panel);}
+/* Memory is a split archive, with a wide context graph rather than studio chrome. */
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .memory-review-layout{grid-template-columns:minmax(280px,.85fr) minmax(0,1.4fr);}
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .memory-review-network{background:var(--gw-subtle);}
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .memory-review-canvas{height:clamp(200px,30vh,380px);}
+@media(max-width:767px){
+ .generative-canvas[data-layout=map]>.generative-canvas-header{padding:8px 12px;align-items:center;}
+ .generative-canvas[data-layout=map] .generative-canvas-header h1{font-size:14px;max-width:38vw;}
+ .generative-canvas[data-layout=map] .generative-canvas-toolbar{flex-direction:row;gap:5px;flex-wrap:wrap;justify-content:flex-end;}
+ .generative-canvas[data-layout=map] .generative-canvas-toolbar button{font-size:10px;padding:6px;}
+ .nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .nalu-workspace:has(.generative-canvas[data-layout=map])>.review-workspace-header{padding-inline:16px;}
+ .nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .memory-review-layout{grid-template-columns:minmax(0,1fr);}
+}
+
+/* Autopilot is an operations board, with a workflow rail and connected steps. */
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .ap-workspace{background:var(--gw-subtle);}
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .ap-rail{border-right:1px solid var(--gw-line);background:var(--gw-panel);}
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .ap-stage{background-image:linear-gradient(rgb(var(--gw-line-rgb)/.16) 1px,transparent 1px),linear-gradient(90deg,rgb(var(--gw-line-rgb)/.16) 1px,transparent 1px);background-size:32px 32px;}
+
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .generative-canvas[data-layout=map] .generative-canvas-toolbar button{color:var(--gw-ink);background:var(--gw-input);border-color:var(--gw-line);}
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .nalu-workspace:has(.generative-canvas[data-layout=map])>.review-workspace-header{background:var(--gw-panel);border-color:var(--gw-line);}
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace] .nalu-workspace:has(.generative-canvas[data-layout=map]) .review-workspace-header :is(.review-logo-wordmark,.workspace-account-trigger,.generative-header-nav button){color:var(--gw-ink);}
+.nalu-design-review.workspace-design-surface[data-workspace-design][data-generative-workspace]:has(.generative-canvas[data-layout=map])>.generative-motion{color:var(--gw-ink);}

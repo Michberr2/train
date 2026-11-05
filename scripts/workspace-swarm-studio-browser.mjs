@@ -17,25 +17,29 @@ await fs.writeFile(entry, `import React,{useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import useSwarm from ${JSON.stringify(path.join(clientRoot,'src/components/workspace/design/useSwarm.ts'))};
 import WorkspaceSwarm from ${JSON.stringify(path.join(clientRoot,'src/components/workspace-preview/real/WorkspaceSwarm.tsx'))};
+import DelegatedWorkCard from ${JSON.stringify(path.join(clientRoot,'src/components/workspace/design/DelegatedWorkCard.tsx'))};
 import ${JSON.stringify(path.join(clientRoot,'src/globals.css'))};
-function App(){const [owner,setOwner]=useState('browser-owner');const swarm=useSwarm({accountId:owner,active:true});
+function App(){const [owner,setOwner]=useState('browser-owner');const [inline,setInline]=useState(false);const swarm=useSwarm({accountId:owner,active:true});
+window.__showInlineCreations=value=>setInline(value);
 window.__switchSwarmAccount=()=>{localStorage.setItem('nalu-token','other-token');localStorage.setItem('nalu-data-owner','other-owner');setOwner('other-owner');window.dispatchEvent(new Event('nalu-hydrated'))};
-return <div data-workspace-design className="nalu-design-review" style={{height:'100dvh',padding:12,background:'#edf3fa'}}><WorkspaceSwarm swarm={swarm} navigationKey={0} availableChatIds={[]} onOpenChat={()=>{throw Error('Ordinary chat must not be opened')}}/></div>};createRoot(document.getElementById('root')!).render(<App/>);`)
+const saved={requestId:'inline-creations-request',plan:{version:1,projects:[{key:'launch',title:'Launch project',brief:'Launch creations',tasks:[{key:'doc',kind:'document',instructions:'Make launch brief'},{key:'site',kind:'website',instructions:'Launch website'}]}]}};
+return <div data-workspace-design className="nalu-design-review" style={{height:'100dvh',padding:12,background:'#edf3fa'}}>{inline?<><input aria-label="Keep chatting"/><DelegatedWorkCard saved={saved} swarm={swarm} onOpen={()=>{}} onTrack={()=>{}}/></>:<WorkspaceSwarm swarm={swarm} navigationKey={0} availableChatIds={[]} onOpenChat={()=>{throw Error('Ordinary chat must not be opened')}}/>}</div>};createRoot(document.getElementById('root')!).render(<App/>);`)
 let browser, server, page
 const errors = [], forbidden = [], calls = [], report = []
 let revision = 1, artifactRevision = 1, delayArtifact = false, releaseArtifact
-const project = { id: 'launch', title: 'Launch project', brief: 'Create a real launch brief and website.', members: ['Nalu','Rocky','Milo'], createdAt: 1, updatedAt: 1 }
+const project = { id: 'launch', title: 'Launch project', brief: 'Create a real launch brief and website.', members: ['Nalu','Rocky','Milo'], createdAt: 1, updatedAt: 1, delegation: { requestId: 'inline-creations-request', hash: 'a'.repeat(64), key: 'launch' } }
 const document = { type: 'studio-artifact', studioKind: 'document', payload: { title: 'Launch brief', blocks: [{type:'heading',text:'Our launch'},{type:'p',text:'This document belongs to the selected Swarm task.'}], design: {background:'#FFFFFF',ink:'#173E39'} }, status:'done',summary:'Saved creation' }
 let website = { type:'studio-artifact',studioKind:'website',payload:{ html:'<!doctype html><html><body><h1>Original launch</h1><p>Saved website content</p></body></html>', quality:{runtime:{status:'passed',widths:[390],checks:[],limitations:[]}} },status:'done',summary:'Saved website' }
 let tasks = [{id:'doc-task',projectId:'launch',title:'Make launch brief',assignee:'Milo',status:'waiting',summary:'Continue this document in Studio.',threads:['Milo'],updatedAt:1,executionId:'source-doc',handoff:{studioKind:'document',prompt:'Write a launch brief',reason:'Needs document creation'}},
 {id:'site-task',projectId:'launch',title:'Launch website',assignee:'Nalu',status:'done',summary:'Saved website.',threads:['group'],updatedAt:1,executionId:'site-job',artifact:{executionId:'site-job',studioKind:'website',revision:1}}]
+tasks.push({...tasks[1],id:'private-site',title:'PRIVATE_SITE_CANARY',assignee:'Rocky',threads:['Rocky'],executionId:'private-job',artifact:{executionId:'private-job',studioKind:'website',revision:1}})
 const state = () => ({version:1,mode:'live',projects:[project],tasks,messages:[],turns:[]})
 try {
  process.chdir(clientRoot)
  server = await createServer({ root:clientRoot, configFile:false, cacheDir:path.join(fixture,'vite-cache'), resolve:{dedupe:['react','react-dom']}, plugins:[react(),{name:'swarm-test-entry',configureServer(server){server.middlewares.use(async(req,res,next)=>{if(req.url!=='/__swarm-test')return next();res.setHeader('Content-Type','text/html');res.end(await server.transformIndexHtml('/__swarm-test',`<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"/></head><body><div id="root"></div><script type="module" src="/@fs/${entry}"></script></body></html>`))})}}],server:{host:'127.0.0.1',port:0,fs:{allow:[root,fixture,'/Users/michaelberryii/train/node_modules']}} })
  await server.listen(); console.log('Local fixture server ready'); const address=server.httpServer.address(), origin=`http://127.0.0.1:${address.port}`
  browser=await chromium.launch(); console.log('Chromium ready'); const context=await browser.newContext({viewport:{width:1280,height:900}})
- await context.addInitScript(()=>{if(window!==top)return;localStorage.setItem('nalu-token','browser-token');localStorage.setItem('nalu-data-owner','browser-owner')})
+ await context.addInitScript(()=>{if(window!==top)return;localStorage.setItem('nalu-token','browser-token');localStorage.setItem('nalu-data-owner','browser-owner');localStorage.setItem('device-local-ai-v1',JSON.stringify({enabled:true,profile:'balanced'}))})
  await context.route('**/*',async route=>{
   const request=route.request(),url=new URL(request.url())
   if(url.origin!==origin){if(url.protocol==='http:'||url.protocol==='https:')return route.abort();return route.continue()}
@@ -96,8 +100,43 @@ try {
  await page.screenshot({path:path.join(out,'mobile-website.png')})
  await dialog.getByRole('button',{name:'Close creation'}).click()
  await page.setViewportSize({width:1280,height:900})
+ // The parent chat shows only work explicitly shared with this project's
+ // group. The preceding private-room test keeps its original private scope.
+ tasks=tasks.map(task=>task.id==='doc-task'?{...task,threads:['Milo','group']}:task);revision++
+ await page.getByRole('button',{name:'Chat with Milo about Launch project'}).click()
+ await page.evaluate(()=>window.__showInlineCreations(true))
+ const inline=page.getByRole('region',{name:'Delegated agent work'})
+ await expect(inline.getByText('PRIVATE_SITE_CANARY')).toHaveCount(0)
+ const chat=page.getByRole('textbox',{name:'Keep chatting'});await chat.fill('My next request');await chat.focus()
+ await expect(inline.getByRole('button',{name:'Word',exact:true})).toBeVisible({timeout:30000})
+ assert.equal(await chat.evaluate(element=>element===document.activeElement),true,'automatically arriving creations must not steal composer focus')
+ await expect(page.getByRole('dialog')).toHaveCount(0)
+ await inline.locator('[data-creation-execution="site-job"]').scrollIntoViewIfNeeded()
+ const savedSite=inline.locator('[data-creation-execution="site-job"]')
+ await expect(savedSite.frameLocator('iframe').getByRole('heading',{name:'Edited launch'})).toBeVisible()
+ await savedSite.getByRole('button',{name:'Edit HTML',exact:true}).click()
+ await savedSite.getByRole('textbox',{name:'HTML source'}).fill('<!doctype html><html><body><h1>Inline launch</h1><p>Edited and saved directly from the parent chat.</p></body></html>')
+ await savedSite.getByRole('button',{name:'Save changes',exact:true}).click()
+ await expect(savedSite.getByText('Changes saved to this task.')).toBeVisible()
+ await savedSite.getByRole('button',{name:'Show preview',exact:true}).click()
+ await expect(savedSite.frameLocator('iframe').getByRole('heading',{name:'Inline launch'})).toBeVisible()
+ assert.ok(calls.filter(body=>body.action==='artifact').every(body=>body.taskId!=='private-site'),'parent results must never fetch unshared private artifacts')
+ const titles=await inline.locator('.swarm-studio-inline').evaluateAll(elements=>elements.map(element=>element.getAttribute('aria-labelledby')))
+ assert.equal(new Set(titles).size,2,'each inline creation has its own accessible title')
+ await savedSite.getByRole('button',{name:'Collapse creation'}).click()
+ await expect(savedSite.locator('iframe')).toHaveCount(0)
+ await savedSite.getByRole('button',{name:'Show creation'}).click()
+ await expect(savedSite.frameLocator('iframe').getByRole('heading',{name:'Inline launch'})).toBeVisible()
+ await page.setViewportSize({width:390,height:844})
+ assert.ok(await inline.evaluate(element=>element.getBoundingClientRect().right<=innerWidth+1),'inline results fit the phone viewport')
+ await page.screenshot({path:path.join(out,'mobile-inline-creations.png')})
+ report.push('Saved document and website automatically appear in their parent chat, retain Word/HTML controls, preserve composer focus, use unique accessible titles, collapse/reopen, and fit mobile without opening a modal')
+ console.log('PASS '+report.at(-1))
+ await page.evaluate(()=>window.__showInlineCreations(false))
+ await page.setViewportSize({width:1280,height:900})
+ await page.getByRole('button',{name:'Group',exact:true}).click()
  delayArtifact=true
- await page.getByRole('button',{name:'View creation',exact:true}).click()
+ await page.getByRole('article',{name:/^Launch website, Nalu,/}).getByRole('button',{name:'View creation',exact:true}).click()
  await expect(dialog.getByText('Loading saved creation…')).toBeVisible()
  await page.waitForFunction(()=>typeof window.__switchSwarmAccount==='function')
  await page.evaluate(()=>window.__switchSwarmAccount())
@@ -106,7 +145,7 @@ try {
  await expect(page.getByText('Make room for an idea.')).toBeVisible()
  assert.deepEqual(forbidden,[]);assert.deepEqual(errors,[])
  report.push('Actual private task continuation, authenticated requests, saved DocCard/Word export control, real website iframe, explicit scoped Save changes, mobile containment, account-switch stale-read dismissal, no ordinary API calls')
- console.log('PASS '+report[0])
+ console.log('PASS '+report.at(-1))
 } catch(error) {
  if(page){await page.screenshot({path:path.join(out,'failure.png')}).catch(()=>{});await fs.writeFile(path.join(out,'failure.txt'),await page.locator('body').innerText().catch(()=>''))}
  console.error('Browser failure',error.message,errors);throw error

@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto'
+import { DEVICE_SWARM_PARALLELISM } from '../shared/swarmDevice'
 import { CloudflareStore, type CloudflareStatement } from './_cloudflareStore'
 import type { ConnectionClient } from './_connectionStore'
 import type { SwarmState, SwarmThread, SwarmAgentId } from '../client/src/components/workspace/design/swarmTypes'
 
 export type SwarmJobStatus = 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'cancelled'
 export interface SwarmJob {
+  executionMode?: 'device' | 'cloud'
+  deviceReceipt?: { tokenHash: string; resultHash: string }
   id: string; projectId: string; thread: SwarmThread; kind: 'reply' | 'task'; taskId?: string; turnId?: string
   speaker: SwarmAgentId; status: SwarmJobStatus; input: string; requestId: string
   createdAt: number; updatedAt: number; leaseToken?: string; leaseUntil?: number; attempts: number
@@ -13,7 +16,10 @@ export interface SwarmJob {
   quotaCleanupPending?: boolean
   artifact?: { type: string; [key: string]: unknown }
 }
-export interface SwarmSnapshot { state: SwarmState; jobs: SwarmJob[]; revision: number }
+export interface SwarmDelegationCommand {
+  id: string; status: 'accepted' | 'cancelled'; hash?: string; createdAt: number; updatedAt: number
+}
+export interface SwarmSnapshot { state: SwarmState; jobs: SwarmJob[]; revision: number; delegations?: SwarmDelegationCommand[] }
 export type SwarmMutation = (draft: SwarmSnapshot) => SwarmSnapshot | void
 export const SWARM_LEASE_MS = 120_000
 export const SWARM_MAX_STATE_BYTES = 3_000_000
@@ -32,7 +38,7 @@ function validAgent(project: SwarmState['projects'][number], member: string): bo
     && !!profile.appearance && [profile.appearance.coat, profile.appearance.ears, profile.appearance.markings, profile.appearance.eyes].every((value, index) => Number.isInteger(value) && value >= 0 && value < [8, 4, 6, 4][index])
 }
 const STATUSES = new Set(['queued', 'running', 'waiting', 'done', 'failed', 'cancelled'])
-const TABLES = ['projects', 'rooms', 'messages', 'tasks', 'task_threads', 'turns', 'jobs'] as const
+const TABLES = ['projects', 'rooms', 'messages', 'tasks', 'task_threads', 'turns', 'jobs', 'delegations'] as const
 type Table = typeof TABLES[number]
 type RecordRow = { id: string; projectId?: string; thread?: string; status?: string; requestId?: string; leaseUntil?: number; updatedAt?: number; [key: string]: unknown }
 type Records = Record<Table, RecordRow[]>
@@ -64,11 +70,23 @@ function records(snapshot: SwarmSnapshot): Records {
   const { state } = snapshot
   const rooms = state.projects.flatMap(project => (['group', ...project.members] as SwarmThread[]).map(thread => ({ id: JSON.stringify([project.id, thread]), projectId: project.id, thread })))
   const links = state.tasks.flatMap(task => (task.threads || []).map(thread => ({ id: JSON.stringify([task.id, thread]), projectId: task.projectId, taskId: task.id, thread })))
-  return { projects: state.projects, rooms, messages: state.messages, tasks: state.tasks, task_threads: links, turns: state.turns, jobs: snapshot.jobs } as unknown as Records
+  return { projects: state.projects, rooms, messages: state.messages, tasks: state.tasks, task_threads: links, turns: state.turns, jobs: snapshot.jobs, delegations: snapshot.delegations || [] } as unknown as Records
 }
 
 function assertSnapshot(value: SwarmSnapshot, previous?: SwarmSnapshot): void {
   const state = value.state
+  const commands = value.delegations || []
+  if (commands.length > 1000 || new Set(commands.map(command => command.id)).size !== commands.length) throw new Error('Invalid delegation command history.')
+  for (const command of commands) {
+    if (!/^[\w:-]{8,100}$/.test(command.id) || !['accepted', 'cancelled'].includes(command.status)
+      || (command.hash !== undefined && !/^[a-f0-9]{64}$/.test(command.hash)) || command.status === 'accepted' && !command.hash
+      || !timestamp(command.createdAt) || !timestamp(command.updatedAt) || command.updatedAt < command.createdAt) throw new Error('Invalid delegation command.')
+  }
+  for (const prior of previous?.delegations || []) {
+    const current = commands.find(command => command.id === prior.id)
+    if (!current || current.hash !== prior.hash || current.createdAt !== prior.createdAt || current.updatedAt < prior.updatedAt
+      || prior.status === 'cancelled' && current.status !== 'cancelled') throw new Error('A saved delegation command cannot be removed or restarted.')
+  }
   if (state.version !== 1 || state.mode !== 'live') throw new Error('Only real Swarm state can be saved.')
   const projectMap = new Map(state.projects.map(project => [project.id, project]))
   const room = (projectId: string, thread: string) => {
@@ -83,6 +101,9 @@ function assertSnapshot(value: SwarmSnapshot, previous?: SwarmSnapshot): void {
     }
   }
   for (const project of state.projects) {
+    if (project.delegation && (typeof project.delegation.requestId !== 'string' || !/^[\w:-]{8,100}$/.test(project.delegation.requestId) || !/^[a-f0-9]{64}$/.test(project.delegation.hash) || !/^[a-zA-Z0-9_-]{1,40}$/.test(project.delegation.key))) throw new Error('Invalid delegated project receipt.')
+    const priorDelegation = previous?.state.projects.find(item => item.id === project.id)?.delegation
+    if (priorDelegation && JSON.stringify(priorDelegation) !== JSON.stringify(project.delegation)) throw new Error('A delegated project receipt cannot be rewritten.')
     if (!Array.isArray(project.members) || !project.members.length || project.members.length > 1000 || new Set(project.members).size !== project.members.length || project.members.some(member => !validAgent(project, member))) throw new Error('Invalid Swarm membership.')
     if (typeof project.title !== 'string' || typeof project.brief !== 'string' || !timestamp(project.createdAt) || !timestamp(project.updatedAt)) throw new Error('Invalid Swarm project.')
   }
@@ -102,6 +123,8 @@ function assertSnapshot(value: SwarmSnapshot, previous?: SwarmSnapshot): void {
   const tasks = new Map(state.tasks.map(task => [task.id, task]))
   const requests = new Set<string>()
   for (const job of value.jobs) {
+    if (job.executionMode !== undefined && !['device', 'cloud'].includes(job.executionMode)) throw new Error('Invalid Swarm execution mode.')
+    if (job.deviceReceipt && (job.executionMode !== 'device' || ['queued', 'running'].includes(job.status) || job.leaseToken !== undefined || !/^[a-f0-9]{64}$/.test(job.deviceReceipt.tokenHash) || !/^[a-f0-9]{64}$/.test(job.deviceReceipt.resultHash))) throw new Error('Invalid device completion receipt.')
     if (!room(job.projectId, job.thread) || !projectMap.get(job.projectId)?.members.includes(job.speaker) || !STATUSES.has(job.status) || !['reply', 'task'].includes(job.kind) || !validId(job.requestId) || requests.has(job.requestId) || typeof job.input !== 'string') throw new Error('Invalid Swarm job.')
     requests.add(job.requestId)
     if (!timestamp(job.createdAt) || !timestamp(job.updatedAt) || !Number.isSafeInteger(job.attempts) || job.attempts < 0 || (job.progress !== undefined && (!Number.isFinite(job.progress) || job.progress < 0 || job.progress > 1))) throw new Error('Invalid Swarm job progress.')
@@ -118,7 +141,7 @@ function assertSnapshot(value: SwarmSnapshot, previous?: SwarmSnapshot): void {
     for (const job of value.jobs) {
       const old = oldJobs.get(job.id)
       if (!old) continue
-      for (const key of ['requestId', 'projectId', 'thread', 'kind', 'taskId', 'turnId', 'speaker', 'input', 'createdAt'] as const) if (job[key] !== old[key]) throw new Error('A Swarm job request cannot be rewritten.')
+      for (const key of ['executionMode', 'requestId', 'projectId', 'thread', 'kind', 'taskId', 'turnId', 'speaker', 'input', 'createdAt'] as const) if (job[key] !== old[key]) throw new Error('A Swarm job request cannot be rewritten.')
       if (old.status !== 'queued' && job.status === 'queued') throw new Error('Retry Swarm work with a new job ID.')
       if (['done', 'failed', 'cancelled'].includes(old.status) && job.status !== old.status) throw new Error('A finished Swarm attempt cannot be restarted.')
     }
@@ -150,6 +173,7 @@ function assemble(revision: unknown, data: Partial<Record<Table, RecordRow[]>>):
   snapshot.state.tasks = (data.tasks || []) as unknown as SwarmState['tasks']
   snapshot.state.turns = (data.turns || []) as unknown as SwarmState['turns']
   snapshot.jobs = (data.jobs || []) as unknown as SwarmJob[]
+  snapshot.delegations = (data.delegations || []) as unknown as SwarmDelegationCommand[]
   snapshot.state.messages.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
   snapshot.jobs.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
   assertSnapshot(snapshot)
@@ -344,16 +368,17 @@ export class SwarmStore {
   async dueOwners(limit = 20): Promise<string[]> {
     await this.ensure()
     const cap = Math.max(1, Math.min(100, Math.floor(limit) || 20)), now = Date.now()
-    if (this.client instanceof CloudflareStore) return (await this.client.query(`SELECT owner_id,MIN(updated_at) AS oldest FROM nalu_swarm_jobs WHERE status='queued' OR (status='running' AND lease_until<=?) GROUP BY owner_id ORDER BY oldest LIMIT ?`, [now, cap])).results.map(row => String(row.owner_id))
+    if (this.client instanceof CloudflareStore) return (await this.client.query(`SELECT owner_id,MIN(updated_at) AS oldest FROM nalu_swarm_jobs WHERE COALESCE(json_extract(payload,'$.executionMode'),'cloud')<>'device' AND (status='queued' OR (status='running' AND lease_until<=?)) GROUP BY owner_id ORDER BY oldest LIMIT ?`, [now, cap])).results.map(row => String(row.owner_id))
     const client = this.client
-    return serial(client, async () => (await client.query(`SELECT owner_id,MIN(updated_at) AS oldest FROM nalu_swarm_jobs WHERE status='queued' OR (status='running' AND lease_until<=$1) GROUP BY owner_id ORDER BY oldest LIMIT $2`, [now, cap])).rows.map(row => String(row.owner_id)))
+    return serial(client, async () => (await client.query(`SELECT owner_id,MIN(updated_at) AS oldest FROM nalu_swarm_jobs WHERE COALESCE(payload->>'executionMode','cloud')<>'device' AND (status='queued' OR (status='running' AND lease_until<=$1)) GROUP BY owner_id ORDER BY oldest LIMIT $2`, [now, cap])).rows.map(row => String(row.owner_id)))
   }
 
-  async claim(owner: string, jobId?: string, maxActive = 3): Promise<SwarmJob | null> {
-    const now = Date.now(), token = randomUUID(), maximum = Math.max(1, Math.min(3, Math.floor(maxActive) || 3))
+  async claim(owner: string, jobId?: string, maxActive = 3, executionMode: 'device' | 'cloud' = 'cloud'): Promise<SwarmJob | null> {
+    const now = Date.now(), token = randomUUID(), maximum = Math.max(1, Math.min(executionMode === 'device' ? DEVICE_SWARM_PARALLELISM : 3, Math.floor(maxActive) || 3))
+    const matchesMode = (job: SwarmJob) => (job.executionMode || 'cloud') === executionMode
     const saved = await this.mutate(owner, draft => {
       for (const job of draft.jobs) {
-        if (job.status !== 'running' || (job.leaseUntil || 0) > now) continue
+        if (!matchesMode(job) || job.status !== 'running' || (job.leaseUntil || 0) > now) continue
         job.status = 'failed'; job.error = INTERRUPTED; job.summary = INTERRUPTED; job.updatedAt = now
         delete job.leaseToken; delete job.leaseUntil
         const turn = draft.state.turns.find(item => item.id === job.turnId)
@@ -364,13 +389,13 @@ export class SwarmStore {
       // Preserve the interruption sweep even when it uses the small terminal
       // recovery allowance. Do not mix it with starting fresh work at the cap.
       if (Buffer.byteLength(JSON.stringify(draft.state)) > SWARM_MAX_STATE_BYTES || Buffer.byteLength(JSON.stringify(draft)) > SWARM_MAX_SNAPSHOT_BYTES) return
-      if (draft.jobs.filter(job => job.status === 'running').length >= maximum) return
-      const job = draft.jobs.find(item => item.status === 'queued' && (!jobId || item.id === jobId)
+      if (draft.jobs.filter(job => matchesMode(job) && job.status === 'running').length >= maximum) return
+      const job = draft.jobs.find(item => matchesMode(item) && item.status === 'queued' && (!jobId || item.id === jobId)
         && !blockedByEarlierGroupReply(draft, item))
       if (!job) return
       job.status = 'running'; job.leaseToken = token; job.leaseUntil = now + SWARM_LEASE_MS; job.attempts++; job.updatedAt = now
       const task = draft.state.tasks.find(item => item.id === job.taskId)
-      if (task && (!task.executionId || task.executionId === job.id)) { task.status = 'running'; task.executionId = job.id; task.updatedAt = now }
+      if (task && (!task.executionId || task.executionId === job.id)) { task.status = 'running'; task.executionId = job.id; task.updatedAt = now; if (executionMode === 'device') task.summary = 'Running on this computer.' }
     })
     return saved.jobs.find(job => job.leaseToken === token && job.status === 'running') || null
   }

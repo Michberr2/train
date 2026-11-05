@@ -18,12 +18,34 @@ function setup(request, options = {}) {
 }
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 
+test('lost delegation Stop is saved and replayed after reload without starting or navigating work', async () => {
+  const storage = memory(), calls = []
+  let offline = true
+  const request = async (_url, options) => {
+    const body = JSON.parse(options.body); calls.push(body)
+    if (body.action === 'stop-delegation' && offline) throw new TypeError('connection lost')
+    return response(base(), body.action === 'stop-delegation' ? 2 : 1)
+  }
+  const first = setup(request, { storage }); await first.refresh(); first.navigate('launch', 'Milo'); first.setDraft('Keep this private draft')
+  await assert.rejects(first.stopDelegation('chat:request-01:abcdef0123456789'), /not confirmed/)
+  assert.equal(first.getSnapshot().preferences.intents[0].action, 'stop-delegation')
+  first.dispose(); offline = false
+  const second = setup(request, { storage }); await second.refresh()
+  assert.equal(second.getSnapshot().preferences.intents.length, 0)
+  assert.equal(second.getSnapshot().preferences.recipient, 'Milo')
+  assert.equal(second.getSnapshot().preferences.drafts['launch::Milo'], 'Keep this private draft')
+  assert.equal(calls.filter(body => body.action === 'stop-delegation').length, 2)
+  assert.ok(calls.every(body => body.action === 'list' || body.action === 'stop-delegation'))
+  assert.ok(calls.filter(body => body.action === 'stop-delegation').every(body => body.requestId === 'chat:request-01:abcdef0123456789'))
+  second.dispose()
+})
+
 test('transport uses explicit account authorization and rejects fixture/malformed state', async () => {
   let captured
   const result = await requestSwarm(account, { action: 'list' }, new AbortController().signal, () => account, async (url, options) => { captured = { url, options }; return response(base()) })
   assert.equal(captured.url, '/api/swarm')
   assert.equal(captured.options.headers.Authorization, 'Bearer token-one')
-  assert.deepEqual(JSON.parse(captured.options.body), { action: 'list' })
+  assert.deepEqual(JSON.parse(captured.options.body), { action: 'list', executionMode: 'device' })
   assert.equal(result.state.mode, 'live')
   assert.equal(isLiveSwarmState({ ...base(), mode: 'sample' }), false)
   const dogState = base()
@@ -250,4 +272,30 @@ test('the global work drawer stops the selected project task without navigating 
   assert.equal(client.getSnapshot().preferences.drafts['launch::Milo'], 'Keep this private draft.')
   await assert.rejects(client.stopProjectTask('travel', 'launch-work'), /not available in that project/)
   assert.equal(writes.length, 1); client.dispose()
+})
+
+test('a delegation recovered after a lost acknowledgement keeps its batch receipt and never queues duplicate work', async () => {
+  const storage = memory(), writes = []
+  let state = base(), revision = 1
+  const plan = { version: 1, projects: [
+    { key: 'website', title: 'Website project', brief: 'Public website brief.', tasks: [{ key: 'site', instructions: 'Build the public website.', kind: 'website' }] },
+    { key: 'document', title: 'Document project', brief: 'Separate document brief.', tasks: [{ key: 'doc', instructions: 'Write the separate document.', kind: 'document' }] },
+  ] }
+  const request = async (_url, options) => {
+    const body = JSON.parse(options.body)
+    if (body.action === 'list') return response(state, revision)
+    assert.equal(body.action, 'delegate-work'); assert.equal(body.executionMode, 'device'); writes.push(body)
+    state = { ...state, projects: [...state.projects, ...plan.projects.map((item, index) => ({ ...project(`delegated-${index}`), title: item.title, brief: item.brief, delegation: { requestId: body.requestId, hash: 'a'.repeat(64), key: item.key } }))] }; revision++
+    throw new TypeError('Lost delegation acknowledgement')
+  }
+  const first = setup(request, { storage }); await first.refresh(); first.navigate('launch', 'Milo'); first.setDraft('Keep this conversation separate.')
+  await assert.rejects(first.delegateWork(plan, 'chat:saved-request-0001')); first.dispose()
+  const second = setup(request, { storage }); await second.refresh()
+  assert.deepEqual(await second.delegateWork(plan, 'chat:saved-request-0001'), ['delegated-0', 'delegated-1'])
+  assert.equal(writes.length, 1)
+  assert.equal(writes[0].requestId, 'chat:saved-request-0001')
+  assert.equal(second.getSnapshot().preferences.activeProjectId, 'launch')
+  assert.equal(second.getSnapshot().preferences.recipient, 'Milo')
+  assert.equal(second.getSnapshot().preferences.drafts['launch::Milo'], 'Keep this conversation separate.')
+  second.dispose()
 })

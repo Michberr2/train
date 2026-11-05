@@ -15,6 +15,8 @@ const WorkspacePreview = import.meta.env.DEV
 const isWorkspacePreview = import.meta.env.DEV &&
   ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname) &&
   window.location.pathname === '/workspace-preview'
+const LocalAICheck = import.meta.env.DEV ? React.lazy(() => import('./components/LocalAICheck')) : null
+const isLocalAICheck = import.meta.env.DEV && ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname) && window.location.pathname === '/local-ai-check'
 
 // Stable per-device id, sent as a cookie with every same-origin /api request, so
 // anonymous visitors behind ONE shared IP (corporate / campus / carrier NAT) each
@@ -35,7 +37,7 @@ const isReset =
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {isWorkspacePreview && WorkspacePreview ? (
+    {isLocalAICheck && LocalAICheck ? <ThemeProvider><React.Suspense fallback={null}><LocalAICheck /></React.Suspense></ThemeProvider> : isWorkspacePreview && WorkspacePreview ? (
       <React.Suspense fallback={<div style={{ minHeight: '100vh', background: '#52736c' }} />}>
         <WorkspacePreview />
       </React.Suspense>
