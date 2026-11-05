@@ -2452,7 +2452,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
               ? await execTool(tc, repo, changesRef.current)
               : 'Error: connect a repo to use file tools.'
           if (isBrowserTool(tc.function.name) && !ctrl.signal.aborted) {
-            setAmbientHome(false); setView('browser'); setLauncherOpen(false); setAgentScreensOpen(false); setHasOpenedSpace(true)
+            openSpace('browser')
             if (reviewLayout) setReviewChatOpen(true)
           }
           conv.push({ role: 'tool', tool_call_id: tc.id, content: result })
