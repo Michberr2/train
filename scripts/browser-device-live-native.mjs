@@ -16,7 +16,13 @@ process.env.CHROMIUM_EXECUTABLE = '/Applications/Google Chrome.app/Contents/MacO
 const { DeviceRuntime, agentStep, startProxy } = createRequire(import.meta.url)(path.join(dir, 'test.cjs'))
 const proxy = await startProxy(); let steps = 0
 const runtime = new DeviceRuntime({ decide: async (_owner, input) => {
-  const decision = await agentStep(input)
+  const decision = process.argv.includes('--production')
+    ? await (async () => {
+      const response = await fetch('https://n4lu.com/api/web', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...input, action: 'agentstep' }), signal: AbortSignal.timeout(60000) })
+      if (!response.ok) throw Error('Production browser decision HTTP ' + response.status)
+      return response.json()
+    })()
+    : await agentStep(input)
   console.log('Synthetic page decision', ++steps, JSON.stringify(decision))
   if (decision.error) throw Error(decision.error)
   return decision
