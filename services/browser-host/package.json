@@ -1,0 +1,1 @@
+{"name":"nalu-browser-host","private":true,"type":"module","scripts":{"build":"node build.mjs"},"dependencies":{"@cloudflare/puppeteer":"1.4.0","playwright-core":"1.64.1","esbuild":"0.25.12"}}

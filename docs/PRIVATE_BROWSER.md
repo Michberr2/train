@@ -1,3 +1,15 @@
+# Current direction: browser on each user’s computer
+
+The current architecture is documented in [LOCAL_BROWSER.md](./LOCAL_BROWSER.md).
+The local device implementation in [services/browser-device](../services/browser-device/README.md)
+supersedes the hosted browser activation plan below. The Browser panel and chat
+tools now target the paired loopback companion. Do not activate hosted browser
+services or a public tunnel for this architecture. Native installer integration,
+live-model qualification and production deployment remain unfinished.
+
+The remainder records the earlier hosted prototype for compatibility/reference;
+it is not the current web runtime or release instructions.
+
 # Account browser workspace
 
 The web workspace now exposes a Browser app and `browser_work` / `browser_status` chat tools. The browser supports the existing Browser Use v2 integration and the dedicated Cloudflare Browser Run adapter in `cloudflare/nalu-browser`. Each authenticated account gets its own provider profile and at most one active task. Users sign in to Microsoft Word/Excel web apps or other sites in the live view. Nalu login does not import local Chrome cookies or grant Microsoft access.

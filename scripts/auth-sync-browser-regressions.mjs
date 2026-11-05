@@ -21,7 +21,7 @@ const server = await createServer({ configFile: false, root, cacheDir: `${output
   load(id) { if (id === '\0auth-fixture') return fixture },
   transform(code, id) { if (id === '\0auth-fixture') return transform(code, { loader: 'jsx', jsx: 'automatic' }) },
   configureServer(vite) { vite.middlewares.use('/__auth-test', async (_req, res) => { res.setHeader('Content-Type', 'text/html'); res.end(await vite.transformIndexHtml('/__auth-test', '<html><body><div id="root"></div><script type="module" src="/@auth-fixture"></script></body></html>')) }) },
-}], server: { host: '127.0.0.1', port: 0, strictPort: true, hmr: false } })
+}], server: { host: '127.0.0.1', port: 0, strictPort: false, hmr: false } })
 let browser, base
 const report = { passed: false, checks: [] }
 const record = name => { report.checks.push(name); console.log(`PASS ${name}`) }
