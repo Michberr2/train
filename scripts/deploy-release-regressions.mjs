@@ -4,13 +4,23 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { release, RELEASE_DOMAINS, verifyReleaseAncestry, verifyDeploymentMetadata, assertCanonicalWebDesign } from './deploy-release.mjs'
+import { release as runRelease, checkPublishedPreview, RELEASE_DOMAINS, verifyReleaseAncestry, verifyDeploymentMetadata, assertCanonicalWebDesign } from './deploy-release.mjs'
 import { checkPreview } from './preview-release-checks.mjs'
 
+const release = options => runRelease({ ...options, wait: async () => {} })
 const directory = await mkdtemp(join(tmpdir(), 'nalu-release-regression-'))
 const commit = '1'.repeat(40), deploymentId = 'dpl_new123', previousId = 'dpl_old456', candidateUrl = 'https://nalu-fixture.vercel.app'
 const report = []
 try {
+  let attempts = 0, waits = 0
+  const expected = { expectedEntrySha256: 'unchanged-hash' }
+  assert.equal(await checkPublishedPreview('https://fixture.invalid', expected, { wait: async () => { waits++ }, check: async (_base, options) => { assert.equal(options, expected); if (++attempts < 3) throw Error('served JavaScript differs from the verified deployment'); return 'verified' } }), 'verified')
+  assert.equal(waits, 2)
+  attempts = 0
+  await assert.rejects(checkPublishedPreview('https://fixture.invalid', expected, { wait: async () => {}, check: async () => { attempts++; throw Error('served JavaScript differs from the verified deployment') } }), /served JavaScript differs/)
+  assert.equal(attempts, 16)
+  await assert.rejects(checkPublishedPreview('https://fixture.invalid', expected, { wait: async () => { throw Error('must not wait') }, check: async () => { throw Error('database health failed') } }), /database health failed/)
+  report.push('public propagation retries preserve the exact expected hash, remain bounded, and never hide unrelated failures')
   await mkdir(join(directory, '.vercel'))
   await writeFile(join(directory, '.vercel/project.json'), JSON.stringify({ projectId: 'prj_fixture', orgId: 'team_fixture' }))
   const appPath = join(directory, 'client/src/App.tsx')

@@ -91,9 +91,21 @@ export function verifyReleaseAncestry({ currentSource, candidateSource, domain, 
   }
 }
 
+// Alias metadata can update before every edge serves the new HTML. Retry only
+// the exact public asset mismatch, and never accept a different source/hash.
+export async function checkPublishedPreview(base, options, { wait = ms => new Promise(resolve => setTimeout(resolve, ms)), check = checkPreview } = {}) {
+  for (let attempt = 0; attempt < 16; attempt++) {
+    try { return await check(base, options) }
+    catch (error) {
+      if (attempt === 15 || !String(error?.message).includes('served JavaScript differs from the verified deployment')) throw error
+      await wait(2000)
+    }
+  }
+}
+
 /** Injected runner/fetch are only used by deterministic local regressions. The
  * explicit recorded browser waiver changes no source/build/HTTP/domain gate. */
-export async function release({ cwd = root, target, publish, browserTestSkipReason, run = runProcess, fetchImpl = globalThis.fetch, readToken = cliToken, log = console.log, writeReceipt = true } = {}) {
+export async function release({ cwd = root, target, publish, browserTestSkipReason, run = runProcess, fetchImpl = globalThis.fetch, readToken = cliToken, log = console.log, writeReceipt = true, wait } = {}) {
   assert.ok(!(target && publish), 'Choose publication or rollback, not both')
   const browserPolicy = browserTestPolicy(browserTestSkipReason)
   const browserChecks = selectReleaseChecks([...OFFLINE_RELEASE_CHECKS, 'flow-cross-client-integration.mjs'], browserTestSkipReason)
@@ -172,7 +184,7 @@ export async function release({ cwd = root, target, publish, browserTestSkipReas
       log(`Assigning and verifying ${domain}…`)
       cli(['alias', 'set', deploymentUrl, domain])
       assert.equal((await inspect(domain)).id, deployment.id, `${domain}: alias points to the wrong deployment`)
-      const verified = await checkPreview('https://' + domain, { fetchImpl, expectedEntrySha256: candidate.entrySha256 })
+      const verified = await checkPublishedPreview('https://' + domain, { fetchImpl, expectedEntrySha256: candidate.entrySha256 }, { wait })
       receipt.domains.push({ domain, deploymentId: deployment.id, verified })
       await persist()
     }
