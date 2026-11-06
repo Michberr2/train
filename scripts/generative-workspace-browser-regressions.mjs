@@ -18,7 +18,7 @@ await mkdir(output, { recursive: true })
 const browser = await chromium.launch()
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
 const calls = [], errors = [], remote = []
-let browserTaskStarted = false
+let browserTaskStarted = false, browserTaskText = ''
 let accountTheme
 const blockA = { id: 'returns', type: 'calculator', title: 'Editable returns', width: 'half', fields: [{ id: 'price', label: 'Purchase price', type: 'number', value: '400000' }, { id: 'noi', label: 'Annual NOI', type: 'number', value: '24000' }], calculations: [{ label: 'Cap rate', formula: 'noi/price', format: 'percent' }] }
 const blockB = { id: 'tasks', type: 'checklist', title: 'Due diligence', width: 'half', items: [{ id: 'leases', label: 'Verify leases' }, { id: 'expenses', label: 'Verify expenses' }] }
@@ -94,8 +94,8 @@ const fixtureTransport = async route => {
  else if (url.pathname === '/api/web' && body.action === 'intent') json = { kind: 'chat', mode: 'chat', additionalKinds: [] }
  else if (url.pathname === '/api/web' && body.action === 'places') json = { source: 'osm', results: [{ name: 'Fixture Dallas restaurant', address: 'Dallas, Texas', lat: 32.78, lng: -96.8 }] }
  else if (url.pathname === '/api/browser') {
-  if(body.action==='host_workspace_run')browserTaskStarted=true
-  json = {configured:true,runtime:'hosted',active:true,status:browserTaskStarted?(body.action==='host_workspace_run'?'running':'done'):'idle',result:browserTaskStarted?'Fixture task verified':'',agents:[{id:'main',status:'idle'}],image:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2mAAAAABJRU5ErkJggg=='}
+  if(body.action==='host_workspace_run'){browserTaskStarted=true;browserTaskText=body.task}
+  json = {configured:true,runtime:'hosted',active:true,status:browserTaskStarted?(body.action==='host_workspace_run'?'running':'done'):'idle',task:browserTaskText,result:browserTaskStarted?'Fixture task verified':'',agents:[{id:'main',status:'idle'}],image:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2mAAAAABJRU5ErkJggg=='}
  }
  else if (url.pathname === '/api/team') json = { members: [], teams: [], invites: [] }
  else if (url.pathname === '/api/artifacts') json = { outputs: [] }
@@ -271,13 +271,16 @@ try {
  await home.locator('textarea').fill(browserPrompt)
  await home.getByRole('button',{name:'Send',exact:true}).click()
  await expect(page.getByLabel('What should this agent do?')).toHaveValue(browserPrompt)
- assert.equal(calls.filter(c=>c.action==='host_workspace_run').length,0,'local-only permission prevents premature task submission')
- await page.getByRole('checkbox',{name:'Allow online AI for browser tasks'}).check()
+ await expect(page.getByRole('checkbox',{name:'Allow online AI for browser tasks'})).toHaveCount(0)
  await expect.poll(()=>calls.filter(c=>c.action==='host_workspace_run').length).toBe(1)
  assert.equal(calls.find(c=>c.action==='host_workspace_run').task,browserPrompt)
  await expect(page.getByText('Fixture task verified',{exact:true})).toBeVisible({timeout:15000})
  assert.equal(await page.evaluate(()=>window.__uiCalls.length),beforeTaskCalls,'explicit browser work dispatches without model tool selection')
- console.log('PASS chat browser task survives permission, submits exactly once, and shows actual completion')
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('nalu-chats')||'[]').some(chat=>chat.messages.some(message=>message.role==='assistant'&&message.content==='Fixture task verified')))).toBe(true)
+ await page.getByRole('button',{name:'Nalu home',exact:true}).click()
+ await page.getByRole('navigation',{name:'Recent work'}).getByRole('button').first().click()
+ await expect(page.getByText('Fixture task verified',{exact:true})).toBeVisible()
+ console.log('PASS chat browser task runs automatically once without permission controls and returns its result to the originating saved chat')
 
  await page.getByRole('button',{name:'Nalu home',exact:true}).click()
  await expect(home).toBeVisible()

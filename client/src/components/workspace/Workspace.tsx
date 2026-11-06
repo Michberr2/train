@@ -755,8 +755,13 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   const WorkspaceAgentScreens = previewLayout && PreviewWorkspaceAgentScreens ? PreviewWorkspaceAgentScreens : LiveWorkspaceAgentScreens
   const WorkspaceChatPopover = previewLayout && PreviewWorkspaceChatPopover ? PreviewWorkspaceChatPopover : LiveWorkspaceChatPopover
   const sessionToken = useRef(getToken()).current
+  const browserTaskTracking = useRef<{id:string;task:string;agent:string;last?:string}|null>(null)
   const [browserTasks, setBrowserTasks] = useState<{id:string;task:string;token:string}[]>([])
   const consumeBrowserTask = useCallback((id:string) => setBrowserTasks(tasks => tasks.filter(task => task.id !== id)), [])
+  const updateBrowserTask = useCallback((id:string, content:string) => {
+    if(sessionToken!==getToken())return
+    setChats(chats => chats.map(chat => chat.messages.some(message => message.id===id) ? {...chat,messages:chat.messages.map(message => message.id===id ? {...message,content,updatedAt:Date.now()} : message)} : chat))
+  }, [sessionToken])
   // Restore the last view on refresh (Studio/Map/AutoPilot/Chats) — back to your
   // last touch point. Skip 'settings' so a refresh never dumps you into settings.
   const [view, setView] = useState<View>(() => {
@@ -1331,7 +1336,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       setActiveId(chatId)
       if (browserRequest) {
         openSpace('browser')
-        const message = browserNavigation ? 'Opening your private browser.' : 'Your request is queued in Browser. It will start when the browser is ready and online AI permission is enabled. Watch Browser for progress or any login needed.'
+        const message = browserNavigation ? 'Opening your private browser.' : 'Nalu is starting your browser task. Progress and the result will appear here; Browser will ask if a website login or your help is needed.'
         const opened = checkpointChats.map(c => c.id === chatId ? { ...c, messages: c.messages.map(m => m.id === assistantMessageId ? { ...m, content: message, updatedAt: Date.now() } : m) } : c)
         chatsRef.current = opened; setChats(opened); persistChats(opened, sessionToken)
         if (!browserNavigation && sessionToken) setBrowserTasks(tasks => [...tasks, { id: assistantMessageId, task: content, token: sessionToken }])
@@ -3248,7 +3253,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
             <div className="ws-feature-shell"><WorkspaceIntro compact label="AutoPilot" title={reviewLayout ? 'AutoPilot' : 'Leave it with me.'} description="Build and run workflows with your agents and tools."/><AgentsPanel /></div>
           </Suspense>
         )}
-        {view === 'browser' && <Suspense fallback={<div className="p-6">Opening Browser…</div>}><BrowserWorkspacePanel key={sessionToken} token={sessionToken} requests={browserTasks} onRequestConsumed={consumeBrowserTask}/></Suspense>}
+        {view === 'browser' && <Suspense fallback={<div className="p-6">Opening Browser…</div>}><BrowserWorkspacePanel key={sessionToken} token={sessionToken} requests={browserTasks} onRequestConsumed={consumeBrowserTask} onTaskUpdate={updateBrowserTask} taskTracking={browserTaskTracking}/></Suspense>}
         {view === 'skills' && <SkillsPanel onDraft={prompt => { setInput(prompt); if (reviewLayout) openSpace('chat'); else setView('chat'); requestAnimationFrame(() => taRef.current?.focus()) }} />}
         {view === 'automations' && <AutomationsPanel />}
         {view === 'settings' && (

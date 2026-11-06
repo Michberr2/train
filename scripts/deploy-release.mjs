@@ -92,12 +92,14 @@ export function verifyReleaseAncestry({ currentSource, candidateSource, domain, 
 }
 
 // Alias metadata can update before every edge serves the new HTML. Retry only
-// the exact public asset mismatch, and never accept a different source/hash.
+// transient public asset propagation failures; never accept a different source/hash.
 export async function checkPublishedPreview(base, options, { wait = ms => new Promise(resolve => setTimeout(resolve, ms)), check = checkPreview } = {}) {
   for (let attempt = 0; attempt < 16; attempt++) {
     try { return await check(base, options) }
     catch (error) {
-      if (attempt === 15 || !String(error?.message).includes('served JavaScript differs from the verified deployment')) throw error
+      const message = String(error?.message)
+      const propagating = message.includes('served JavaScript differs from the verified deployment') || Boolean(options.expectedEntrySha256) && message.includes('JavaScript entry is an HTML fallback')
+      if (attempt === 15 || !propagating) throw error
       await wait(2000)
     }
   }

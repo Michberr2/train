@@ -1,4 +1,3 @@
-import { hostedOnlineAIAllowed } from '../components/workspace/hostedBrowser'
 import type { AgentMemoryScope } from '@nalu/ai-runtime/memory'
 import { localArtifactPlan } from './localArtifactPlans'
 import { ARTIFACT_AUDIT_SCHEMA, artifactFidelityIssues, checkedAudit, type ArtifactIssue } from './localArtifactFidelity'
@@ -17,7 +16,7 @@ export function needsLocalAI(path: string, method: string, body?: string): boole
     try {
       const action = JSON.parse(body || '{}').action
       if (['host_workspace_status','host_workspace_screen','host_workspace_open','host_workspace_takeover','host_workspace_close','host_workspace_input','host_workspace_tab','host_disconnect'].includes(action)) return false
-      if (['host_workspace_run','host_workspace_resume'].includes(action) && hostedOnlineAIAllowed()) return false
+      if (['host_workspace_run','host_workspace_resume'].includes(action)) return false
       return !['status', 'cancel'].includes(action)
     } catch { return true }
   }

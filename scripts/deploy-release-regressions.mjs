@@ -20,6 +20,12 @@ try {
   await assert.rejects(checkPublishedPreview('https://fixture.invalid', expected, { wait: async () => {}, check: async () => { attempts++; throw Error('served JavaScript differs from the verified deployment') } }), /served JavaScript differs/)
   assert.equal(attempts, 16)
   await assert.rejects(checkPublishedPreview('https://fixture.invalid', expected, { wait: async () => { throw Error('must not wait') }, check: async () => { throw Error('database health failed') } }), /database health failed/)
+  attempts = 0
+  assert.equal(await checkPublishedPreview('https://fixture.invalid', expected, {wait:async()=>{},check:async(_base,options)=>{assert.equal(options,expected);if(++attempts<3)throw Error('JavaScript entry is an HTML fallback');return 'verified'}}),'verified')
+  attempts = 0
+  await assert.rejects(checkPublishedPreview('https://fixture.invalid',expected,{wait:async()=>{},check:async()=>{attempts++;throw Error('JavaScript entry is an HTML fallback')}}),/HTML fallback/)
+  assert.equal(attempts,16)
+  await assert.rejects(checkPublishedPreview('https://fixture.invalid',{}, {wait:async()=>{throw Error('must not wait')},check:async()=>{throw Error('JavaScript entry is an HTML fallback')}}),/HTML fallback/)
   report.push('public propagation retries preserve the exact expected hash, remain bounded, and never hide unrelated failures')
   await mkdir(join(directory, '.vercel'))
   await writeFile(join(directory, '.vercel/project.json'), JSON.stringify({ projectId: 'prj_fixture', orgId: 'team_fixture' }))

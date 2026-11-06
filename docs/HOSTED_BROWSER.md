@@ -31,12 +31,14 @@ Interrupted tasks are not silently restarted. A reported model completion is not
 independent proof of a successful external action.
 
 Hosting is metered under the existing Vercel plan; it is not an unlimited free
-browser fleet. No plan upgrade is part of this change. Browser inference remains
-online and requires the existing explicit browser-task permission when local-only
-AI is selected. Takeover and login stay inside the browser viewer.
+browser fleet. No plan upgrade is part of this change. Browser inference runs online when the user submits a browser task; there is no
+separate enable/allow step. Other local AI preferences remain unchanged. Progress,
+help requests and results update the originating chat. Takeover and website login
+stay inside the browser viewer.
 
 Checks cover API owner isolation, allocation-before-auth rejection, session quota,
 leases, sanitized provider errors, automatic UI startup, no pairing/setup form,
-manual input, and local-only AI preferences. A live disposable two-machine check
+manual input, automatic browser-task dispatch, chat result delivery, and unchanged
+local inference for other AI requests. A live disposable two-machine check
 also verified independent account/agent cookies and cookie persistence after a
 stop/resume. Native and CLI legacy browser contracts must continue passing.
