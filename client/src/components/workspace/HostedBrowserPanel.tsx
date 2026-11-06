@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { Globe, Hand, ArrowRight, Plus, Square } from 'lucide-react'
-import { hostedBrowserRequest as deviceRequest, hostedOnlineAIAllowed as browserOnlineAIAllowed, allowHostedOnlineAI as allowBrowserOnlineAI, ensureHostedBrowser } from './hostedBrowser'
+import { hostedBrowserRequest as deviceRequest, hostedOnlineAIAllowed as browserOnlineAIAllowed, allowHostedOnlineAI as allowBrowserOnlineAI, ensureHostedBrowser, hostedBrowserNeedsPermission } from './hostedBrowser'
 import { getToken } from '../../lib/localAuth'
 import './browser-workspace.css'
 
 type State = { tabs?: { index: number; title: string; active: boolean }[]; cursor?: { x: number; y: number }; active?: boolean; status: string; image?: string | null; url?: string; detail?: string; result?: string; task?: string; steps?: string[]; agents?: { id: string; status: string; active: boolean }[] }
-export default function HostedBrowserPanel({ token }: { token: string | null }) {
+export default function HostedBrowserPanel({ token, requests = [], onRequestConsumed }: { token: string | null; requests?: {id:string;task:string;token:string}[]; onRequestConsumed?: (id:string) => void }) {
+  const pending = requests.find(request => request.token === token)
+  const submitted = useRef(new Set<string>())
   const [onlineAI, setOnlineAI] = useState(browserOnlineAIAllowed)
   const [connected, setConnected] = useState(true), [starting, setStarting] = useState(true)
   const [state, setState] = useState<State | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [agent, setAgent] = useState('main'), [url, setUrl] = useState('https://www.microsoft365.com/'), [task, setTask] = useState(''), [reply, setReply] = useState('')
+  const actionError = useRef(false)
   const generation = useRef(0), mutation = useRef(false), sequence = useRef(0), inputQueue = useRef(Promise.resolve())
   const running = ['running', 'queued'].includes(state?.status || '')
   useEffect(() => { setConnected(!!token); setOnlineAI(browserOnlineAIAllowed()); setState(null); generation.current++ }, [token])
@@ -20,7 +23,7 @@ export default function HostedBrowserPanel({ token }: { token: string | null }) 
       const snapshot = sequence.current
       if (!mutation.current) try {
         const value = await deviceRequest('workspace_screen', { agent_id: agent }, controller.signal, token)
-        if (generation.current === revision && !controller.signal.aborted && !mutation.current && sequence.current === snapshot) { setState(value); setError('') }
+        if (generation.current === revision && !controller.signal.aborted && !mutation.current && sequence.current === snapshot) { setState(value); if(value.active && !actionError.current) setError('') }
       } catch (e) { if (!controller.signal.aborted && generation.current === revision) setError((e as Error).message) }
       if (!controller.signal.aborted) timer = setTimeout(poll, 1200)
     }
@@ -29,14 +32,14 @@ export default function HostedBrowserPanel({ token }: { token: string | null }) 
   }, [connected, agent, token, starting])
   async function act(action: string, data: Record<string, unknown> = {}) {
     if (mutation.current) return
-    mutation.current = true; sequence.current++; setBusy(true); setError(''); const revision = generation.current
+    mutation.current = true; actionError.current = false; sequence.current++; setBusy(true); setError(''); const revision = generation.current
     try {
       if (action !== 'workspace_takeover') await inputQueue.current.catch(() => {})
       const value = await deviceRequest(action, { ...data, agent_id: agent }, undefined, token)
       if (token !== getToken() || revision !== generation.current) return
       if (action === 'disconnect') { setConnected(false); setState(null) }
       else { setConnected(true); setState(old => ({ ...old, ...value, ...(!value.active ? { image: null } : {}) })) }
-    } catch (e) { if (revision === generation.current) setError((e as Error).message) }
+    } catch (e) { if (revision === generation.current) { actionError.current = true; setError((e as Error).message) } }
     finally { mutation.current = false; setBusy(false) }
   }
   useEffect(() => {
@@ -45,6 +48,13 @@ export default function HostedBrowserPanel({ token }: { token: string | null }) 
     void ensureHostedBrowser(token).then(value => { if(current && token === getToken()) setState(value) }).catch(e => { if(current) setError(e.message) }).finally(() => { if(current) setStarting(false) })
     return () => { current = false }
   }, [token])
+  useEffect(() => { if (pending) setTask(pending.task) }, [pending?.id])
+  useEffect(() => {
+    if (!pending || starting || busy || running || !connected || !state?.active || hostedBrowserNeedsPermission() || submitted.current.has(pending.id)) return
+    submitted.current.add(pending.id)
+    onRequestConsumed?.(pending.id)
+    void act('workspace_run', { task: pending.task })
+  }, [pending?.id, starting, busy, running, connected, state?.active, onlineAI])
   const input = (data: Record<string, unknown>) => {
     if (running) return
     const revision = generation.current; sequence.current++
@@ -90,7 +100,8 @@ export default function HostedBrowserPanel({ token }: { token: string | null }) 
       </div>
       {state?.detail && <p role="status">{state.detail}</p>}
       {['paused', 'needs_help'].includes(state?.status || '') && <div className="nalu-browser-address"><input aria-label="Reply to Nalu" value={reply} onChange={e => setReply(e.target.value)} maxLength={2000} placeholder="Optional reply or clarification"/><button disabled={busy} onClick={() => { void act('workspace_resume', { reply }); setReply('') }}>Continue task</button></div>}
-      <form className="nalu-browser-task" onSubmit={e => { e.preventDefault(); void act('workspace_run', { task }) }}>
+      {pending && <p role="status">{hostedBrowserNeedsPermission() ? 'Your request is ready. Enable “Allow online AI for browser tasks” below and Nalu will start it automatically.' : 'Your request is queued and will start when this browser is ready.'}</p>}
+      <form className="nalu-browser-task" onSubmit={e => { e.preventDefault(); if(pending){submitted.current.add(pending.id);onRequestConsumed?.(pending.id)} void act('workspace_run', { task }) }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" style={{ width: 'auto', flex: 'none' }} checked={onlineAI} disabled={busy || running || starting} onChange={e => { allowBrowserOnlineAI(e.target.checked); setOnlineAI(e.target.checked) }}/>Allow online AI for browser tasks</label><small>This permission lasts for this signed-in tab only. It allows page text and screenshots to reach Nalu’s online AI; other AI settings stay unchanged.</small>
         <label htmlFor="device-browser-task">What should this agent do?</label><div><textarea id="device-browser-task" value={task} onChange={e => setTask(e.target.value)} maxLength={6000} required placeholder="Find the document, make the requested changes, and verify it saved."/><button disabled={busy || running || starting || !task.trim()}>Run task<ArrowRight size={16}/></button></div>
         <small>Nalu hosts this browser for your account. Its online AI uses page content and screenshots to do your task. Take control to sign in or help. Sessions pause after 15 minutes; open the browser again to continue.</small>

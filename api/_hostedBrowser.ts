@@ -39,10 +39,14 @@ export async function hostedBrowser(req: any,res: any,body: any,deps = defaults)
     const identity=hostedIdentity(owner,process.env.NALU_SESSION_SECRET || '')
     const snapshotId=process.env.NALU_BROWSER_SNAPSHOT_ID
     if(!snapshotId)return res.status(503).json({error:'Automatic browser hosting is being prepared. Please try again shortly.'})
-    store=new deps.Store(backend.client);await store.init()
-    const claim=await store.claim(owner)
-    if(!claim)return res.status(409).json({error:'Your browser is starting or handling another request. Please wait.',status:'starting'})
-    lease=claim.lease
+    // Screen/status reads never allocate or change the provider session. They
+    // must not hold the mutation lease and reject a simultaneous task submission.
+    if(!['workspace_status','workspace_screen'].includes(action)){
+      store=new deps.Store(backend.client);await store.init()
+      const claim=await store.claim(owner)
+      if(!claim)return res.status(409).json({error:'Your browser is starting or handling another request. Please wait.',status:'starting'})
+      lease=claim.lease
+    }
     // Preserve the SDK's ESM entry: its serializer cannot be loaded with require().
     const SandboxClient = deps.Sandbox || (await import('@vercel/sandbox')).Sandbox
     let sandbox:Sandbox|undefined
@@ -77,6 +81,11 @@ export async function hostedBrowser(req: any,res: any,body: any,deps = defaults)
     if(action==='disconnect'){
       await call(sandbox,'shutdown');await sandbox.stop()
       return res.status(200).json({...idle(body.agent_id),status:'paused'})
+    }
+    // Reopening the view must not restart or reject an already-working agent.
+    if(action==='workspace_open' && !body.url){
+      const current=await call(sandbox,'workspace_status')
+      if(current.active)return res.status(200).json({...current,...await call(sandbox,'workspace_screen')})
     }
     const value=await call(sandbox,action)
     // Return the first frame with startup instead of waiting for another poll.

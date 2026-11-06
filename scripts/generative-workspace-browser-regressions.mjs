@@ -18,6 +18,7 @@ await mkdir(output, { recursive: true })
 const browser = await chromium.launch()
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
 const calls = [], errors = [], remote = []
+let browserTaskStarted = false
 let accountTheme
 const blockA = { id: 'returns', type: 'calculator', title: 'Editable returns', width: 'half', fields: [{ id: 'price', label: 'Purchase price', type: 'number', value: '400000' }, { id: 'noi', label: 'Annual NOI', type: 'number', value: '24000' }], calculations: [{ label: 'Cap rate', formula: 'noi/price', format: 'percent' }] }
 const blockB = { id: 'tasks', type: 'checklist', title: 'Due diligence', width: 'half', items: [{ id: 'leases', label: 'Verify leases' }, { id: 'expenses', label: 'Verify expenses' }] }
@@ -84,7 +85,7 @@ const fixtureTransport = async route => {
   return route.fulfill({json:{completion:raw,chunks:[raw.slice(0,firstBlock),raw.slice(firstBlock)],delayMs:3000}})
  }
  if (!url.pathname.startsWith('/api/')) return route.continue()
- const body = request.postData() ? JSON.parse(request.postData()) : {}; calls.push({ path: url.pathname, action: body.action })
+ const body = request.postData() ? JSON.parse(request.postData()) : {}; calls.push({ path: url.pathname, action: body.action, ...(url.pathname==='/api/browser'?{task:body.task}:{}) })
  if (url.pathname === '/api/data' && body.action === 'setMany' && body.entries?.['nalu-theme']) accountTheme = body.entries['nalu-theme']
  let json = { ok: true }
  if (url.pathname === '/api/auth') json = { ok: true, user: { id: 'isolated-generative-owner', displayName: 'Local test' } }
@@ -92,7 +93,10 @@ const fixtureTransport = async route => {
  else if (url.pathname === '/api/swarm') json = { state: { version: 1, mode: 'live', projects: [], tasks: [], messages: [], turns: [] }, revision: 1 }
  else if (url.pathname === '/api/web' && body.action === 'intent') json = { kind: 'chat', mode: 'chat', additionalKinds: [] }
  else if (url.pathname === '/api/web' && body.action === 'places') json = { source: 'osm', results: [{ name: 'Fixture Dallas restaurant', address: 'Dallas, Texas', lat: 32.78, lng: -96.8 }] }
- else if (url.pathname === '/api/browser') json = {configured:true,runtime:'hosted',active:true,status:'idle',agents:[{id:'main',status:'idle'}],image:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2mAAAAABJRU5ErkJggg=='}
+ else if (url.pathname === '/api/browser') {
+  if(body.action==='host_workspace_run')browserTaskStarted=true
+  json = {configured:true,runtime:'hosted',active:true,status:browserTaskStarted?(body.action==='host_workspace_run'?'running':'done'):'idle',result:browserTaskStarted?'Fixture task verified':'',agents:[{id:'main',status:'idle'}],image:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2mAAAAABJRU5ErkJggg=='}
+ }
  else if (url.pathname === '/api/team') json = { members: [], teams: [], invites: [] }
  else if (url.pathname === '/api/artifacts') json = { outputs: [] }
  else if (url.pathname === '/api/community') json = { rooms: [] }
@@ -261,6 +265,20 @@ try {
  }
  assert.ok(calls.some(c=>c.path==='/api/browser' && c.action==='host_workspace_open'))
  console.log('PASS chat opens hosted Browser directly without Capabilities or model inference')
+ await page.getByRole('button',{name:'Nalu home',exact:true}).click()
+ const browserPrompt='Use the browser to read the heading at https://example.com and report it.'
+ const beforeTaskCalls=await page.evaluate(()=>window.__uiCalls.length)
+ await home.locator('textarea').fill(browserPrompt)
+ await home.getByRole('button',{name:'Send',exact:true}).click()
+ await expect(page.getByLabel('What should this agent do?')).toHaveValue(browserPrompt)
+ assert.equal(calls.filter(c=>c.action==='host_workspace_run').length,0,'local-only permission prevents premature task submission')
+ await page.getByRole('checkbox',{name:'Allow online AI for browser tasks'}).check()
+ await expect.poll(()=>calls.filter(c=>c.action==='host_workspace_run').length).toBe(1)
+ assert.equal(calls.find(c=>c.action==='host_workspace_run').task,browserPrompt)
+ await expect(page.getByText('Fixture task verified',{exact:true})).toBeVisible({timeout:15000})
+ assert.equal(await page.evaluate(()=>window.__uiCalls.length),beforeTaskCalls,'explicit browser work dispatches without model tool selection')
+ console.log('PASS chat browser task survives permission, submits exactly once, and shows actual completion')
+
  await page.getByRole('button',{name:'Nalu home',exact:true}).click()
  await expect(home).toBeVisible()
  await page.getByRole('button',{name:'Pause cursor construction',exact:true}).click()

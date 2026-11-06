@@ -80,4 +80,18 @@ try {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
   console.log(`PASS ${width}px workspace, account headers, automatic hosted startup, no installation/pairing, ordered input, private tool output, takeover and closure`); await page.close()
  }
+ for (const failure of ['server','network']) {
+  const page=await browser.newPage()
+  await page.addInitScript(()=>localStorage.setItem('nalu-token','owner'))
+  await page.route('**/api/browser',route=>{
+   if(route.request().postDataJSON().action==='host_workspace_open')return failure==='network'?route.abort():route.fulfill({status:503,json:{error:'Startup unavailable'}})
+   return route.fulfill({json:{configured:true,active:false,status:'idle'}})
+  })
+  await page.goto(`${base}/__browser-test`)
+  await expect(page.getByRole('alert')).toBeVisible()
+  await expect(page.getByText('Starting your private browser…',{exact:true})).toHaveCount(0)
+  await expect(page.getByRole('button',{name:'Open browser',exact:true})).toBeEnabled()
+  await page.close()
+ }
+ console.log('PASS startup failures stop loading and leave a usable retry control')
 } finally { await browser?.close(); await server.close() }

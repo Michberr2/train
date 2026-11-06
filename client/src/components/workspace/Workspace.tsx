@@ -755,6 +755,8 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
   const WorkspaceAgentScreens = previewLayout && PreviewWorkspaceAgentScreens ? PreviewWorkspaceAgentScreens : LiveWorkspaceAgentScreens
   const WorkspaceChatPopover = previewLayout && PreviewWorkspaceChatPopover ? PreviewWorkspaceChatPopover : LiveWorkspaceChatPopover
   const sessionToken = useRef(getToken()).current
+  const [browserTasks, setBrowserTasks] = useState<{id:string;task:string;token:string}[]>([])
+  const consumeBrowserTask = useCallback((id:string) => setBrowserTasks(tasks => tasks.filter(task => task.id !== id)), [])
   // Restore the last view on refresh (Studio/Map/AutoPilot/Chats) — back to your
   // last touch point. Skip 'settings' so a refresh never dumps you into settings.
   const [view, setView] = useState<View>(() => {
@@ -1276,7 +1278,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       const content = text.trim()
       if (!content || streaming) return
       const browserNavigation = !opts?.studioKind && !opts?.studioTarget && isBrowserNavigation(content)
-      const browserRequest = !opts?.studioKind && !opts?.studioTarget && explicitlyUsesBrowser(content)
+      const browserRequest = !opts?.studioKind && !opts?.studioTarget && (explicitlyUsesBrowser(content) || view === 'browser')
       setGenerativeHome(false); setLibraryOpen(false); setCapabilitiesOpen(false); setLauncherOpen(false); setConversationView(false)
       const delegateRequest = !browserRequest && reviewLayout && !previewLayout && !opts?.studioKind && !opts?.studioTarget && dismissedIntent !== content && (Boolean(opts?.delegation) || isLocalSwarmRequest(content))
       const workspaceRequest = !browserRequest && !delegateRequest && reviewLayout && previewLayout && !opts?.keepView && !opts?.studioKind && dismissedIntent !== content ? workspaceForRequest(content) : null
@@ -1329,13 +1331,12 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       setActiveId(chatId)
       if (browserRequest) {
         openSpace('browser')
-        if (reviewLayout && !browserNavigation) setReviewChatOpen(true)
-        if (browserNavigation) {
-          const opened = checkpointChats.map(c => c.id === chatId ? { ...c, messages: c.messages.map(m => m.id === assistantMessageId ? { ...m, content: 'Opening your private browser.', updatedAt: Date.now() } : m) } : c)
-          chatsRef.current = opened; setChats(opened); persistChats(opened, sessionToken)
-          sendingChatsRef.current.delete(guardKey); finishReviewActivity()
-          return
-        }
+        const message = browserNavigation ? 'Opening your private browser.' : 'Your request is queued in Browser. It will start when the browser is ready and online AI permission is enabled. Watch Browser for progress or any login needed.'
+        const opened = checkpointChats.map(c => c.id === chatId ? { ...c, messages: c.messages.map(m => m.id === assistantMessageId ? { ...m, content: message, updatedAt: Date.now() } : m) } : c)
+        chatsRef.current = opened; setChats(opened); persistChats(opened, sessionToken)
+        if (!browserNavigation && sessionToken) setBrowserTasks(tasks => [...tasks, { id: assistantMessageId, task: content, token: sessionToken }])
+        sendingChatsRef.current.delete(guardKey); finishReviewActivity()
+        return
       }
       if (workspaceRequest) {
         setGenerativeHome(false); setLauncherOpen(false); setAgentScreensOpen(false); setHasOpenedSpace(true)
@@ -2499,7 +2500,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         finishReviewActivity()
       }
     },
-    [activeId, chats, streaming, model, activeRepo, dismissedIntent, thinkLevel, reviewLayout, previewLayout, liveSwarm, openSpace],
+    [activeId, chats, streaming, model, activeRepo, dismissedIntent, thinkLevel, reviewLayout, previewLayout, liveSwarm, openSpace, view],
   )
 
   const stop = useCallback(() => {
@@ -3247,7 +3248,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
             <div className="ws-feature-shell"><WorkspaceIntro compact label="AutoPilot" title={reviewLayout ? 'AutoPilot' : 'Leave it with me.'} description="Build and run workflows with your agents and tools."/><AgentsPanel /></div>
           </Suspense>
         )}
-        {view === 'browser' && <Suspense fallback={<div className="p-6">Opening Browser…</div>}><BrowserWorkspacePanel key={sessionToken} token={sessionToken}/></Suspense>}
+        {view === 'browser' && <Suspense fallback={<div className="p-6">Opening Browser…</div>}><BrowserWorkspacePanel key={sessionToken} token={sessionToken} requests={browserTasks} onRequestConsumed={consumeBrowserTask}/></Suspense>}
         {view === 'skills' && <SkillsPanel onDraft={prompt => { setInput(prompt); if (reviewLayout) openSpace('chat'); else setView('chat'); requestAnimationFrame(() => taRef.current?.focus()) }} />}
         {view === 'automations' && <AutomationsPanel />}
         {view === 'settings' && (

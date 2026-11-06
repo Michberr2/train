@@ -27,10 +27,21 @@ try{
  await request('workspace_run',{task:'Read the page',owner:'owner-b',agent_id:'separate-agent'})
  assert.deepEqual(calls.filter(c=>c[0]==='action').at(-1).slice(1),['owner-a','workspace_run','separate-agent'])
  assert.ok(!JSON.stringify((await request('workspace_status')).value).includes('.vercel.run'))
- claimOK=false;assert.equal((await request('workspace_open')).code,409);claimOK=true
+ claimOK=false;assert.equal((await request('workspace_open')).code,409);assert.equal((await request('workspace_screen')).code,200,'screen reads never contend with the mutation lease');claimOK=true
  await request('disconnect');const before=quotas;await request('workspace_screen');assert.equal(quotas,before)
  quotaOK=false;assert.equal((await request('workspace_open')).code,429);quotaOK=true
  await request('workspace_open');assert.equal(creates,2,'resume reuses the owned machine')
  await request('disconnect');failCreate=true;const failed=await request('workspace_open');assert.equal(failed.code,503);assert.ok(!JSON.stringify(failed).includes('PROVIDER_SECRET'));assert.equal(releases,0,'uncertain provider acceptance keeps the session reservation')
+ const normalFetch=globalThis.fetch
+ globalThis.fetch=async(url,opts)=>{
+  const response=await normalFetch(url,opts), value=await response.json()
+  return Response.json({...value,active:true,status:'running'})
+ }
+ const opensBefore=calls.filter(c=>c[0]==='action'&&c[2]==='workspace_open').length
+ failCreate=false
+ const reattached=await request('workspace_open',{},'fixture-owner-b-token')
+ assert.equal(reattached.value.status,'running')
+ assert.equal(calls.filter(c=>c[0]==='action'&&c[2]==='workspace_open').length,opensBefore,'reopening a working agent only reads status and screen')
+ globalThis.fetch=normalFetch
  console.log('PASS hosted browser authentication, owner-derived machine identity, private transport, startup leases, quota before allocation, no polling resumes, bounded lifecycle and sanitized failures.')
 }finally{globalThis.fetch=savedFetch;if(savedSecret===undefined)delete process.env.NALU_SESSION_SECRET;else process.env.NALU_SESSION_SECRET=savedSecret;if(savedSnapshot===undefined)delete process.env.NALU_BROWSER_SNAPSHOT_ID;else process.env.NALU_BROWSER_SNAPSHOT_ID=savedSnapshot}
