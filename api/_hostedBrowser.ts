@@ -1,4 +1,4 @@
-import { Sandbox } from '@vercel/sandbox'
+import type { Sandbox } from '@vercel/sandbox'
 import { createHmac } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -25,7 +25,7 @@ export function validateHostedRequest(body: any) {
   if(body.url){const url=new URL(body.url);if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error('Use a public website address.')}
   return action
 }
-const defaults = { Sandbox, connectionBackend, reserveDailyQuota, Store: BrowserWorkspaceStore, readFile, wait }
+const defaults = { Sandbox: undefined as typeof import('@vercel/sandbox').Sandbox | undefined, connectionBackend, reserveDailyQuota, Store: BrowserWorkspaceStore, readFile, wait }
 export async function hostedBrowser(req: any,res: any,body: any,deps = defaults) {
   let action: string
   try { action=validateHostedRequest(body) } catch(error) {return res.status(400).json({error:(error as Error).message})}
@@ -43,8 +43,10 @@ export async function hostedBrowser(req: any,res: any,body: any,deps = defaults)
     const claim=await store.claim(owner)
     if(!claim)return res.status(409).json({error:'Your browser is starting or handling another request. Please wait.',status:'starting'})
     lease=claim.lease
+    // Preserve the SDK's ESM entry: its serializer cannot be loaded with require().
+    const SandboxClient = deps.Sandbox || (await import('@vercel/sandbox')).Sandbox
     let sandbox:Sandbox|undefined
-    try {sandbox=await deps.Sandbox.get({name:identity.name,resume:false})}
+    try {sandbox=await SandboxClient.get({name:identity.name,resume:false})}
     catch(error:any){if(error?.response?.status!==404)throw error}
     const running=sandbox?.status==='running'
     if(!running && !starts.has(action))return res.status(200).json({...idle(body.agent_id),...(sandbox?{status:'paused',detail:'Your browser is paused. Open it to continue.'}:{})})
@@ -68,7 +70,7 @@ export async function hostedBrowser(req: any,res: any,body: any,deps = defaults)
       // A lost creation response can still have allocated a machine. Keep the
       // reservation once submitted, rather than allowing unlimited costly retries.
       accepted=true
-      sandbox=await deps.Sandbox.getOrCreate({name:identity.name,source:{type:'snapshot',snapshotId},resume:true,persistent:true,timeout:900000,resources:{vcpus:2},ports:[8877],snapshotExpiration:30*24*60*60*1000,keepLastSnapshots:{count:1},tags:{service:'nalu-browser'},onCreate:start,onResume:start})
+      sandbox=await SandboxClient.getOrCreate({name:identity.name,source:{type:'snapshot',snapshotId},resume:true,persistent:true,timeout:900000,resources:{vcpus:2},ports:[8877],snapshotExpiration:30*24*60*60*1000,keepLastSnapshots:{count:1},tags:{service:'nalu-browser'},onCreate:start,onResume:start})
       accepted=true
     }
     if(!sandbox)throw Error('Browser session is unavailable.')

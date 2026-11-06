@@ -92,6 +92,7 @@ const fixtureTransport = async route => {
  else if (url.pathname === '/api/swarm') json = { state: { version: 1, mode: 'live', projects: [], tasks: [], messages: [], turns: [] }, revision: 1 }
  else if (url.pathname === '/api/web' && body.action === 'intent') json = { kind: 'chat', mode: 'chat', additionalKinds: [] }
  else if (url.pathname === '/api/web' && body.action === 'places') json = { source: 'osm', results: [{ name: 'Fixture Dallas restaurant', address: 'Dallas, Texas', lat: 32.78, lng: -96.8 }] }
+ else if (url.pathname === '/api/browser') json = {configured:true,runtime:'hosted',active:true,status:'idle',agents:[{id:'main',status:'idle'}],image:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2mAAAAABJRU5ErkJggg=='}
  else if (url.pathname === '/api/team') json = { members: [], teams: [], invites: [] }
  else if (url.pathname === '/api/artifacts') json = { outputs: [] }
  else if (url.pathname === '/api/community') json = { rooms: [] }
@@ -247,6 +248,18 @@ try {
  assert.ok(await page.evaluate(()=>window.__mapElement === document.querySelector('.generative-live-map')), 'expanding and restoring retains the mounted map, camera and pins')
  await expect(page.getByRole('textbox',{name:'Map search',exact:true})).toHaveValue('best restaurants in dallas')
  await page.setViewportSize({width:1440,height:1000})
+ for (const prompt of ['open browser', 'show my browser', 'browser']) {
+  await page.getByRole('button', {name:'Nalu home',exact:true}).click()
+  await expect(home).toBeVisible()
+  const before = await page.evaluate(() => window.__uiCalls.length)
+  await home.locator('textarea').fill(prompt)
+  await home.getByRole('button', {name:'Send',exact:true}).click()
+  await expect(page.getByAltText('Your private Nalu browser')).toBeVisible({timeout:30000})
+  assert.equal(await page.evaluate(() => window.__uiCalls.length),before,'browser navigation does not call the model')
+  await expect(page.getByLabel('Connect this computer',{exact:true})).toHaveCount(0)
+ }
+ assert.ok(calls.some(c=>c.path==='/api/browser' && c.action==='host_workspace_open'))
+ console.log('PASS chat opens hosted Browser directly without Capabilities or model inference')
  await page.getByRole('button',{name:'Pause cursor construction',exact:true}).click()
  await appearance('Dark mode')
  await expect.poll(()=>accountTheme).toBe('dark')

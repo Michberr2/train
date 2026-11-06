@@ -43,10 +43,10 @@ export class WebWorkerMLCEngine {
   interruptGenerate() { globalThis.__localAIEngineTest.interrupts++; }
   async *tokens(thinking, review) { const c = globalThis.__localAIEngineTest; const tokens = c.responses.length ? c.responses.shift() : [...c.next]; const reason = c.reason; if (c.holdToken) await c.holdToken; if (review && c.holdReview) await c.holdReview; if(thinking) yield { choices: [{delta:{content:'Private fixture assessment.</think>\\n\\n'}}] }; for (const content of tokens) yield { choices: [{ delta: { content } }] }; yield { choices: [{ delta: {}, finish_reason: reason }] }; }
 }`
-await build({ entryPoints: ['client/src/lib/localAI.ts', 'client/src/lib/localAIProtocol.ts', 'client/src/components/workspace/chatStream.ts', 'client/src/components/workspace/chatRequest.ts'], outdir: directory, bundle: true, format: 'esm', platform: 'browser', write: true, outExtension: { '.js': '.mjs' }, plugins: [{ name: 'synthetic-browser-engine', setup(build) { build.onResolve({ filter: /^@mlc-ai\/web-llm$/ }, () => ({ path: 'engine', namespace: 'fixture' })); build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: fake, loader: 'js' })) } }] })
+await build({ entryPoints: ['client/src/components/workspace/hostedBrowser.ts', 'client/src/lib/localAI.ts', 'client/src/lib/localAIProtocol.ts', 'client/src/components/workspace/chatStream.ts', 'client/src/components/workspace/chatRequest.ts'], outdir: directory, bundle: true, format: 'esm', platform: 'browser', write: true, outExtension: { '.js': '.mjs' }, plugins: [{ name: 'synthetic-browser-engine', setup(build) { build.onResolve({ filter: /^@mlc-ai\/web-llm$/ }, () => ({ path: 'engine', namespace: 'fixture' })); build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: fake, loader: 'js' })) } }] })
 // Bundle a single entry so the request adapter and runtime share session state.
 const entry = join(directory, 'entry.ts')
-await writeFile(entry, ['client/src/lib/localAI.ts', 'client/src/lib/localAIProtocol.ts', 'client/src/lib/streamingLocalMessage.ts', 'client/src/lib/localAIRequests.ts', 'client/src/lib/localArtifactPlans.ts', 'client/src/lib/localArtifactFidelity.ts', 'client/src/lib/localSwarmPlan.ts', 'client/src/lib/localCoordinator.ts', 'client/src/components/workspace/chatStream.ts', 'client/src/components/workspace/chatRequest.ts'].map(path => `export * from ${JSON.stringify(join(process.cwd(), path))};`).join('\n'))
+await writeFile(entry, ['client/src/components/workspace/hostedBrowser.ts', 'client/src/lib/localAI.ts', 'client/src/lib/localAIProtocol.ts', 'client/src/lib/streamingLocalMessage.ts', 'client/src/lib/localAIRequests.ts', 'client/src/lib/localArtifactPlans.ts', 'client/src/lib/localArtifactFidelity.ts', 'client/src/lib/localSwarmPlan.ts', 'client/src/lib/localCoordinator.ts', 'client/src/components/workspace/chatStream.ts', 'client/src/components/workspace/chatRequest.ts'].map(path => `export * from ${JSON.stringify(join(process.cwd(), path))};`).join('\n'))
 await build({ entryPoints: [entry], outfile: join(directory, 'test.mjs'), bundle: true, format: 'esm', platform: 'browser', plugins: [{ name: 'synthetic-browser-engine', setup(build) { build.onResolve({ filter: /^@mlc-ai\/web-llm$/ }, () => ({ path: 'engine', namespace: 'fixture' })); build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: fake, loader: 'js' })) } }] })
 const local = await import(pathToFileURL(join(directory, 'test.mjs')))
 const request = (content = 'Hello', extra = {}) => ({ messages: [{ role: 'user', content }], ...extra })
@@ -277,6 +277,13 @@ try {
   assert.equal(local.needsLocalAI('/api/data', 'POST', '{"action":"flow-run","mode":"resume"}'), true)
   assert.equal(local.needsLocalAI('/api/browser', 'POST', '{"action":"cancel"}'), false)
   assert.equal(local.needsLocalAI('/api/browser', 'POST', '{"action":"run"}'), true)
+  for (const action of ['host_workspace_open','host_workspace_screen','host_workspace_status','host_workspace_takeover','host_workspace_input','host_workspace_tab','host_disconnect']) assert.equal(local.needsLocalAI('/api/browser','POST',JSON.stringify({action})),false)
+  assert.equal(local.needsLocalAI('/api/browser','POST','{"action":"host_workspace_run"}'),true)
+  local.allowHostedOnlineAI(true)
+  assert.equal(local.needsLocalAI('/api/browser','POST','{"action":"host_workspace_run"}'),false)
+  assert.equal(local.needsLocalAI('/api/browser','POST','{"action":"host_workspace_resume"}'),false)
+  local.allowHostedOnlineAI(false)
+  assert.equal(local.needsLocalAI('/api/browser','POST','{"action":"host_workspace_resume"}'),true)
   check('Cloud generation is intercepted while storage, research, and cancellation keep their existing API')
   assert.equal(local.isLocalSwarmRequest('Build a website and write a document for an unrelated project.'), true)
   assert.equal(local.isLocalSwarmRequest('Build a website in the background.'), true)

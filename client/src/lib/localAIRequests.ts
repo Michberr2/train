@@ -1,3 +1,4 @@
+import { hostedOnlineAIAllowed } from '../components/workspace/hostedBrowser'
 import type { AgentMemoryScope } from '@nalu/ai-runtime/memory'
 import { localArtifactPlan } from './localArtifactPlans'
 import { ARTIFACT_AUDIT_SCHEMA, artifactFidelityIssues, checkedAudit, type ArtifactIssue } from './localArtifactFidelity'
@@ -12,7 +13,14 @@ export function needsLocalAI(path: string, method: string, body?: string): boole
   if (method.toUpperCase() !== 'POST') return false
   if (generationPaths.has(path)) return true
   if (path === '/api/data') { try { const value = JSON.parse(body || '{}'); return ['notes-analyze', 'notes-transcribe'].includes(value.action) || value.action === 'flow-run' && value.mode !== 'stop' } catch { return false } }
-  if (path === '/api/browser') { try { return !['status', 'cancel'].includes(JSON.parse(body || '{}').action) } catch { return true } }
+  if (path === '/api/browser') {
+    try {
+      const action = JSON.parse(body || '{}').action
+      if (['host_workspace_status','host_workspace_screen','host_workspace_open','host_workspace_takeover','host_workspace_close','host_workspace_input','host_workspace_tab','host_disconnect'].includes(action)) return false
+      if (['host_workspace_run','host_workspace_resume'].includes(action) && hostedOnlineAIAllowed()) return false
+      return !['status', 'cancel'].includes(action)
+    } catch { return true }
+  }
   if (path === '/api/web') { try { return localWebActions.has(JSON.parse(body || '{}').action) } catch { return true } }
   return false
 }

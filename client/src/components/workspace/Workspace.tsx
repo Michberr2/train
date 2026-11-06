@@ -111,7 +111,7 @@ const PreviewWorkspaceLiveHub = import.meta.env.DEV ? lazy(() => import('../work
 const PreviewWorkspaceAgentTray = import.meta.env.DEV ? lazy(() => import('../workspace-preview/real/PreviewWorkspaceAgentTray')) : null
 const PreviewWorkspaceAgentScreens = import.meta.env.DEV ? lazy(() => import('../workspace-preview/real/PreviewWorkspaceAgentScreens')) : null
 const PreviewWorkspaceChatPopover = import.meta.env.DEV ? lazy(() => import('../workspace-preview/real/PreviewWorkspaceChatPopover')) : null
-import { BROWSER_TOOLS, isBrowserTool, execBrowserTool, explicitlyUsesBrowser } from './browserWorkspace'
+import { BROWSER_TOOLS, isBrowserTool, execBrowserTool, explicitlyUsesBrowser, isBrowserNavigation } from './browserWorkspace'
 import { TOOLS, execTool, WEB_TOOLS, execWebTool, isWebTool } from './agentTools'
 import {
   getActiveRepo,
@@ -1275,11 +1275,13 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
     async (text: string, opts?: { keepView?: boolean; userMessageId?: string; assistantMessageId?: string; studioKind?: string; studioTarget?: Creation; movieSeconds?: number; attachments?: Attachment[]; delegation?: SavedDelegation }) => {
       const content = text.trim()
       if (!content || streaming) return
+      const browserNavigation = !opts?.studioKind && !opts?.studioTarget && isBrowserNavigation(content)
+      const browserRequest = !opts?.studioKind && !opts?.studioTarget && explicitlyUsesBrowser(content)
       setGenerativeHome(false); setLibraryOpen(false); setCapabilitiesOpen(false); setLauncherOpen(false); setConversationView(false)
-      const delegateRequest = reviewLayout && !previewLayout && !opts?.studioKind && !opts?.studioTarget && dismissedIntent !== content && (Boolean(opts?.delegation) || isLocalSwarmRequest(content))
-      const workspaceRequest = !delegateRequest && reviewLayout && previewLayout && !opts?.keepView && !opts?.studioKind && dismissedIntent !== content ? workspaceForRequest(content) : null
+      const delegateRequest = !browserRequest && reviewLayout && !previewLayout && !opts?.studioKind && !opts?.studioTarget && dismissedIntent !== content && (Boolean(opts?.delegation) || isLocalSwarmRequest(content))
+      const workspaceRequest = !browserRequest && !delegateRequest && reviewLayout && previewLayout && !opts?.keepView && !opts?.studioKind && dismissedIntent !== content ? workspaceForRequest(content) : null
       // A floating conversation keeps its original space, including after async attachment work.
-      const keepCurrentView = opts?.keepView || reviewChatOpenRef.current || workspaceRequest?.view === 'studio'
+      const keepCurrentView = browserRequest || opts?.keepView || reviewChatOpenRef.current || workspaceRequest?.view === 'studio'
       // Per-target re-entry guard (see sendingChatsRef): block a second fire into
       // the same chat while its turn is still starting/streaming, but allow a
       // deliberate send into a different chat (background builds keep running).
@@ -1295,7 +1297,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       // answer — resume that build (consume the pending state so it fires once).
       const savedQuestion = activeId ? chatsRef.current.find(c => c.id === activeId)?.messages.slice(-1)[0]?.clarify : undefined
       const savedBuild = savedQuestion && !savedQuestion.answered && savedQuestion.build ? { ...savedQuestion.build, questions: savedQuestion.questions } : null
-      const changedTopic = explicitCancel || /^(?:instead|new (?:question|topic))\b/i.test(content)
+      const changedTopic = browserRequest || explicitCancel || /^(?:instead|new (?:question|topic))\b/i.test(content)
       const resuming = !plain && !opts?.studioKind && !changedTopic && activeId ? pendingBuildRef.current.get(activeId) ?? savedBuild : null
       if (activeId) pendingBuildRef.current.delete(activeId)
       setInput('')
@@ -1325,6 +1327,16 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       chatsRef.current = checkpointChats; setChats(checkpointChats)
       persistChats(checkpointChats, sessionToken)
       setActiveId(chatId)
+      if (browserRequest) {
+        openSpace('browser')
+        if (reviewLayout && !browserNavigation) setReviewChatOpen(true)
+        if (browserNavigation) {
+          const opened = checkpointChats.map(c => c.id === chatId ? { ...c, messages: c.messages.map(m => m.id === assistantMessageId ? { ...m, content: 'Opening your private browser.', updatedAt: Date.now() } : m) } : c)
+          chatsRef.current = opened; setChats(opened); persistChats(opened, sessionToken)
+          sendingChatsRef.current.delete(guardKey); finishReviewActivity()
+          return
+        }
+      }
       if (workspaceRequest) {
         setGenerativeHome(false); setLauncherOpen(false); setAgentScreensOpen(false); setHasOpenedSpace(true)
         setView(workspaceRequest.view); setReviewChatOpen(false)
@@ -1337,7 +1349,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       if (!keepCurrentView) setView('chat')
       // An explicit map request mounts the existing map/search engine immediately.
       // The map owns real place lookup, markers, progress and retry controls.
-      if (reviewLayout && !previewLayout && !opts?.studioKind && !opts?.studioTarget && !resuming && !existing?.attachments?.length && !opts?.attachments?.length &&
+      if (!browserRequest && reviewLayout && !previewLayout && !opts?.studioKind && !opts?.studioTarget && !resuming && !existing?.attachments?.length && !opts?.attachments?.length &&
           /\b(on\s+(?:a|the)\s+map|map\s+(?:of|for)|show\s+.*\bmap\b)/i.test(content)) {
         const layout: GenerativeUi = { version: 1, title: 'Explore on the map', description: content, blocks: [{
           id: `map-${assistantMessageId.slice(0, 12)}`, type: 'map', title: 'Places and results', width: 'full', query: content,
@@ -1541,7 +1553,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         : selectedKind
           ? { kind: selectedKind, mode: opts?.studioTarget ? 'edit' : 'create', additionalKinds: [], source: 'selection' }
           : fallbackStudioIntent(content, recentKind)
-      if (!plain && !selectedKind && !resuming && shouldClassifyStudio(content, recentKind)) {
+      if (!browserRequest && !plain && !selectedKind && !resuming && shouldClassifyStudio(content, recentKind)) {
         try {
           const cr = await fetch('/api/web', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2487,7 +2499,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         finishReviewActivity()
       }
     },
-    [activeId, chats, streaming, model, activeRepo, dismissedIntent, thinkLevel, reviewLayout, previewLayout, liveSwarm],
+    [activeId, chats, streaming, model, activeRepo, dismissedIntent, thinkLevel, reviewLayout, previewLayout, liveSwarm, openSpace],
   )
 
   const stop = useCallback(() => {
