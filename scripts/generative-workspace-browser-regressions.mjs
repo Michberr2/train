@@ -260,6 +260,8 @@ try {
  }
  assert.ok(calls.some(c=>c.path==='/api/browser' && c.action==='host_workspace_open'))
  console.log('PASS chat opens hosted Browser directly without Capabilities or model inference')
+ await page.getByRole('button',{name:'Nalu home',exact:true}).click()
+ await expect(home).toBeVisible()
  await page.getByRole('button',{name:'Pause cursor construction',exact:true}).click()
  await appearance('Dark mode')
  await expect.poll(()=>accountTheme).toBe('dark')
