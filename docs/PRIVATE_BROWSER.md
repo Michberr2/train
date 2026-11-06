@@ -1,3 +1,6 @@
+> The website now defaults to the [automatic hosted browser](HOSTED_BROWSER.md).
+> The local-companion and older hosted prototypes below are retained as compatibility references.
+
 # Current direction: browser on each user’s computer
 
 The current architecture is documented in [LOCAL_BROWSER.md](./LOCAL_BROWSER.md).

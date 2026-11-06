@@ -1,0 +1,9 @@
+{
+  "services/browser-cloud/server.mjs": "c211971076e5da86f7e1df0696cdcfff83455a3662588bf72e4db1c49409167e",
+  "services/browser-cloud/host.mjs": "b1001b2de7c7783b68a02563323e2b1f8f9a6e2e962c0dceeaffc841194527f7",
+  "services/browser-device/runtime.mjs": "5e8cb01721efaa887c60d41371d66e859d6e7b4cbc39950b6df850fb5b4a00de",
+  "services/browser-device/policy.mjs": "275461f48cc74b8567ed84f5dfe5a7a6abab858aee3abbe0f6893da217584ae5",
+  "services/browser-host/proxy.mjs": "e8e7ebcd4b532b33e421c978eab01cd502d709f5cdc8a345f0dbe1c07ef5a669",
+  "services/browser-host/package-lock.json": "54840982c4332e99fefb3dc19e47f14a96bf665d02d6b384efe0c83135d2a58f",
+  "services/browser-cloud/runtime.cjs": "c8d7475694d654608fa00878490e950ca317173f4d65b239d43ed6dbdf1b49c1"
+}

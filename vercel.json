@@ -37,6 +37,7 @@
       "maxDuration": 300
     },
     "api/browser.ts": {
+      "includeFiles": "services/browser-cloud/runtime.cjs",
       "maxDuration": 300
     },
     "api/cad.ts": {

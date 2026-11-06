@@ -1,5 +1,6 @@
 // Account-owned remote browser jobs. Provider acceptance is queued work, never
 // proof that a requested real-world action succeeded. No implicit retries.
+import { hostedBrowser } from './_hostedBrowser'
 import { browserWorkspace, browserProvider, WORKSPACE_BROWSER_ACTIONS } from './_browserWorkspace'
 import { randomUUID } from 'node:crypto'
 import { cors } from './_cors'
@@ -64,6 +65,7 @@ export default async function handler(req: any, res: any) {
   try { body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body || {} } catch { return res.status(400).json({ error: 'Invalid JSON.' }) }
   if (!body || typeof body !== 'object' || Array.isArray(body)) return res.status(400).json({ error: 'Provide a browser request object.' })
   const action = body.action || 'run'
+  if (typeof action === 'string' && action.startsWith('host_')) return hostedBrowser(req, res, body)
   if (WORKSPACE_BROWSER_ACTIONS.has(action)) return browserWorkspace(req, res, body)
   if (!['run', 'status', 'cancel'].includes(action)) return res.status(400).json({ error: 'Unknown browser action.' })
   const taskText = typeof body.task === 'string' ? body.task.trim() : ''

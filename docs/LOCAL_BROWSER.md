@@ -1,3 +1,6 @@
+> The website now defaults to the [automatic hosted browser](HOSTED_BROWSER.md).
+> The local-companion and older hosted prototypes below are retained as compatibility references.
+
 # Browser on each user's computer
 
 The Browser workspace and `browser_work` / `browser_status` tools connect to a

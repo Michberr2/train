@@ -35,7 +35,7 @@ export async function checkPreview(base, { fetchImpl = globalThis.fetch, expecte
   const entrySha256 = createHash('sha256').update(Buffer.from(await script.arrayBuffer())).digest('hex')
   if (expectedEntrySha256) assert.equal(entrySha256, expectedEntrySha256, `${origin.host}: served JavaScript differs from the verified deployment`)
   const routes = [
-    ...['auth', 'doc', 'sheet', 'slides', 'design', 'image', 'video', 'chat', 'team', 'swarm'].map(name => ({ path: `/api/${name}`, status: 405 })),
+    ...['auth', 'doc', 'sheet', 'slides', 'design', 'image', 'video', 'chat', 'team', 'swarm', 'browser'].map(name => ({ path: `/api/${name}`, status: 405 })),
     ...['artifacts', 'task-attachments', 'studio-image', 'swarm-cron'].map(name => ({ path: `/api/${name}`, status: 401 })),
   ]
   for (const route of routes) {

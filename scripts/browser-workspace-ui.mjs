@@ -22,10 +22,9 @@ try {
   page.on('pageerror', e => errors.push(e.message))
   await page.addInitScript(() => { localStorage.setItem('nalu-token', 'owner'); localStorage.setItem('device-local-ai-v1', JSON.stringify({ enabled: true })) })
   const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2mAAAAABJRU5ErkJggg=='
-  await page.route('http://127.0.0.1:8877/device', async route => {
-   const body = route.request().postDataJSON(); calls.push(body); assert.equal(route.request().headers().authorization, 'Bearer owner')
-   if (body.action === 'pair') return route.fulfill({ json: { device: 'test-private-device-capability' } })
-   assert.equal(route.request().headers()['x-nalu-device'], 'test-private-device-capability')
+  await page.route('**/api/browser', async route => {
+   const body = route.request().postDataJSON(); assert.ok(body.action.startsWith('host_')); body.action = body.action.slice(5); calls.push(body); assert.equal(route.request().headers().authorization, 'Bearer owner')
+   assert.equal(route.request().headers()['x-nalu-device'], undefined)
    if (body.action === 'workspace_open') state = { ...state, active: true, image }
    if (body.action === 'workspace_run') state = { ...state, active: true, status: 'running', task: body.task }
    if (body.action === 'workspace_takeover') state = { ...state, status: 'paused' }
@@ -33,17 +32,15 @@ try {
    await route.fulfill({ json: state })
   })
   await page.goto(`${base}/__browser-test`)
-  await page.getByLabel('Connect this computer', { exact: true }).fill('fixture-code')
-  await page.getByRole('button', { name: 'Connect', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Open a website to begin.' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Browser', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Open browser', exact: true }).click()
-  await expect(page.getByAltText('Live browser on this computer')).toBeVisible()
+  await expect(page.getByAltText('Your private Nalu browser')).toBeVisible()
+  assert.equal(calls.filter(c => c.action === 'workspace_open').length, 1, 'StrictMode shares one automatic startup')
+  await expect(page.getByLabel('Connect this computer', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Set up this computer')).toHaveCount(0)
   await page.getByLabel('What should this agent do?').fill('Add a monthly expense summary and verify it saved')
   await page.getByRole('checkbox', { name: 'Allow online AI for browser tasks' }).check()
   await page.getByRole('button', { name: 'Run task', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Run task', exact: true })).toBeDisabled()
-  await expect(page.getByText('Nalu is working on this computer.')).toBeVisible()
+  await expect(page.getByText('Nalu is working in your private browser.')).toBeVisible()
   assert.equal(await page.getByRole('application').getAttribute('tabindex'), '-1')
   await page.screenshot({ path: `${output}/browser-${width}.png`, fullPage: true })
   await page.getByRole('button', { name: 'Take control', exact: true }).click()
@@ -56,21 +53,21 @@ try {
   assert.ok(!tool.includes('test-private-device-capability'))
   assert.equal(await page.evaluate(() => window.browserTools.explicitlyUsesBrowser('Update my budget in Excel Online')), true)
   await page.getByRole('button', { name: 'Close browser', exact: true }).click()
-  await expect(page.getByAltText('Live browser on this computer')).toHaveCount(0)
+  await expect(page.getByAltText('Your private Nalu browser')).toHaveCount(0)
   await page.getByRole('checkbox', { name: 'Allow online AI for browser tasks' }).uncheck()
   await page.evaluate(() => localStorage.setItem('device-local-ai-v1', JSON.stringify({ enabled: true })))
   const beforeLocal = calls.length
   const localResult = await page.evaluate(() => window.browserTools.execBrowserTool({ id: 'local-check', function: { name: 'browser_work', arguments: JSON.stringify({ task: 'Do not send page data online' }) } }))
-  assert.match(localResult, /No page data was sent/)
+  assert.match(localResult, /no page data was sent/i)
   assert.equal(calls.length, beforeLocal)
   await page.evaluate(() => localStorage.removeItem('device-local-ai-v1'))
   const defaultResult = await page.evaluate(() => window.browserTools.execBrowserTool({ id: 'default-local-check', function: { name: 'browser_work', arguments: JSON.stringify({ task: 'Keep the default local-only mode' }) } }))
-  assert.match(defaultResult, /No page data was sent/)
+  assert.match(defaultResult, /no page data was sent/i)
   await page.evaluate(() => localStorage.setItem('nalu-token', 'other'))
   await page.getByRole('button', { name: 'Open browser', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Sign in again')
   assert.deepEqual(errors, [])
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
-  console.log(`PASS ${width}px workspace, account headers, device pairing, ordered input, private tool output, takeover and closure`); await page.close()
+  console.log(`PASS ${width}px workspace, account headers, automatic hosted startup, no installation/pairing, ordered input, private tool output, takeover and closure`); await page.close()
  }
 } finally { await browser?.close(); await server.close() }

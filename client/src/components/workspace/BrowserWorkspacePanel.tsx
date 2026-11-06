@@ -1,1 +1,1 @@
-export { default } from './DeviceBrowserPanel'
+export { default } from './HostedBrowserPanel'
