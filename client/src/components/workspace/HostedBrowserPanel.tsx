@@ -13,8 +13,9 @@ export default function HostedBrowserPanel({ token }: { token: string | null }) 
   const generation = useRef(0), mutation = useRef(false), sequence = useRef(0), inputQueue = useRef(Promise.resolve())
   const running = ['running', 'queued'].includes(state?.status || '')
   useEffect(() => { setConnected(!!token); setOnlineAI(browserOnlineAIAllowed()); setState(null); generation.current++ }, [token])
+  useEffect(() => { setState(null) }, [agent])
   useEffect(() => {
-    setState(null); const revision = ++generation.current, controller = new AbortController(); let timer: ReturnType<typeof setTimeout>
+    const revision = ++generation.current, controller = new AbortController(); let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
       const snapshot = sequence.current
       if (!mutation.current) try {
@@ -23,9 +24,9 @@ export default function HostedBrowserPanel({ token }: { token: string | null }) 
       } catch (e) { if (!controller.signal.aborted && generation.current === revision) setError((e as Error).message) }
       if (!controller.signal.aborted) timer = setTimeout(poll, 1200)
     }
-    if (connected) void poll()
+    if (connected && !starting) void poll()
     return () => { controller.abort(); clearTimeout(timer); generation.current++ }
-  }, [connected, agent, token])
+  }, [connected, agent, token, starting])
   async function act(action: string, data: Record<string, unknown> = {}) {
     if (mutation.current) return
     mutation.current = true; sequence.current++; setBusy(true); setError(''); const revision = generation.current
@@ -53,7 +54,7 @@ export default function HostedBrowserPanel({ token }: { token: string | null }) 
       catch (e) { if (revision === generation.current) setError((e as Error).message) }
     })
   }
-  return <div className="nalu-browser">
+  return <div className="nalu-browser" data-cursor-exempt>
     <header className="nalu-browser-header"><div><Globe size={22}/><div><h2>Your browser</h2><p>Starts automatically in Nalu. Your account and each agent have separate browser profiles.</p></div></div>
       {connected && <div className="nalu-browser-controls"><button disabled={busy} onClick={() => void act('disconnect')}>Pause browsers</button></div>}
     </header>

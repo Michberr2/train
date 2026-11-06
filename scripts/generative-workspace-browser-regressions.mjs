@@ -256,6 +256,7 @@ try {
   await home.getByRole('button', {name:'Send',exact:true}).click()
   await expect(page.getByAltText('Your private Nalu browser')).toBeVisible({timeout:30000})
   assert.equal(await page.evaluate(() => window.__uiCalls.length),before,'browser navigation does not call the model')
+  await expect(page.locator('.nalu-browser [data-build-piece]')).toHaveCount(0)
   await expect(page.getByLabel('Connect this computer',{exact:true})).toHaveCount(0)
  }
  assert.ok(calls.some(c=>c.path==='/api/browser' && c.action==='host_workspace_open'))

@@ -79,6 +79,11 @@ export async function hostedBrowser(req: any,res: any,body: any,deps = defaults)
       return res.status(200).json({...idle(body.agent_id),status:'paused'})
     }
     const value=await call(sandbox,action)
+    // Return the first frame with startup instead of waiting for another poll.
+    if(action==='workspace_open' && value.active){
+      try{return res.status(200).json({...value,...await call(sandbox,'workspace_screen')})}
+      catch{/* Opening succeeded; a later screen poll can recover. */}
+    }
     return res.status(200).json(value)
   }catch(error:any){
     // Never return SDK errors: provider URLs and authentication metadata are private.

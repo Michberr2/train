@@ -18,6 +18,7 @@ try {
  await server.listen(); const base = `http://127.0.0.1:${server.httpServer.address().port}`; browser = await chromium.launch()
  for (const width of [390, 1440]) {
   const page = await browser.newPage({ viewport: { width, height: 1000 } }); const calls = [], errors = []
+  let releaseStartup; const startup = new Promise(resolve => { releaseStartup = resolve })
   let state = { configured: true, active: false, status: 'idle', steps: [], agents: [{ id: 'main', status: 'idle' }] }
   page.on('pageerror', e => errors.push(e.message))
   await page.addInitScript(() => { localStorage.setItem('nalu-token', 'owner'); localStorage.setItem('device-local-ai-v1', JSON.stringify({ enabled: true })) })
@@ -25,7 +26,7 @@ try {
   await page.route('**/api/browser', async route => {
    const body = route.request().postDataJSON(); assert.ok(body.action.startsWith('host_')); body.action = body.action.slice(5); calls.push(body); assert.equal(route.request().headers().authorization, 'Bearer owner')
    assert.equal(route.request().headers()['x-nalu-device'], undefined)
-   if (body.action === 'workspace_open') state = { ...state, active: true, image }
+   if (body.action === 'workspace_open') { await startup; state = { ...state, active: true, image } }
    if (body.action === 'workspace_run') state = { ...state, active: true, status: 'running', task: body.task }
    if (body.action === 'workspace_takeover') state = { ...state, status: 'paused' }
    if (body.action === 'workspace_close') state = { ...state, active: false, image: null, status: 'idle' }
@@ -35,6 +36,12 @@ try {
   await page.waitForFunction(()=>Boolean(window.browserTools))
   for (const text of ['browser','open browser','show my browser','please take me to the browser','can you open a browser?']) assert.equal(await page.evaluate(text=>window.browserTools.isBrowserNavigation(text),text),true,text)
   for (const text of ['what is a browser?','do not open browser','open browser and find hotels','explain browser security']) assert.equal(await page.evaluate(text=>window.browserTools.isBrowserNavigation(text),text),false,text)
+  await expect(page.getByRole('heading',{name:'Your browser',exact:true})).toBeVisible()
+  await expect(page.locator('.nalu-browser')).toHaveAttribute('data-cursor-exempt','true')
+  await expect.poll(()=>calls.filter(c=>c.action==='workspace_open').length).toBe(1)
+  await page.waitForTimeout(1400)
+  assert.deepEqual(calls.map(c=>c.action),['workspace_open'],'polling cannot compete with startup')
+  releaseStartup()
   await expect(page.getByAltText('Your private Nalu browser')).toBeVisible()
   assert.equal(calls.filter(c => c.action === 'workspace_open').length, 1, 'StrictMode shares one automatic startup')
   await expect(page.getByLabel('Connect this computer', { exact: true })).toHaveCount(0)
