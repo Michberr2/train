@@ -71,6 +71,10 @@ export default function HostedBrowserPanel({ token, requests = [], onRequestCons
     {error && <p className="nalu-browser-error" role="alert">{error}</p>}
     {starting && <p role="status">Starting your private browser…</p>}
     {!connected ? <section className="nalu-browser-task"><h3>Your browsers are paused</h3><p>Your saved browser profiles stay private to your account.</p><button disabled={busy} onClick={() => void act('workspace_open')}>Open browser</button></section> : <>
+      {pending && <p role="status">{hostedBrowserNeedsPermission() ? 'Your request is ready. Enable “Allow online AI for browser tasks” below and Nalu will start it automatically.' : 'Your request is queued and will start when this browser is ready.'}</p>}
+      <div className="nalu-browser-task">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" style={{ width: 'auto', flex: 'none' }} checked={onlineAI} disabled={busy || running} onChange={e => { allowBrowserOnlineAI(e.target.checked); setOnlineAI(e.target.checked) }}/>Allow online AI for browser tasks</label><small>This permission lasts for this signed-in tab only. It allows page text and screenshots to reach Nalu’s online AI; other AI settings stay unchanged.</small>
+      </div>
       <div className="nalu-browser-shortcuts" role="group" aria-label="Agent browsers">
         {(state?.agents || [{ id: agent, status: 'idle' }]).map(a => <button key={a.id} aria-pressed={agent === a.id} disabled={busy} onClick={() => setAgent(a.id)}>{a.id === 'main' ? 'Nalu' : a.id} · {a.status}</button>)}
         <button disabled={busy} onClick={() => { setAgent('agent-' + crypto.randomUUID().slice(0, 8)); setTask('') }}><Plus size={14}/>New agent browser</button>
@@ -100,9 +104,7 @@ export default function HostedBrowserPanel({ token, requests = [], onRequestCons
       </div>
       {state?.detail && <p role="status">{state.detail}</p>}
       {['paused', 'needs_help'].includes(state?.status || '') && <div className="nalu-browser-address"><input aria-label="Reply to Nalu" value={reply} onChange={e => setReply(e.target.value)} maxLength={2000} placeholder="Optional reply or clarification"/><button disabled={busy} onClick={() => { void act('workspace_resume', { reply }); setReply('') }}>Continue task</button></div>}
-      {pending && <p role="status">{hostedBrowserNeedsPermission() ? 'Your request is ready. Enable “Allow online AI for browser tasks” below and Nalu will start it automatically.' : 'Your request is queued and will start when this browser is ready.'}</p>}
       <form className="nalu-browser-task" onSubmit={e => { e.preventDefault(); if(pending){submitted.current.add(pending.id);onRequestConsumed?.(pending.id)} void act('workspace_run', { task }) }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}><input type="checkbox" style={{ width: 'auto', flex: 'none' }} checked={onlineAI} disabled={busy || running || starting} onChange={e => { allowBrowserOnlineAI(e.target.checked); setOnlineAI(e.target.checked) }}/>Allow online AI for browser tasks</label><small>This permission lasts for this signed-in tab only. It allows page text and screenshots to reach Nalu’s online AI; other AI settings stay unchanged.</small>
         <label htmlFor="device-browser-task">What should this agent do?</label><div><textarea id="device-browser-task" value={task} onChange={e => setTask(e.target.value)} maxLength={6000} required placeholder="Find the document, make the requested changes, and verify it saved."/><button disabled={busy || running || starting || !task.trim()}>Run task<ArrowRight size={16}/></button></div>
         <small>Nalu hosts this browser for your account. Its online AI uses page content and screenshots to do your task. Take control to sign in or help. Sessions pause after 15 minutes; open the browser again to continue.</small>
       </form>
