@@ -1278,7 +1278,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
       const content = text.trim()
       if (!content || streaming) return
       const browserNavigation = !opts?.studioKind && !opts?.studioTarget && isBrowserNavigation(content)
-      const browserRequest = !opts?.studioKind && !opts?.studioTarget && (explicitlyUsesBrowser(content) || view === 'browser')
+      const browserRequest = !opts?.studioKind && !opts?.studioTarget && (explicitlyUsesBrowser(content) || !generativeHome && view === 'browser')
       setGenerativeHome(false); setLibraryOpen(false); setCapabilitiesOpen(false); setLauncherOpen(false); setConversationView(false)
       const delegateRequest = !browserRequest && reviewLayout && !previewLayout && !opts?.studioKind && !opts?.studioTarget && dismissedIntent !== content && (Boolean(opts?.delegation) || isLocalSwarmRequest(content))
       const workspaceRequest = !browserRequest && !delegateRequest && reviewLayout && previewLayout && !opts?.keepView && !opts?.studioKind && dismissedIntent !== content ? workspaceForRequest(content) : null
@@ -2500,7 +2500,7 @@ export default function Workspace({ user, onLogout, designEnabled = false, desig
         finishReviewActivity()
       }
     },
-    [activeId, chats, streaming, model, activeRepo, dismissedIntent, thinkLevel, reviewLayout, previewLayout, liveSwarm, openSpace, view],
+    [activeId, chats, streaming, model, activeRepo, dismissedIntent, thinkLevel, reviewLayout, previewLayout, liveSwarm, openSpace, view, generativeHome],
   )
 
   const stop = useCallback(() => {
