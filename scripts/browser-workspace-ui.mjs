@@ -46,6 +46,18 @@ try {
   assert.equal(calls.filter(c => c.action === 'workspace_open').length, 1, 'StrictMode shares one automatic startup')
   await expect(page.getByLabel('Connect this computer', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Set up this computer')).toHaveCount(0)
+  for (const query of ['search for NASA Artemis', 'Search the web for python pathlib', 'look up coffee shops in Orlando', 'Google how rainbows form']) assert.equal(await page.evaluate(text=>window.browserTools.explicitlyUsesBrowser(text),query),true,query)
+  for (const query of ['explain binary search', 'write a search algorithm', 'what is a browser?']) assert.equal(await page.evaluate(text=>window.browserTools.explicitlyUsesBrowser(text),query),false,query)
+  for (const query of ['NASA Artemis', 'coffee shops in Orlando', 'how do rainbows form?']) {
+    await page.getByLabel('Website address',{exact:true}).fill(query)
+    await page.getByRole('button',{name:'Go',exact:true}).click()
+    await expect.poll(()=>calls.filter(c=>c.action==='workspace_run').at(-1)?.task).toContain(query)
+    await page.getByRole('button',{name:'Take control',exact:true}).click()
+  }
+  await page.getByLabel('Website address',{exact:true}).fill('nasa.gov/artemis')
+  await page.getByRole('button',{name:'Go',exact:true}).click()
+  await expect.poll(()=>calls.filter(c=>c.action==='workspace_open').at(-1)?.url).toBe('https://nasa.gov/artemis')
+  for(const invalid of ['javascript:alert(1)','file:///etc/passwd','https://user:pass@example.com'])assert.equal(await page.evaluate(text=>{try{window.browserTools.browserAddress(text);return false}catch{return true}},invalid),true)
   await page.getByLabel('What should this agent do?').fill('Add a monthly expense summary and verify it saved')
   await expect(page.getByRole('checkbox', { name: 'Allow online AI for browser tasks' })).toHaveCount(0)
   await page.getByRole('button', { name: 'Run task', exact: true }).click()

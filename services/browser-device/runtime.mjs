@@ -124,6 +124,8 @@ export class DeviceRuntime {
   async observe(a) {
     const page = a.page, handles = [], elements = [], texts = []
     let needsLogin = false
+    const initialUrl = page.url()
+    try {
     // Frame-local handles allow actions inside cross-origin Office/Google frames.
     for (const frame of page.frames().slice(0, 20)) {
       const text = await frame.evaluate(() => document.body?.innerText?.slice(0, 6000) || '').catch(() => '')
@@ -142,9 +144,20 @@ export class DeviceRuntime {
       }
     }
     const pages = await a.browser.pages()
+    if(page.url()!==initialUrl)throw Error('Page changed while observing.')
     return { handles, needsLogin, input: { protocol: 'nalu-device-v1', platform: process.platform, goal: a.task, url: page.url(), title: await page.title(), text: texts.join('\n').slice(0, 12000), elements,
       viewport: { w: 1440, h: 900 }, history: a.history.slice(-15), tabs: await Promise.all(pages.map(async (p, index) => ({ index, title: await p.title(), url: p.url(), active: p === page }))),
       screenshot: needsLogin ? undefined : 'data:image/jpeg;base64,' + await page.screenshot({ type: 'jpeg', quality: 60, encoding: 'base64' }) } }
+    } catch(error) { await Promise.all(handles.map(handle=>handle.dispose().catch(()=>{}))); throw error }
+  }
+  async observeStable(a) {
+    for(let attempt=0; ; attempt++){
+      try {return await this.observe(a)} catch(error) {
+        if(attempt>=3 || !/detached frame|execution context was destroyed|cannot find context|page changed while observing/i.test(String(error.message)))throw error
+        // Only repeat page observation; never replay a click, submission or edit.
+        await new Promise(resolve=>setTimeout(resolve,250))
+      }
+    }
   }
   async execute(a, action, observed) {
     const page = a.page, pages = await a.browser.pages()
@@ -185,7 +198,7 @@ export class DeviceRuntime {
     let observed
     try {
       for (let step = 0; step < 40 && a.epoch === epoch && a.status === 'running'; step++) {
-        observed = await this.serial(a, () => this.observe(a))
+        observed = await this.serial(a, () => this.observeStable(a))
         if (a.epoch !== epoch) break
         if (observed.needsLogin) { a.status = 'needs_help'; a.detail = 'Sign in directly in the browser, then choose Continue. Do not put passwords or codes in chat.'; break }
         const decision = await this.decide(a.owner, observed.input, a.controller.signal)

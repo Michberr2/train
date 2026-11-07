@@ -266,7 +266,7 @@ try {
  assert.ok(calls.some(c=>c.path==='/api/browser' && c.action==='host_workspace_open'))
  console.log('PASS chat opens hosted Browser directly without Capabilities or model inference')
  await page.getByRole('button',{name:'Nalu home',exact:true}).click()
- const browserPrompt='Use the browser to read the heading at https://example.com and report it.'
+ const browserPrompt='Search the web for the official NASA Artemis page and report its heading.'
  const beforeTaskCalls=await page.evaluate(()=>window.__uiCalls.length)
  await home.locator('textarea').fill(browserPrompt)
  await home.getByRole('button',{name:'Send',exact:true}).click()

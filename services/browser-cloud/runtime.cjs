@@ -10,9 +10,9 @@ var __esm = (fn, res) => function __init() {
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
-var __export = (target2, all) => {
+var __export = (target, all) => {
   for (var name in all)
-    __defProp(target2, name, { get: all[name], enumerable: true });
+    __defProp(target, name, { get: all[name], enumerable: true });
 };
 var __copyProps = (to, from2, except, desc) => {
   if (from2 && typeof from2 === "object" || typeof from2 === "function") {
@@ -22,12 +22,12 @@ var __copyProps = (to, from2, except, desc) => {
   }
   return to;
 };
-var __toESM = (mod, isNodeMode, target2) => (target2 = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
   // If the importer is in node compatibility mode or this is not an ESM
   // file that has been converted to a CommonJS file using a Babel-
   // compatible transform (i.e. "__esModule" has not been set), then set
   // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target2, "default", { value: mod, enumerable: true }) : target2,
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
@@ -767,17 +767,17 @@ var require_buffer_util = __commonJS({
     function concat2(list, totalLength) {
       if (list.length === 0) return EMPTY_BUFFER;
       if (list.length === 1) return list[0];
-      const target2 = Buffer.allocUnsafe(totalLength);
+      const target = Buffer.allocUnsafe(totalLength);
       let offset = 0;
       for (let i = 0; i < list.length; i++) {
         const buf = list[i];
-        target2.set(buf, offset);
+        target.set(buf, offset);
         offset += buf.length;
       }
       if (offset < totalLength) {
-        return new FastBuffer(target2.buffer, target2.byteOffset, offset);
+        return new FastBuffer(target.buffer, target.byteOffset, offset);
       }
-      return target2;
+      return target;
     }
     function _mask(source2, mask, output, offset, length) {
       for (let i = 0; i < length; i++) {
@@ -2210,32 +2210,32 @@ var require_sender = __commonJS({
           offset += 2;
           payloadLength = 126;
         }
-        const target2 = Buffer.allocUnsafe(merge2 ? dataLength + offset : offset);
-        target2[0] = options.fin ? options.opcode | 128 : options.opcode;
-        if (options.rsv1) target2[0] |= 64;
-        target2[1] = payloadLength;
+        const target = Buffer.allocUnsafe(merge2 ? dataLength + offset : offset);
+        target[0] = options.fin ? options.opcode | 128 : options.opcode;
+        if (options.rsv1) target[0] |= 64;
+        target[1] = payloadLength;
         if (payloadLength === 126) {
-          target2.writeUInt16BE(dataLength, 2);
+          target.writeUInt16BE(dataLength, 2);
         } else if (payloadLength === 127) {
-          target2[2] = target2[3] = 0;
-          target2.writeUIntBE(dataLength, 4, 6);
+          target[2] = target[3] = 0;
+          target.writeUIntBE(dataLength, 4, 6);
         }
         if (!options.mask) {
-          return dataLength ? [target2, data] : [target2];
+          return dataLength ? [target, data] : [target];
         }
-        target2[1] |= 128;
-        target2[offset - 4] = mask[0];
-        target2[offset - 3] = mask[1];
-        target2[offset - 2] = mask[2];
-        target2[offset - 1] = mask[3];
-        if (!dataLength) return [target2];
-        if (skipMasking) return [target2, data];
+        target[1] |= 128;
+        target[offset - 4] = mask[0];
+        target[offset - 3] = mask[1];
+        target[offset - 2] = mask[2];
+        target[offset - 1] = mask[3];
+        if (!dataLength) return [target];
+        if (skipMasking) return [target, data];
         if (merge2) {
-          applyMask(data, mask, target2, offset, dataLength);
-          return [target2];
+          applyMask(data, mask, target, offset, dataLength);
+          return [target];
         }
         applyMask(data, mask, data, 0, dataLength);
-        return [target2, data];
+        return [target, data];
       }
       /**
        * Sends a close message to the other peer.
@@ -14091,9 +14091,9 @@ var require_parseListMLSD = __commonJS({
       const resolvedFiles = [];
       for (const file of files) {
         if (file.isSymbolicLink && file.uniqueID !== void 0 && file.link === void 0) {
-          const target2 = nonLinksByID.get(file.uniqueID);
-          if (target2 !== void 0) {
-            file.link = target2.name;
+          const target = nonLinksByID.get(file.uniqueID);
+          if (target !== void 0) {
+            file.link = target.name;
           }
         }
         const isPartOfDirectory = !file.name.includes("/");
@@ -14351,28 +14351,28 @@ var require_transfer = __commonJS({
     }
     async function enterPassiveModeIPv4(ftp) {
       const res = await ftp.request("PASV");
-      const target2 = parsePasvResponse(res.message);
-      if (!target2) {
+      const target = parsePasvResponse(res.message);
+      if (!target) {
         throw new Error("Can't parse PASV response: " + res.message);
       }
       const controlHost = ftp.socket.remoteAddress;
-      if ((0, netUtils_1.ipIsPrivateV4Address)(target2.host) && controlHost && !(0, netUtils_1.ipIsPrivateV4Address)(controlHost)) {
-        target2.host = controlHost;
+      if ((0, netUtils_1.ipIsPrivateV4Address)(target.host) && controlHost && !(0, netUtils_1.ipIsPrivateV4Address)(controlHost)) {
+        target.host = controlHost;
       }
-      await connectForPassiveTransfer(target2.host, target2.port, ftp);
+      await connectForPassiveTransfer(target.host, target.port, ftp);
       return res;
     }
     async function enterPassiveModeIPv4_forceControlHostIP(ftp) {
       const res = await ftp.request("PASV");
-      const target2 = parsePasvResponse(res.message);
-      if (!target2) {
+      const target = parsePasvResponse(res.message);
+      if (!target) {
         throw new Error("Can't parse PASV response: " + res.message);
       }
       const controlHost = ftp.socket.remoteAddress;
       if (controlHost === void 0) {
         throw new Error("Control socket is disconnected, can't get remote address.");
       }
-      await connectForPassiveTransfer(controlHost, target2.port, ftp);
+      await connectForPassiveTransfer(controlHost, target.port, ftp);
       return res;
     }
     function parsePasvResponse(message) {
@@ -16055,7 +16055,7 @@ var require_estraverse = __commonJS({
         }
       };
       Controller.prototype.replace = function replace2(root, visitor) {
-        var worklist, leavelist, node, nodeType, target2, element, current, current2, candidates, candidate, sentinel, outer, key2;
+        var worklist, leavelist, node, nodeType, target, element, current, current2, candidates, candidate, sentinel, outer, key2;
         function removeElem(element2) {
           var i, key3, nextElem, parent;
           if (element2.ref.remove()) {
@@ -16087,28 +16087,28 @@ var require_estraverse = __commonJS({
           element = worklist.pop();
           if (element === sentinel) {
             element = leavelist.pop();
-            target2 = this.__execute(visitor.leave, element);
-            if (target2 !== void 0 && target2 !== BREAK && target2 !== SKIP && target2 !== REMOVE) {
-              element.ref.replace(target2);
+            target = this.__execute(visitor.leave, element);
+            if (target !== void 0 && target !== BREAK && target !== SKIP && target !== REMOVE) {
+              element.ref.replace(target);
             }
-            if (this.__state === REMOVE || target2 === REMOVE) {
+            if (this.__state === REMOVE || target === REMOVE) {
               removeElem(element);
             }
-            if (this.__state === BREAK || target2 === BREAK) {
+            if (this.__state === BREAK || target === BREAK) {
               return outer.root;
             }
             continue;
           }
-          target2 = this.__execute(visitor.enter, element);
-          if (target2 !== void 0 && target2 !== BREAK && target2 !== SKIP && target2 !== REMOVE) {
-            element.ref.replace(target2);
-            element.node = target2;
+          target = this.__execute(visitor.enter, element);
+          if (target !== void 0 && target !== BREAK && target !== SKIP && target !== REMOVE) {
+            element.ref.replace(target);
+            element.node = target;
           }
-          if (this.__state === REMOVE || target2 === REMOVE) {
+          if (this.__state === REMOVE || target === REMOVE) {
             removeElem(element);
             element.node = null;
           }
-          if (this.__state === BREAK || target2 === BREAK) {
+          if (this.__state === BREAK || target === BREAK) {
             return outer.root;
           }
           node = element.node;
@@ -16117,7 +16117,7 @@ var require_estraverse = __commonJS({
           }
           worklist.push(sentinel);
           leavelist.push(element);
-          if (this.__state === SKIP || target2 === SKIP) {
+          if (this.__state === SKIP || target === SKIP) {
             continue;
           }
           nodeType = node.type || element.wrap;
@@ -16167,17 +16167,17 @@ var require_estraverse = __commonJS({
         return controller.replace(root, visitor);
       }
       function extendCommentRange(comment, tokens) {
-        var target2;
-        target2 = upperBound(tokens, function search(token2) {
+        var target;
+        target = upperBound(tokens, function search(token2) {
           return token2.range[0] > comment.range[0];
         });
         comment.extendedRange = [comment.range[0], comment.range[1]];
-        if (target2 !== tokens.length) {
-          comment.extendedRange[1] = tokens[target2].range[0];
+        if (target !== tokens.length) {
+          comment.extendedRange[1] = tokens[target].range[0];
         }
-        target2 -= 1;
-        if (target2 >= 0) {
-          comment.extendedRange[0] = tokens[target2].range[1];
+        target -= 1;
+        if (target >= 0) {
+          comment.extendedRange[0] = tokens[target].range[1];
         }
         return comment;
       }
@@ -18577,35 +18577,35 @@ var require_escodegen = __commonJS({
         var len = str.length;
         return len && esutils.code.isLineTerminator(str.charCodeAt(len - 1));
       }
-      function merge2(target2, override) {
+      function merge2(target, override) {
         var key2;
         for (key2 in override) {
           if (override.hasOwnProperty(key2)) {
-            target2[key2] = override[key2];
+            target[key2] = override[key2];
           }
         }
-        return target2;
+        return target;
       }
-      function updateDeeply(target2, override) {
+      function updateDeeply(target, override) {
         var key2, val;
-        function isHashObject(target3) {
-          return typeof target3 === "object" && target3 instanceof Object && !(target3 instanceof RegExp);
+        function isHashObject(target2) {
+          return typeof target2 === "object" && target2 instanceof Object && !(target2 instanceof RegExp);
         }
         for (key2 in override) {
           if (override.hasOwnProperty(key2)) {
             val = override[key2];
             if (isHashObject(val)) {
-              if (isHashObject(target2[key2])) {
-                updateDeeply(target2[key2], val);
+              if (isHashObject(target[key2])) {
+                updateDeeply(target[key2], val);
               } else {
-                target2[key2] = updateDeeply({}, val);
+                target[key2] = updateDeeply({}, val);
               }
             } else {
-              target2[key2] = val;
+              target[key2] = val;
             }
           }
         }
-        return target2;
+        return target;
       }
       function generateNumber(value) {
         var result, point, temp, exponent, pos;
@@ -20719,27 +20719,27 @@ var require_esprima = __commonJS({
               };
               CommentHandler2.prototype.findLeadingComments = function(metadata) {
                 var leadingComments = [];
-                var target2;
+                var target;
                 while (this.stack.length > 0) {
                   var entry = this.stack[this.stack.length - 1];
                   if (entry && entry.start >= metadata.start.offset) {
-                    target2 = entry.node;
+                    target = entry.node;
                     this.stack.pop();
                   } else {
                     break;
                   }
                 }
-                if (target2) {
-                  var count = target2.leadingComments ? target2.leadingComments.length : 0;
+                if (target) {
+                  var count = target.leadingComments ? target.leadingComments.length : 0;
                   for (var i = count - 1; i >= 0; --i) {
-                    var comment = target2.leadingComments[i];
+                    var comment = target.leadingComments[i];
                     if (comment.range[1] <= metadata.start.offset) {
                       leadingComments.unshift(comment);
-                      target2.leadingComments.splice(i, 1);
+                      target.leadingComments.splice(i, 1);
                     }
                   }
-                  if (target2.leadingComments && target2.leadingComments.length === 0) {
-                    delete target2.leadingComments;
+                  if (target.leadingComments && target.leadingComments.length === 0) {
+                    delete target.leadingComments;
                   }
                   return leadingComments;
                 }
@@ -26824,15 +26824,15 @@ function __rest(s, e) {
     }
   return t;
 }
-function __decorate(decorators, target2, key2, desc) {
-  var c = arguments.length, r = c < 3 ? target2 : desc === null ? desc = Object.getOwnPropertyDescriptor(target2, key2) : desc, d;
-  if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target2, key2, desc);
-  else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target2, key2, r) : d(target2, key2)) || r;
-  return c > 3 && r && Object.defineProperty(target2, key2, r), r;
+function __decorate(decorators, target, key2, desc) {
+  var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key2) : desc, d;
+  if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key2, desc);
+  else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key2, r) : d(target, key2)) || r;
+  return c > 3 && r && Object.defineProperty(target, key2, r), r;
 }
 function __param(paramIndex, decorator) {
-  return function(target2, key2) {
-    decorator(target2, key2, paramIndex);
+  return function(target, key2) {
+    decorator(target, key2, paramIndex);
   };
 }
 function __esDecorate8(ctor, descriptorIn, decorators, contextIn, initializers, extraInitializers) {
@@ -26841,8 +26841,8 @@ function __esDecorate8(ctor, descriptorIn, decorators, contextIn, initializers, 
     return f;
   }
   var kind = contextIn.kind, key2 = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
-  var target2 = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
-  var descriptor = descriptorIn || (target2 ? Object.getOwnPropertyDescriptor(target2, contextIn.name) : {});
+  var target = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
+  var descriptor = descriptorIn || (target ? Object.getOwnPropertyDescriptor(target, contextIn.name) : {});
   var _, done = false;
   for (var i = decorators.length - 1; i >= 0; i--) {
     var context2 = {};
@@ -26864,7 +26864,7 @@ function __esDecorate8(ctor, descriptorIn, decorators, contextIn, initializers, 
       else descriptor[key2] = _;
     }
   }
-  if (target2) Object.defineProperty(target2, contextIn.name, descriptor);
+  if (target) Object.defineProperty(target, contextIn.name, descriptor);
   done = true;
 }
 function __runInitializers8(thisArg, initializers, value) {
@@ -28975,13 +28975,13 @@ var require_path_visitor = __commonJS({
         isFunction2.assert(Visitor.visit);
         return new Visitor();
       };
-      function extend(target2, source2) {
+      function extend(target, source2) {
         for (var property in source2) {
           if (hasOwn.call(source2, property)) {
-            target2[property] = source2[property];
+            target[property] = source2[property];
           }
         }
-        return target2;
+        return target;
       }
       PathVisitor.visit = function visit(node, methods) {
         return PathVisitor.fromMethodsObject(methods).visit(node);
@@ -34587,7 +34587,7 @@ var require_dist10 = __commonJS({
         for (const proxy of proxies) {
           let agent = null;
           let socket = null;
-          const [type, target2] = proxy.split(/\s+/);
+          const [type, target] = proxy.split(/\s+/);
           debug5("Attempting to use proxy: %o", proxy);
           if (type === "DIRECT") {
             if (secureEndpoint) {
@@ -34597,12 +34597,12 @@ var require_dist10 = __commonJS({
             }
           } else if (type === "SOCKS" || type === "SOCKS5") {
             const { SocksProxyAgent } = await Promise.resolve().then(() => __importStar2(require_dist4()));
-            agent = new SocksProxyAgent(`socks://${target2}`, this.opts);
+            agent = new SocksProxyAgent(`socks://${target}`, this.opts);
           } else if (type === "SOCKS4") {
             const { SocksProxyAgent } = await Promise.resolve().then(() => __importStar2(require_dist4()));
-            agent = new SocksProxyAgent(`socks4a://${target2}`, this.opts);
+            agent = new SocksProxyAgent(`socks4a://${target}`, this.opts);
           } else if (type === "PROXY" || type === "HTTP" || type === "HTTPS") {
-            const proxyURL = `${type === "HTTPS" ? "https" : "http"}://${target2}`;
+            const proxyURL = `${type === "HTTPS" ? "https" : "http"}://${target}`;
             if (secureEndpoint || isWebSocket) {
               const { HttpsProxyAgent } = await Promise.resolve().then(() => __importStar2(require_dist3()));
               agent = new HttpsProxyAgent(proxyURL, this.opts);
@@ -36602,8 +36602,8 @@ var require_b4a = __commonJS({
     function concat2(buffers, totalLength) {
       return Buffer.concat(buffers, totalLength);
     }
-    function copy(source2, target2, targetStart, start, end2) {
-      return toBuffer(source2).copy(target2, targetStart, start, end2);
+    function copy(source2, target, targetStart, start, end2) {
+      return toBuffer(source2).copy(target, targetStart, start, end2);
     }
     function equals(a, b) {
       return toBuffer(a).equals(b);
@@ -42729,20 +42729,20 @@ var require_build4 = __commonJS({
       renderInline(source2, previousLine) {
         const match = source2.match(/^ */);
         const leadingWhitespace = match ? match[0].length : 0;
-        const target2 = previousLine.text;
-        const targetTextWidth = mixin3.stringWidth(target2.trimRight());
+        const target = previousLine.text;
+        const targetTextWidth = mixin3.stringWidth(target.trimRight());
         if (!previousLine.span) {
           return source2;
         }
         if (!this.wrap) {
           previousLine.hidden = true;
-          return target2 + source2;
+          return target + source2;
         }
         if (leadingWhitespace < targetTextWidth) {
           return source2;
         }
         previousLine.hidden = true;
-        return target2.trimRight() + " ".repeat(leadingWhitespace - targetTextWidth) + source2.trimLeft();
+        return target.trimRight() + " ".repeat(leadingWhitespace - targetTextWidth) + source2.trimLeft();
       }
       rasterize(row) {
         const rrows = [];
@@ -46332,24 +46332,24 @@ function defer(observableFactory) {
 var nodeEventEmitterMethods = ["addListener", "removeListener"];
 var eventTargetMethods = ["addEventListener", "removeEventListener"];
 var jqueryMethods = ["on", "off"];
-function fromEvent(target2, eventName, options, resultSelector) {
+function fromEvent(target, eventName, options, resultSelector) {
   if (isFunction(options)) {
     resultSelector = options;
     options = void 0;
   }
   if (resultSelector) {
-    return fromEvent(target2, eventName, options).pipe(mapOneOrManyArgs(resultSelector));
+    return fromEvent(target, eventName, options).pipe(mapOneOrManyArgs(resultSelector));
   }
-  var _a2 = __read(isEventTarget(target2) ? eventTargetMethods.map(function(methodName) {
+  var _a2 = __read(isEventTarget(target) ? eventTargetMethods.map(function(methodName) {
     return function(handler) {
-      return target2[methodName](eventName, handler, options);
+      return target[methodName](eventName, handler, options);
     };
-  }) : isNodeStyleEventEmitter(target2) ? nodeEventEmitterMethods.map(toCommonHandlerRegistry(target2, eventName)) : isJQueryStyleEventEmitter(target2) ? jqueryMethods.map(toCommonHandlerRegistry(target2, eventName)) : [], 2), add = _a2[0], remove = _a2[1];
+  }) : isNodeStyleEventEmitter(target) ? nodeEventEmitterMethods.map(toCommonHandlerRegistry(target, eventName)) : isJQueryStyleEventEmitter(target) ? jqueryMethods.map(toCommonHandlerRegistry(target, eventName)) : [], 2), add = _a2[0], remove = _a2[1];
   if (!add) {
-    if (isArrayLike(target2)) {
+    if (isArrayLike(target)) {
       return mergeMap(function(subTarget) {
         return fromEvent(subTarget, eventName, options);
-      })(innerFrom(target2));
+      })(innerFrom(target));
     }
   }
   if (!add) {
@@ -46369,21 +46369,21 @@ function fromEvent(target2, eventName, options, resultSelector) {
     };
   });
 }
-function toCommonHandlerRegistry(target2, eventName) {
+function toCommonHandlerRegistry(target, eventName) {
   return function(methodName) {
     return function(handler) {
-      return target2[methodName](eventName, handler);
+      return target[methodName](eventName, handler);
     };
   };
 }
-function isNodeStyleEventEmitter(target2) {
-  return isFunction(target2.addListener) && isFunction(target2.removeListener);
+function isNodeStyleEventEmitter(target) {
+  return isFunction(target.addListener) && isFunction(target.removeListener);
 }
-function isJQueryStyleEventEmitter(target2) {
-  return isFunction(target2.on) && isFunction(target2.off);
+function isJQueryStyleEventEmitter(target) {
+  return isFunction(target.on) && isFunction(target.off);
 }
-function isEventTarget(target2) {
-  return isFunction(target2.addEventListener) && isFunction(target2.removeEventListener);
+function isEventTarget(target) {
+  return isFunction(target.addEventListener) && isFunction(target.removeEventListener);
 }
 function timer(dueTime, intervalOrScheduler, scheduler) {
   if (dueTime === void 0) {
@@ -47124,8 +47124,8 @@ var EventSubscription = class {
   #target;
   #type;
   #handler;
-  constructor(target2, type, handler) {
-    this.#target = target2;
+  constructor(target, type, handler) {
+    this.#target = target;
     this.#type = type;
     this.#handler = handler;
     this.#target.on(this.#type, this.#handler);
@@ -48945,16 +48945,16 @@ function moveable(Class, _) {
 function throwIfDisposed(message = (value) => {
   return `Attempted to use disposed ${value.constructor.name}.`;
 }) {
-  return (target2, _) => {
+  return (target, _) => {
     return function(...args) {
       if (this.disposed) {
         throw new Error(message(this));
       }
-      return target2.call(this, ...args);
+      return target.call(this, ...args);
     };
   };
 }
-function invokeAtMostOnceForArguments(target2, _) {
+function invokeAtMostOnceForArguments(target, _) {
   const cache = /* @__PURE__ */ new WeakMap();
   let cacheDepth = -1;
   return function(...args) {
@@ -48978,13 +48978,13 @@ function invokeAtMostOnceForArguments(target2, _) {
     if (!freshArguments) {
       return;
     }
-    return target2.call(this, ...args);
+    return target.call(this, ...args);
   };
 }
 function guarded(getKey = function() {
   return this;
 }) {
-  return (target2, _) => {
+  return (target, _) => {
     const mutexes = /* @__PURE__ */ new WeakMap();
     return async function(...args) {
       const env_1 = { stack: [], error: void 0, hasError: false };
@@ -48996,7 +48996,7 @@ function guarded(getKey = function() {
           mutexes.set(key2, mutex);
         }
         const _2 = __addDisposableResource3(env_1, await mutex.acquire(), true);
-        return await target2.call(this, ...args);
+        return await target.call(this, ...args);
       } catch (e_1) {
         env_1.error = e_1;
         env_1.hasError = true;
@@ -49023,8 +49023,8 @@ var __esDecorate = function(ctor, descriptorIn, decorators, contextIn, initializ
     return f;
   }
   var kind = contextIn.kind, key2 = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
-  var target2 = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
-  var descriptor = descriptorIn || (target2 ? Object.getOwnPropertyDescriptor(target2, contextIn.name) : {});
+  var target = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
+  var descriptor = descriptorIn || (target ? Object.getOwnPropertyDescriptor(target, contextIn.name) : {});
   var _, done = false;
   for (var i = decorators.length - 1; i >= 0; i--) {
     var context2 = {};
@@ -49046,7 +49046,7 @@ var __esDecorate = function(ctor, descriptorIn, decorators, contextIn, initializ
       else descriptor[key2] = _;
     }
   }
-  if (target2) Object.defineProperty(target2, contextIn.name, descriptor);
+  if (target) Object.defineProperty(target, contextIn.name, descriptor);
   done = true;
 };
 var __addDisposableResource4 = function(env2, value, async2) {
@@ -49220,8 +49220,8 @@ var __esDecorate2 = function(ctor, descriptorIn, decorators, contextIn, initiali
     return f;
   }
   var kind = contextIn.kind, key2 = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
-  var target2 = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
-  var descriptor = descriptorIn || (target2 ? Object.getOwnPropertyDescriptor(target2, contextIn.name) : {});
+  var target = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
+  var descriptor = descriptorIn || (target ? Object.getOwnPropertyDescriptor(target, contextIn.name) : {});
   var _, done = false;
   for (var i = decorators.length - 1; i >= 0; i--) {
     var context2 = {};
@@ -49243,7 +49243,7 @@ var __esDecorate2 = function(ctor, descriptorIn, decorators, contextIn, initiali
       else descriptor[key2] = _;
     }
   }
-  if (target2) Object.defineProperty(target2, contextIn.name, descriptor);
+  if (target) Object.defineProperty(target, contextIn.name, descriptor);
   done = true;
 };
 var __addDisposableResource5 = function(env2, value, async2) {
@@ -49415,10 +49415,10 @@ var ElementHandle = (() => {
      *
      * @internal
      */
-    static bindIsolatedHandle(target2, _) {
+    static bindIsolatedHandle(target, _) {
       return async function(...args) {
         if (this.realm === this.frame.isolatedRealm()) {
-          return await target2.call(this, ...args);
+          return await target.call(this, ...args);
         }
         let adoptedThis;
         if (this["isolatedHandle"]) {
@@ -49426,7 +49426,7 @@ var ElementHandle = (() => {
         } else {
           this["isolatedHandle"] = adoptedThis = await this.frame.isolatedRealm().adoptHandle(this);
         }
-        const result = await target2.call(adoptedThis, ...args);
+        const result = await target.call(adoptedThis, ...args);
         if (result === adoptedThis) {
           return this;
         }
@@ -49878,15 +49878,15 @@ var ElementHandle = (() => {
      * @returns DEPRECATED. When drag interception is enabled, the drag payload is
      * returned.
      */
-    async drag(target2) {
+    async drag(target) {
       await this.scrollIntoViewIfNeeded();
       const page = this.frame.page();
       if (page.isDragInterceptionEnabled()) {
         const source2 = await this.clickablePoint();
-        if (target2 instanceof ElementHandle2) {
-          target2 = await target2.clickablePoint();
+        if (target instanceof ElementHandle2) {
+          target = await target.clickablePoint();
         }
-        return await page.mouse.drag(source2, target2);
+        return await page.mouse.drag(source2, target);
       }
       try {
         if (!page._isDragging) {
@@ -49894,10 +49894,10 @@ var ElementHandle = (() => {
           await this.hover();
           await page.mouse.down();
         }
-        if (target2 instanceof ElementHandle2) {
-          await target2.hover();
+        if (target instanceof ElementHandle2) {
+          await target.hover();
         } else {
-          await page.mouse.move(target2.x, target2.y);
+          await page.mouse.move(target.x, target.y);
         }
       } catch (error) {
         page._isDragging = false;
@@ -49910,8 +49910,8 @@ var ElementHandle = (() => {
     async dragEnter(data = { items: [], dragOperationsMask: 1 }) {
       const page = this.frame.page();
       await this.scrollIntoViewIfNeeded();
-      const target2 = await this.clickablePoint();
-      await page.mouse.dragEnter(target2, data);
+      const target = await this.clickablePoint();
+      await page.mouse.dragEnter(target, data);
     }
     /**
      * @deprecated Do not use. `dragover` will automatically be performed during dragging.
@@ -49919,8 +49919,8 @@ var ElementHandle = (() => {
     async dragOver(data = { items: [], dragOperationsMask: 1 }) {
       const page = this.frame.page();
       await this.scrollIntoViewIfNeeded();
-      const target2 = await this.clickablePoint();
-      await page.mouse.dragOver(target2, data);
+      const target = await this.clickablePoint();
+      await page.mouse.dragOver(target, data);
     }
     /**
      * @internal
@@ -49943,12 +49943,12 @@ var ElementHandle = (() => {
     /**
      * @deprecated Use `ElementHandle.drop` instead.
      */
-    async dragAndDrop(target2, options) {
+    async dragAndDrop(target, options) {
       const page = this.frame.page();
       assert(page.isDragInterceptionEnabled(), "Drag Interception is not enabled!");
       await this.scrollIntoViewIfNeeded();
       const startPoint = await this.clickablePoint();
-      const targetPoint = await target2.clickablePoint();
+      const targetPoint = await target.clickablePoint();
       await page.mouse.dragAndDrop(startPoint, targetPoint, options);
     }
     /**
@@ -50395,8 +50395,8 @@ var ElementHandle = (() => {
       try {
         await this.assertConnectedElement();
         const handle = await this.#asSVGElementHandle();
-        const target2 = __addDisposableResource5(env_5, handle && await handle.#getOwnerSVGElement(), false);
-        return await (target2 ?? this).evaluate(async (element, threshold) => {
+        const target = __addDisposableResource5(env_5, handle && await handle.#getOwnerSVGElement(), false);
+        return await (target ?? this).evaluate(async (element, threshold) => {
           const visibleRatio = await new Promise((resolve5) => {
             const observer = new IntersectionObserver((entries) => {
               resolve5(entries[0].intersectionRatio);
@@ -51127,8 +51127,8 @@ var __esDecorate3 = function(ctor, descriptorIn, decorators, contextIn, initiali
     return f;
   }
   var kind = contextIn.kind, key2 = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
-  var target2 = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
-  var descriptor = descriptorIn || (target2 ? Object.getOwnPropertyDescriptor(target2, contextIn.name) : {});
+  var target = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
+  var descriptor = descriptorIn || (target ? Object.getOwnPropertyDescriptor(target, contextIn.name) : {});
   var _, done = false;
   for (var i = decorators.length - 1; i >= 0; i--) {
     var context2 = {};
@@ -51150,7 +51150,7 @@ var __esDecorate3 = function(ctor, descriptorIn, decorators, contextIn, initiali
       else descriptor[key2] = _;
     }
   }
-  if (target2) Object.defineProperty(target2, contextIn.name, descriptor);
+  if (target) Object.defineProperty(target, contextIn.name, descriptor);
   done = true;
 };
 var __addDisposableResource7 = function(env2, value, async2) {
@@ -52417,8 +52417,8 @@ var __esDecorate4 = function(ctor, descriptorIn, decorators, contextIn, initiali
     return f;
   }
   var kind = contextIn.kind, key2 = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
-  var target2 = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
-  var descriptor = descriptorIn || (target2 ? Object.getOwnPropertyDescriptor(target2, contextIn.name) : {});
+  var target = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
+  var descriptor = descriptorIn || (target ? Object.getOwnPropertyDescriptor(target, contextIn.name) : {});
   var _, done = false;
   for (var i = decorators.length - 1; i >= 0; i--) {
     var context2 = {};
@@ -52440,7 +52440,7 @@ var __esDecorate4 = function(ctor, descriptorIn, decorators, contextIn, initiali
       else descriptor[key2] = _;
     }
   }
-  if (target2) Object.defineProperty(target2, contextIn.name, descriptor);
+  if (target) Object.defineProperty(target, contextIn.name, descriptor);
   done = true;
 };
 var __addDisposableResource8 = function(env2, value, async2) {
@@ -54602,15 +54602,15 @@ var CdpBrowserContext = class extends BrowserContext {
     return this.#id;
   }
   targets() {
-    return this.#browser.targets().filter((target2) => {
-      return target2.browserContext() === this;
+    return this.#browser.targets().filter((target) => {
+      return target.browserContext() === this;
     });
   }
   async pages() {
-    const pages = await Promise.all(this.targets().filter((target2) => {
-      return target2.type() === "page" || target2.type() === "other" && this.#browser._getIsPageTargetCallback()?.(target2);
-    }).map((target2) => {
-      return target2.page();
+    const pages = await Promise.all(this.targets().filter((target) => {
+      return target.type() === "page" || target.type() === "other" && this.#browser._getIsPageTargetCallback()?.(target);
+    }).map((target) => {
+      return target.page();
     }));
     return pages.filter((page) => {
       return !!page;
@@ -54789,8 +54789,8 @@ var CdpCDPSession = class extends CDPSession {
    *
    * @internal
    */
-  _setTarget(target2) {
-    this.#target = target2;
+  _setTarget(target) {
+    this.#target = target;
   }
   /**
    * Gets the {@link CdpTarget} associated with the session instance.
@@ -55493,8 +55493,8 @@ var __esDecorate5 = function(ctor, descriptorIn, decorators, contextIn, initiali
     return f;
   }
   var kind = contextIn.kind, key2 = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
-  var target2 = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
-  var descriptor = descriptorIn || (target2 ? Object.getOwnPropertyDescriptor(target2, contextIn.name) : {});
+  var target = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
+  var descriptor = descriptorIn || (target ? Object.getOwnPropertyDescriptor(target, contextIn.name) : {});
   var _, done = false;
   for (var i = decorators.length - 1; i >= 0; i--) {
     var context2 = {};
@@ -55516,7 +55516,7 @@ var __esDecorate5 = function(ctor, descriptorIn, decorators, contextIn, initiali
       else descriptor[key2] = _;
     }
   }
-  if (target2) Object.defineProperty(target2, contextIn.name, descriptor);
+  if (target) Object.defineProperty(target, contextIn.name, descriptor);
   done = true;
 };
 var __setFunctionName2 = function(f, name, prefix) {
@@ -55996,28 +55996,28 @@ var FirefoxTargetManager = class extends EventEmitter {
     }
     this.#discoveredTargetsByTargetId.set(event.targetInfo.targetId, event.targetInfo);
     if (event.targetInfo.type === "browser" && event.targetInfo.attached) {
-      const target3 = this.#targetFactory(event.targetInfo, void 0);
-      target3._initialize();
-      this.#availableTargetsByTargetId.set(event.targetInfo.targetId, target3);
-      this.#finishInitializationIfReady(target3._targetId);
+      const target2 = this.#targetFactory(event.targetInfo, void 0);
+      target2._initialize();
+      this.#availableTargetsByTargetId.set(event.targetInfo.targetId, target2);
+      this.#finishInitializationIfReady(target2._targetId);
       return;
     }
-    const target2 = this.#targetFactory(event.targetInfo, void 0);
-    if (this.#targetFilterCallback && !this.#targetFilterCallback(target2)) {
+    const target = this.#targetFactory(event.targetInfo, void 0);
+    if (this.#targetFilterCallback && !this.#targetFilterCallback(target)) {
       this.#finishInitializationIfReady(event.targetInfo.targetId);
       return;
     }
-    target2._initialize();
-    this.#availableTargetsByTargetId.set(event.targetInfo.targetId, target2);
-    this.emit("targetAvailable", target2);
-    this.#finishInitializationIfReady(target2._targetId);
+    target._initialize();
+    this.#availableTargetsByTargetId.set(event.targetInfo.targetId, target);
+    this.emit("targetAvailable", target);
+    this.#finishInitializationIfReady(target._targetId);
   };
   #onTargetDestroyed = (event) => {
     this.#discoveredTargetsByTargetId.delete(event.targetId);
     this.#finishInitializationIfReady(event.targetId);
-    const target2 = this.#availableTargetsByTargetId.get(event.targetId);
-    if (target2) {
-      this.emit("targetGone", target2);
+    const target = this.#availableTargetsByTargetId.get(event.targetId);
+    if (target) {
+      this.emit("targetGone", target);
       this.#availableTargetsByTargetId.delete(event.targetId);
     }
   };
@@ -56027,9 +56027,9 @@ var FirefoxTargetManager = class extends EventEmitter {
     if (!session) {
       throw new Error(`Session ${event.sessionId} was not created.`);
     }
-    const target2 = this.#availableTargetsByTargetId.get(targetInfo.targetId);
-    assert(target2, `Target ${targetInfo.targetId} is missing`);
-    session._setTarget(target2);
+    const target = this.#availableTargetsByTargetId.get(targetInfo.targetId);
+    assert(target, `Target ${targetInfo.targetId} is missing`);
+    session._setTarget(target);
     this.setupAttachmentListeners(session);
     this.#availableTargetsBySessionId.set(session.id(), this.#availableTargetsByTargetId.get(targetInfo.targetId));
     parentSession.emit(CDPSessionEvent.Ready, session);
@@ -56480,8 +56480,8 @@ var __esDecorate6 = function(ctor, descriptorIn, decorators, contextIn, initiali
     return f;
   }
   var kind = contextIn.kind, key2 = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
-  var target2 = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
-  var descriptor = descriptorIn || (target2 ? Object.getOwnPropertyDescriptor(target2, contextIn.name) : {});
+  var target = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
+  var descriptor = descriptorIn || (target ? Object.getOwnPropertyDescriptor(target, contextIn.name) : {});
   var _, done = false;
   for (var i = decorators.length - 1; i >= 0; i--) {
     var context2 = {};
@@ -56503,7 +56503,7 @@ var __esDecorate6 = function(ctor, descriptorIn, decorators, contextIn, initiali
       else descriptor[key2] = _;
     }
   }
-  if (target2) Object.defineProperty(target2, contextIn.name, descriptor);
+  if (target) Object.defineProperty(target, contextIn.name, descriptor);
   done = true;
 };
 var NON_ELEMENT_NODE_ROLES = /* @__PURE__ */ new Set(["StaticText", "InlineTextBox"]);
@@ -57342,8 +57342,8 @@ var __esDecorate7 = function(ctor, descriptorIn, decorators, contextIn, initiali
     return f;
   }
   var kind = contextIn.kind, key2 = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
-  var target2 = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
-  var descriptor = descriptorIn || (target2 ? Object.getOwnPropertyDescriptor(target2, contextIn.name) : {});
+  var target = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
+  var descriptor = descriptorIn || (target ? Object.getOwnPropertyDescriptor(target, contextIn.name) : {});
   var _, done = false;
   for (var i = decorators.length - 1; i >= 0; i--) {
     var context2 = {};
@@ -57365,7 +57365,7 @@ var __esDecorate7 = function(ctor, descriptorIn, decorators, contextIn, initiali
       else descriptor[key2] = _;
     }
   }
-  if (target2) Object.defineProperty(target2, contextIn.name, descriptor);
+  if (target) Object.defineProperty(target, contextIn.name, descriptor);
   done = true;
 };
 var CdpFrame = (() => {
@@ -58776,16 +58776,16 @@ var FrameManager = class extends EventEmitter {
       }).catch(debugError);
     }));
   }
-  onAttachedToTarget(target2) {
-    if (target2._getTargetInfo().type !== "iframe") {
+  onAttachedToTarget(target) {
+    if (target._getTargetInfo().type !== "iframe") {
       return;
     }
-    const frame = this.frame(target2._getTargetInfo().targetId);
+    const frame = this.frame(target._getTargetInfo().targetId);
     if (frame) {
-      frame.updateClient(target2._session());
+      frame.updateClient(target._session());
     }
-    this.setupEventListeners(target2._session());
-    void this.initialize(target2._session(), frame);
+    this.setupEventListeners(target._session());
+    void this.initialize(target._session(), frame);
   }
   _deviceRequestPromptManager(client) {
     let manager = this.#deviceRequestPromptManagerMap.get(client);
@@ -59677,7 +59677,7 @@ var CdpMouse = class extends Mouse {
       ...position
     });
   }
-  async drag(start, target2) {
+  async drag(start, target) {
     const promise = new Promise((resolve5) => {
       this.#client.once("Input.dragIntercepted", (event) => {
         return resolve5(event.data);
@@ -59685,47 +59685,47 @@ var CdpMouse = class extends Mouse {
     });
     await this.move(start.x, start.y);
     await this.down();
-    await this.move(target2.x, target2.y);
+    await this.move(target.x, target.y);
     return await promise;
   }
-  async dragEnter(target2, data) {
+  async dragEnter(target, data) {
     await this.#client.send("Input.dispatchDragEvent", {
       type: "dragEnter",
-      x: target2.x,
-      y: target2.y,
+      x: target.x,
+      y: target.y,
       modifiers: this.#keyboard._modifiers,
       data
     });
   }
-  async dragOver(target2, data) {
+  async dragOver(target, data) {
     await this.#client.send("Input.dispatchDragEvent", {
       type: "dragOver",
-      x: target2.x,
-      y: target2.y,
+      x: target.x,
+      y: target.y,
       modifiers: this.#keyboard._modifiers,
       data
     });
   }
-  async drop(target2, data) {
+  async drop(target, data) {
     await this.#client.send("Input.dispatchDragEvent", {
       type: "drop",
-      x: target2.x,
-      y: target2.y,
+      x: target.x,
+      y: target.y,
       modifiers: this.#keyboard._modifiers,
       data
     });
   }
-  async dragAndDrop(start, target2, options = {}) {
+  async dragAndDrop(start, target, options = {}) {
     const { delay = null } = options;
-    const data = await this.drag(start, target2);
-    await this.dragEnter(target2, data);
-    await this.dragOver(target2, data);
+    const data = await this.drag(start, target);
+    await this.dragEnter(target, data);
+    await this.dragOver(target, data);
     if (delay) {
       await new Promise((resolve5) => {
         return setTimeout(resolve5, delay);
       });
     }
-    await this.drop(target2, data);
+    await this.drop(target, data);
     await this.up();
   }
 };
@@ -59978,8 +59978,8 @@ function convertConsoleMessageLevel(method) {
   }
 }
 var CdpPage = class _CdpPage extends Page {
-  static async _create(client, target2, defaultViewport) {
-    const page = new _CdpPage(client, target2);
+  static async _create(client, target, defaultViewport) {
+    const page = new _CdpPage(client, target);
     await page.#initialize();
     if (defaultViewport) {
       try {
@@ -60093,15 +60093,15 @@ var CdpPage = class _CdpPage extends Page {
     ["Log.entryAdded", this.#onLogEntryAdded.bind(this)],
     ["Page.fileChooserOpened", this.#onFileChooser.bind(this)]
   ];
-  constructor(client, target2) {
+  constructor(client, target) {
     super();
     this.#primaryTargetClient = client;
     this.#tabTargetClient = client.parentSession();
     assert(this.#tabTargetClient, "Tab target session is not defined.");
     this.#tabTarget = this.#tabTargetClient._target();
     assert(this.#tabTarget, "Tab target is not defined.");
-    this.#primaryTarget = target2;
-    this.#targetManager = target2._targetManager();
+    this.#primaryTarget = target;
+    this.#targetManager = target._targetManager();
     this.#keyboard = new CdpKeyboard(client);
     this.#mouse = new CdpMouse(client, this.#keyboard);
     this.#touchscreen = new CdpTouchscreen(client, this.#keyboard);
@@ -60183,8 +60183,8 @@ var CdpPage = class _CdpPage extends Page {
       this.#primaryTargetClient.on(eventName, handler);
     }
   }
-  #onDetachedFromTarget = (target2) => {
-    const sessionId = target2._session()?.id();
+  #onDetachedFromTarget = (target) => {
+    const sessionId = target._session()?.id();
     const worker = this.#workers.get(sessionId);
     if (!worker) {
       return;
@@ -60817,11 +60817,11 @@ var CdpTarget = class extends Target {
   _session() {
     return this.#session;
   }
-  _addChildTarget(target2) {
-    this.#childTargets.add(target2);
+  _addChildTarget(target) {
+    this.#childTargets.add(target);
   }
-  _removeChildTarget(target2) {
-    this.#childTargets.delete(target2);
+  _removeChildTarget(target) {
+    this.#childTargets.delete(target);
   }
   _childTargets() {
     return this.#childTargets;
@@ -60891,8 +60891,8 @@ var CdpTarget = class extends Target {
     if (!openerId) {
       return;
     }
-    return this.browser().targets().find((target2) => {
-      return target2._targetId === openerId;
+    return this.browser().targets().find((target) => {
+      return target._targetId === openerId;
     });
   }
   _targetInfoChanged(targetInfo) {
@@ -60995,8 +60995,8 @@ var OtherTarget = class extends CdpTarget {
 };
 
 // services/browser-host/node_modules/@cloudflare/puppeteer/lib/esm/puppeteer/cdp/ChromeTargetManager.js
-function isPageTargetBecomingPrimary(target2, newTargetInfo) {
-  return Boolean(target2._subtype()) && !newTargetInfo.subtype;
+function isPageTargetBecomingPrimary(target, newTargetInfo) {
+  return Boolean(target._subtype()) && !newTargetInfo.subtype;
 }
 var ChromeTargetManager = class extends EventEmitter {
   #connection;
@@ -61078,8 +61078,8 @@ var ChromeTargetManager = class extends EventEmitter {
     this.#finishInitializationIfReady();
     await this.#initializeDeferred.valueOrThrow();
   }
-  getChildTargets(target2) {
-    return target2._childTargets();
+  getChildTargets(target) {
+    return target._childTargets();
   }
   dispose() {
     this.#connection.off("Target.targetCreated", this.#onTargetCreated);
@@ -61126,9 +61126,9 @@ var ChromeTargetManager = class extends EventEmitter {
       if (this.#attachedTargetsByTargetId.has(event.targetInfo.targetId)) {
         return;
       }
-      const target2 = this.#targetFactory(event.targetInfo, void 0);
-      target2._initialize();
-      this.#attachedTargetsByTargetId.set(event.targetInfo.targetId, target2);
+      const target = this.#targetFactory(event.targetInfo, void 0);
+      target._initialize();
+      this.#attachedTargetsByTargetId.set(event.targetInfo.targetId, target);
     }
   };
   #onTargetDestroyed = (event) => {
@@ -61136,9 +61136,9 @@ var ChromeTargetManager = class extends EventEmitter {
     this.#discoveredTargetsByTargetId.delete(event.targetId);
     this.#finishInitializationIfReady(event.targetId);
     if (targetInfo?.type === "service_worker" && this.#attachedTargetsByTargetId.has(event.targetId)) {
-      const target2 = this.#attachedTargetsByTargetId.get(event.targetId);
-      if (target2) {
-        this.emit("targetGone", target2);
+      const target = this.#attachedTargetsByTargetId.get(event.targetId);
+      if (target) {
+        this.emit("targetGone", target);
         this.#attachedTargetsByTargetId.delete(event.targetId);
       }
     }
@@ -61148,21 +61148,21 @@ var ChromeTargetManager = class extends EventEmitter {
     if (this.#ignoredTargets.has(event.targetInfo.targetId) || !this.#attachedTargetsByTargetId.has(event.targetInfo.targetId) || !event.targetInfo.attached) {
       return;
     }
-    const target2 = this.#attachedTargetsByTargetId.get(event.targetInfo.targetId);
-    if (!target2) {
+    const target = this.#attachedTargetsByTargetId.get(event.targetInfo.targetId);
+    if (!target) {
       return;
     }
-    const previousURL = target2.url();
-    const wasInitialized = target2._initializedDeferred.value() === InitializationStatus.SUCCESS;
-    if (isPageTargetBecomingPrimary(target2, event.targetInfo)) {
-      const session = target2?._session();
+    const previousURL = target.url();
+    const wasInitialized = target._initializedDeferred.value() === InitializationStatus.SUCCESS;
+    if (isPageTargetBecomingPrimary(target, event.targetInfo)) {
+      const session = target?._session();
       assert(session, "Target that is being activated is missing a CDPSession.");
       session.parentSession()?.emit(CDPSessionEvent.Swapped, session);
     }
-    target2._targetInfoChanged(event.targetInfo);
-    if (wasInitialized && previousURL !== target2.url()) {
+    target._targetInfoChanged(event.targetInfo);
+    if (wasInitialized && previousURL !== target.url()) {
       this.emit("targetChanged", {
-        target: target2,
+        target,
         wasInitialized,
         previousURL
       });
@@ -61189,15 +61189,15 @@ var ChromeTargetManager = class extends EventEmitter {
       if (this.#attachedTargetsByTargetId.has(targetInfo.targetId)) {
         return;
       }
-      const target3 = this.#targetFactory(targetInfo);
-      target3._initialize();
-      this.#attachedTargetsByTargetId.set(targetInfo.targetId, target3);
-      this.emit("targetAvailable", target3);
+      const target2 = this.#targetFactory(targetInfo);
+      target2._initialize();
+      this.#attachedTargetsByTargetId.set(targetInfo.targetId, target2);
+      this.emit("targetAvailable", target2);
       return;
     }
     const isExistingTarget = this.#attachedTargetsByTargetId.has(targetInfo.targetId);
-    const target2 = isExistingTarget ? this.#attachedTargetsByTargetId.get(targetInfo.targetId) : this.#targetFactory(targetInfo, session, parentSession instanceof CDPSession ? parentSession : void 0);
-    if (this.#targetFilterCallback && !this.#targetFilterCallback(target2)) {
+    const target = isExistingTarget ? this.#attachedTargetsByTargetId.get(targetInfo.targetId) : this.#targetFactory(targetInfo, session, parentSession instanceof CDPSession ? parentSession : void 0);
+    if (this.#targetFilterCallback && !this.#targetFilterCallback(target)) {
       this.#ignoredTargets.add(targetInfo.targetId);
       this.#finishInitializationIfReady(targetInfo.targetId);
       await silentDetach();
@@ -61205,19 +61205,19 @@ var ChromeTargetManager = class extends EventEmitter {
     }
     this.#setupAttachmentListeners(session);
     if (isExistingTarget) {
-      session._setTarget(target2);
+      session._setTarget(target);
       this.#attachedTargetsBySessionId.set(session.id(), this.#attachedTargetsByTargetId.get(targetInfo.targetId));
     } else {
-      target2._initialize();
-      this.#attachedTargetsByTargetId.set(targetInfo.targetId, target2);
-      this.#attachedTargetsBySessionId.set(session.id(), target2);
+      target._initialize();
+      this.#attachedTargetsByTargetId.set(targetInfo.targetId, target);
+      this.#attachedTargetsBySessionId.set(session.id(), target);
     }
     const parentTarget = parentSession instanceof CDPSession ? parentSession._target() : null;
-    parentTarget?._addChildTarget(target2);
+    parentTarget?._addChildTarget(target);
     parentSession.emit(CDPSessionEvent.Ready, session);
-    this.#targetsIdsForInit.delete(target2._targetId);
+    this.#targetsIdsForInit.delete(target._targetId);
     if (!isExistingTarget) {
-      this.emit("targetAvailable", target2);
+      this.emit("targetAvailable", target);
     }
     this.#finishInitializationIfReady();
     await Promise.all([
@@ -61237,16 +61237,16 @@ var ChromeTargetManager = class extends EventEmitter {
     }
   }
   #onDetachedFromTarget = (parentSession, event) => {
-    const target2 = this.#attachedTargetsBySessionId.get(event.sessionId);
+    const target = this.#attachedTargetsBySessionId.get(event.sessionId);
     this.#attachedTargetsBySessionId.delete(event.sessionId);
-    if (!target2) {
+    if (!target) {
       return;
     }
     if (parentSession instanceof CDPSession) {
-      parentSession._target()._removeChildTarget(target2);
+      parentSession._target()._removeChildTarget(target);
     }
-    this.#attachedTargetsByTargetId.delete(target2._targetId);
-    this.emit("targetGone", target2);
+    this.#attachedTargetsByTargetId.delete(target._targetId);
+    this.emit("targetGone", target);
   };
 };
 
@@ -61321,8 +61321,8 @@ var CdpBrowser = class _CdpBrowser extends Browser {
     return this.#targetManager;
   }
   #setIsPageTargetCallback(isPageTargetCallback) {
-    this.#isPageTargetCallback = isPageTargetCallback || ((target2) => {
-      return target2.type() === "page" || target2.type() === "background_page" || target2.type() === "webview";
+    this.#isPageTargetCallback = isPageTargetCallback || ((target) => {
+      return target.type() === "page" || target.type() === "background_page" || target.type() === "webview";
     });
   }
   _getIsPageTargetCallback() {
@@ -61374,23 +61374,23 @@ var CdpBrowser = class _CdpBrowser extends Browser {
     }
     return otherTarget;
   };
-  #onAttachedToTarget = async (target2) => {
-    if (target2._isTargetExposed() && await target2._initializedDeferred.valueOrThrow() === InitializationStatus.SUCCESS) {
-      this.emit("targetcreated", target2);
-      target2.browserContext().emit("targetcreated", target2);
+  #onAttachedToTarget = async (target) => {
+    if (target._isTargetExposed() && await target._initializedDeferred.valueOrThrow() === InitializationStatus.SUCCESS) {
+      this.emit("targetcreated", target);
+      target.browserContext().emit("targetcreated", target);
     }
   };
-  #onDetachedFromTarget = async (target2) => {
-    target2._initializedDeferred.resolve(InitializationStatus.ABORTED);
-    target2._isClosedDeferred.resolve();
-    if (target2._isTargetExposed() && await target2._initializedDeferred.valueOrThrow() === InitializationStatus.SUCCESS) {
-      this.emit("targetdestroyed", target2);
-      target2.browserContext().emit("targetdestroyed", target2);
+  #onDetachedFromTarget = async (target) => {
+    target._initializedDeferred.resolve(InitializationStatus.ABORTED);
+    target._isClosedDeferred.resolve();
+    if (target._isTargetExposed() && await target._initializedDeferred.valueOrThrow() === InitializationStatus.SUCCESS) {
+      this.emit("targetdestroyed", target);
+      target.browserContext().emit("targetdestroyed", target);
     }
   };
-  #onTargetChanged = ({ target: target2 }) => {
-    this.emit("targetchanged", target2);
-    target2.browserContext().emit("targetchanged", target2);
+  #onTargetChanged = ({ target }) => {
+    this.emit("targetchanged", target);
+    target.browserContext().emit("targetchanged", target);
   };
   #onTargetDiscovered = (targetInfo) => {
     this.emit("targetdiscovered", targetInfo);
@@ -61406,30 +61406,30 @@ var CdpBrowser = class _CdpBrowser extends Browser {
       url: "about:blank",
       browserContextId: contextId || void 0
     });
-    const target2 = await this.waitForTarget((t) => {
+    const target = await this.waitForTarget((t) => {
       return t._targetId === targetId;
     });
-    if (!target2) {
+    if (!target) {
       throw new Error(`Missing target for page (id = ${targetId})`);
     }
-    const initialized = await target2._initializedDeferred.valueOrThrow() === InitializationStatus.SUCCESS;
+    const initialized = await target._initializedDeferred.valueOrThrow() === InitializationStatus.SUCCESS;
     if (!initialized) {
       throw new Error(`Failed to create target for page (id = ${targetId})`);
     }
-    const page = await target2.page();
+    const page = await target.page();
     if (!page) {
       throw new Error(`Failed to create a page for context (id = ${contextId})`);
     }
     return page;
   }
   targets() {
-    return Array.from(this.#targetManager.getAvailableTargets().values()).filter((target2) => {
-      return target2._isTargetExposed() && target2._initializedDeferred.value() === InitializationStatus.SUCCESS;
+    return Array.from(this.#targetManager.getAvailableTargets().values()).filter((target) => {
+      return target._isTargetExposed() && target._initializedDeferred.value() === InitializationStatus.SUCCESS;
     });
   }
   target() {
-    const browserTarget = this.targets().find((target2) => {
-      return target2.type() === "browser";
+    const browserTarget = this.targets().find((target) => {
+      return target.type() === "browser";
     });
     if (!browserTarget) {
       throw new Error("Browser target is not found");
@@ -65750,20 +65750,20 @@ var UI = class {
   renderInline(source2, previousLine) {
     const match = source2.match(/^ */);
     const leadingWhitespace = match ? match[0].length : 0;
-    const target2 = previousLine.text;
-    const targetTextWidth = mixin2.stringWidth(target2.trimRight());
+    const target = previousLine.text;
+    const targetTextWidth = mixin2.stringWidth(target.trimRight());
     if (!previousLine.span) {
       return source2;
     }
     if (!this.wrap) {
       previousLine.hidden = true;
-      return target2 + source2;
+      return target + source2;
     }
     if (leadingWhitespace < targetTextWidth) {
       return source2;
     }
     previousLine.hidden = true;
-    return target2.trimRight() + " ".repeat(leadingWhitespace - targetTextWidth) + source2.trimLeft();
+    return target.trimRight() + " ".repeat(leadingWhitespace - targetTextWidth) + source2.trimLeft();
   }
   rasterize(row) {
     const rrows = [];
@@ -67063,8 +67063,8 @@ var __esDecorate9 = function(ctor, descriptorIn, decorators, contextIn, initiali
     return f;
   }
   var kind = contextIn.kind, key2 = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
-  var target2 = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
-  var descriptor = descriptorIn || (target2 ? Object.getOwnPropertyDescriptor(target2, contextIn.name) : {});
+  var target = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
+  var descriptor = descriptorIn || (target ? Object.getOwnPropertyDescriptor(target, contextIn.name) : {});
   var _, done = false;
   for (var i = decorators.length - 1; i >= 0; i--) {
     var context2 = {};
@@ -67086,7 +67086,7 @@ var __esDecorate9 = function(ctor, descriptorIn, decorators, contextIn, initiali
       else descriptor[key2] = _;
     }
   }
-  if (target2) Object.defineProperty(target2, contextIn.name, descriptor);
+  if (target) Object.defineProperty(target, contextIn.name, descriptor);
   done = true;
 };
 var __setFunctionName4 = function(f, name, prefix) {
@@ -67321,9 +67321,9 @@ var host_default = {
         });
       };
       await Promise.all((await browser.pages()).map(guard));
-      browser.on("targetcreated", async (target2) => {
-        if (target2.type() === "page") {
-          const page = await target2.page();
+      browser.on("targetcreated", async (target) => {
+        if (target.type() === "page") {
+          const page = await target.page();
           if (page) await guard(page).catch(() => {
           });
         }
@@ -67583,48 +67583,66 @@ var DeviceRuntime = class {
   async observe(a) {
     const page = a.page, handles = [], elements = [], texts = [];
     let needsLogin = false;
-    for (const frame of page.frames().slice(0, 20)) {
-      const text = await frame.evaluate(() => document.body?.innerText?.slice(0, 6e3) || "").catch(() => "");
-      texts.push(text);
-      for (const handle of (await frame.$$("a,button,input,textarea,select,[role=button],[role=textbox],[contenteditable=true]").catch(() => [])).slice(0, 300)) {
-        const box = await handle.boundingBox().catch(() => null);
-        if (!box || !box.width || !box.height || box.x < 0 || box.y < 0 || box.x + box.width / 2 >= 1440 || box.y + box.height / 2 >= 900) {
-          await handle.dispose();
-          continue;
+    const initialUrl = page.url();
+    try {
+      for (const frame of page.frames().slice(0, 20)) {
+        const text = await frame.evaluate(() => document.body?.innerText?.slice(0, 6e3) || "").catch(() => "");
+        texts.push(text);
+        for (const handle of (await frame.$$("a,button,input,textarea,select,[role=button],[role=textbox],[contenteditable=true]").catch(() => [])).slice(0, 300)) {
+          const box = await handle.boundingBox().catch(() => null);
+          if (!box || !box.width || !box.height || box.x < 0 || box.y < 0 || box.x + box.width / 2 >= 1440 || box.y + box.height / 2 >= 900) {
+            await handle.dispose();
+            continue;
+          }
+          const info = await handle.evaluate((e) => ({
+            secure: e.matches("input[type=password],[autocomplete=one-time-code],[autocomplete=current-password],[autocomplete=new-password]"),
+            tag: e.tagName,
+            text: (e.getAttribute("aria-label") || e.innerText || e.getAttribute("placeholder") || e.getAttribute("title") || "").slice(0, 160),
+            value: e.matches("input[type=password],[autocomplete=one-time-code],[autocomplete=current-password],[autocomplete=new-password]") ? void 0 : typeof e.value === "string" ? e.value.slice(0, 1e3) : void 0
+          })).catch(() => null);
+          if (!info || info.secure) {
+            needsLogin ||= !!info?.secure;
+            await handle.dispose();
+            continue;
+          }
+          if (handles.length >= 120) {
+            await handle.dispose();
+            continue;
+          }
+          elements.push({ ...info, ref: handles.length, x: box.x + box.width / 2, y: box.y + box.height / 2 });
+          handles.push(handle);
         }
-        const info = await handle.evaluate((e) => ({
-          secure: e.matches("input[type=password],[autocomplete=one-time-code],[autocomplete=current-password],[autocomplete=new-password]"),
-          tag: e.tagName,
-          text: (e.getAttribute("aria-label") || e.innerText || e.getAttribute("placeholder") || e.getAttribute("title") || "").slice(0, 160),
-          value: e.matches("input[type=password],[autocomplete=one-time-code],[autocomplete=current-password],[autocomplete=new-password]") ? void 0 : typeof e.value === "string" ? e.value.slice(0, 1e3) : void 0
-        })).catch(() => null);
-        if (!info || info.secure) {
-          needsLogin ||= !!info?.secure;
-          await handle.dispose();
-          continue;
-        }
-        if (handles.length >= 120) {
-          await handle.dispose();
-          continue;
-        }
-        elements.push({ ...info, ref: handles.length, x: box.x + box.width / 2, y: box.y + box.height / 2 });
-        handles.push(handle);
+      }
+      const pages = await a.browser.pages();
+      if (page.url() !== initialUrl) throw Error("Page changed while observing.");
+      return { handles, needsLogin, input: {
+        protocol: "nalu-device-v1",
+        platform: process.platform,
+        goal: a.task,
+        url: page.url(),
+        title: await page.title(),
+        text: texts.join("\n").slice(0, 12e3),
+        elements,
+        viewport: { w: 1440, h: 900 },
+        history: a.history.slice(-15),
+        tabs: await Promise.all(pages.map(async (p, index) => ({ index, title: await p.title(), url: p.url(), active: p === page }))),
+        screenshot: needsLogin ? void 0 : "data:image/jpeg;base64," + await page.screenshot({ type: "jpeg", quality: 60, encoding: "base64" })
+      } };
+    } catch (error) {
+      await Promise.all(handles.map((handle) => handle.dispose().catch(() => {
+      })));
+      throw error;
+    }
+  }
+  async observeStable(a) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.observe(a);
+      } catch (error) {
+        if (attempt >= 3 || !/detached frame|execution context was destroyed|cannot find context|page changed while observing/i.test(String(error.message))) throw error;
+        await new Promise((resolve5) => setTimeout(resolve5, 250));
       }
     }
-    const pages = await a.browser.pages();
-    return { handles, needsLogin, input: {
-      protocol: "nalu-device-v1",
-      platform: process.platform,
-      goal: a.task,
-      url: page.url(),
-      title: await page.title(),
-      text: texts.join("\n").slice(0, 12e3),
-      elements,
-      viewport: { w: 1440, h: 900 },
-      history: a.history.slice(-15),
-      tabs: await Promise.all(pages.map(async (p, index) => ({ index, title: await p.title(), url: p.url(), active: p === page }))),
-      screenshot: needsLogin ? void 0 : "data:image/jpeg;base64," + await page.screenshot({ type: "jpeg", quality: 60, encoding: "base64" })
-    } };
   }
   async execute(a, action, observed) {
     const page = a.page, pages = await a.browser.pages();
@@ -67707,7 +67725,7 @@ var DeviceRuntime = class {
     let observed;
     try {
       for (let step = 0; step < 40 && a.epoch === epoch && a.status === "running"; step++) {
-        observed = await this.serial(a, () => this.observe(a));
+        observed = await this.serial(a, () => this.observeStable(a));
         if (a.epoch !== epoch) break;
         if (observed.needsLogin) {
           a.status = "needs_help";
@@ -67767,20 +67785,22 @@ function publicAddress(ip) {
     const [a, b, c] = ip.split(".").map(Number);
     return !(a === 0 || a === 10 || a === 127 || a >= 224 || a === 169 && b === 254 || a === 172 && b >= 16 && b <= 31 || a === 192 && (b === 168 || b === 0 || b === 2) || a === 100 && b >= 64 && b <= 127 || a === 198 && (b === 18 || b === 19 || b === 51 && c === 100) || a === 203 && b === 0 && c === 113);
   }
-  return import_node_net.default.isIP(ip) === 6 && /^[23][0-9a-f]{3}:/i.test(ip) && !/^200[12]:/i.test(ip);
+  if (import_node_net.default.isIP(ip) !== 6 || !/^[23][0-9a-f]{3}:/i.test(ip)) return false;
+  const [prefix, subnet] = ip.split(":").map((part) => parseInt(part || "0", 16));
+  return !(prefix === 8193 && (subnet < 512 || subnet === 3512) || prefix === 8194 || prefix === 16383);
 }
-async function target(host, port) {
+async function resolvePublicTarget(host, port, lookup = import_promises4.default.lookup) {
   if (![80, 443].includes(port) || !host || /localhost|\.local$|\.internal$/i.test(host)) throw Error("Destination denied");
-  const answers = await import_promises4.default.lookup(host, { all: true });
+  const answers = await lookup(host, { all: true });
   if (!answers.length || answers.some((a) => !publicAddress(a.address))) throw Error("Destination denied");
-  return answers[0];
+  return answers.find((answer) => answer.family === 4) || answers[0];
 }
 function startProxy(port = 8878) {
   const proxy = import_node_http.default.createServer(async (req, res) => {
     try {
       const u = new URL(req.url);
       if (u.protocol !== "http:" || u.username || u.password) throw Error("Denied");
-      const found = await target(u.hostname, Number(u.port) || 80);
+      const found = await resolvePublicTarget(u.hostname, Number(u.port) || 80);
       const headers = { ...req.headers, host: u.host };
       delete headers["proxy-authorization"];
       delete headers["proxy-connection"];
@@ -67804,7 +67824,7 @@ function startProxy(port = 8878) {
     try {
       const u = new URL("http://" + req.url);
       const port2 = Number(u.port) || 443;
-      const found = await target(u.hostname.replace(/^\[|\]$/g, ""), port2);
+      const found = await resolvePublicTarget(u.hostname.replace(/^\[|\]$/g, ""), port2);
       const upstream = import_node_net.default.connect({ host: found.address, port: port2, family: found.family }, () => {
         socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
         if (head.length) upstream.write(head);

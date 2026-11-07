@@ -32,7 +32,22 @@ export function isBrowserNavigation(text: string): boolean {
   return /^(?:(?:please|can you|could you|would you)\s+)?(?:(?:open|launch|show|start|use|go to|take me to|bring up)\s+)?(?:(?:me|up)\s+)?(?:(?:a|the|my|nalu|private)\s+)*browser(?:\s+(?:please|for me|now))?[.!?]*$/i.test(text.trim())
 }
 export function explicitlyUsesBrowser(text: string): boolean {
-  return isBrowserNavigation(text) || /\b(?:in|using|through|with)\s+(?:the\s+|my\s+|nalu\s+)*(?:browser|(?:word|excel|microsoft\s+365|office)(?:\s+(?:online|web))?\b|(?:google\s+)?(?:docs|sheets)\b)/i.test(text)
+  return isBrowserNavigation(text) || /^(?:(?:please|can you|could you|would you)\s+)?(?:search\b|look\s+up\b|google\b|find\s+(?:me\s+)?(?:on\s+the\s+web|online)\b)/i.test(text.trim()) || /\b(?:in|using|through|with)\s+(?:the\s+|my\s+|nalu\s+)*(?:browser|(?:word|excel|microsoft\s+365|office)(?:\s+(?:online|web))?\b|(?:google\s+)?(?:docs|sheets)\b)/i.test(text)
     || /\b(?:word|excel)\s+(?:online|for the web)\b/i.test(text)
     || /\b(?:open|use|launch|sign in to|log in to)\s+(?:(?:my|the|microsoft)\s+)*(?:word|excel|browser|office)\b/i.test(text)
+}
+
+// A browser address bar accepts either a website address or ordinary search text.
+export function browserAddress(value: string): {url?: string; task?: string} {
+  const text=value.trim()
+  if (!text) throw new Error('Enter a website or search.')
+  const explicit=/^[a-z][a-z0-9+.-]*:/i.test(text)
+  const domain=/^(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:[/?#]\S*)?$/i.test(text)
+  if(explicit || domain){
+    const url=new URL(explicit?text:'https://'+text)
+    if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw new Error('Use a public website address or search text.')
+    return {url:url.href}
+  }
+  if(text.length>5000)throw new Error('Use a shorter search.')
+  return {task:'Search the web for: '+text+'. Open relevant results and answer the query using what you find. Include source URLs.'}
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Globe, Hand, ArrowRight, Plus, Square } from 'lucide-react'
 import { hostedBrowserRequest as deviceRequest, ensureHostedBrowser } from './hostedBrowser'
+import { browserAddress } from './browserWorkspace'
 import { getToken } from '../../lib/localAuth'
 import './browser-workspace.css'
 
@@ -96,14 +97,14 @@ export default function HostedBrowserPanel({ token, requests = [], onRequestCons
         {(state?.agents || [{ id: agent, status: 'idle' }]).map(a => <button key={a.id} aria-pressed={agent === a.id} disabled={busy} onClick={() => setAgent(a.id)}>{a.id === 'main' ? 'Nalu' : a.id} · {a.status}</button>)}
         <button disabled={busy} onClick={() => { setAgent('agent-' + crypto.randomUUID().slice(0, 8)); setTask('') }}><Plus size={14}/>New agent browser</button>
       </div>
-      <form className="nalu-browser-address" onSubmit={e => { e.preventDefault(); void act('workspace_open', { url }) }}>
-        <Globe size={16}/><input aria-label="Website address" type="url" onFocus={()=>{addressEditing.current=true}} onBlur={()=>{addressEditing.current=false}} value={url} onChange={e => setUrl(e.target.value)} required/>
+      <form className="nalu-browser-address" onSubmit={e => { e.preventDefault(); try { const request=browserAddress(url); void act(request.task?'workspace_run':'workspace_open', request) } catch(e) { setError((e as Error).message) } }}>
+        <Globe size={16}/><input aria-label="Website address" placeholder="Search or enter website address" type="text" onFocus={()=>{addressEditing.current=true}} onBlur={()=>{addressEditing.current=false}} value={url} onChange={e => setUrl(e.target.value)} required/>
         <button disabled={busy || running || starting}>{state?.active ? 'Go' : 'Open browser'}<ArrowRight size={15}/></button>
         {state?.active && <button type="button" disabled={busy} onClick={() => void act('workspace_close')} aria-label="Close browser"><Square size={16}/></button>}
       </form>
       {state?.active && <div className="nalu-browser-shortcuts" aria-label="Browser tabs">
         {state.tabs?.map(t => <button key={t.index} aria-pressed={t.active} disabled={busy || running || starting} onClick={() => void act('workspace_tab', { operation: 'switch', index: t.index })}>{t.title.slice(0, 35) || `Tab ${t.index + 1}`}</button>)}
-        <button disabled={busy || running || starting} onClick={() => void act('workspace_tab', { operation: 'new', url })}>New tab</button>
+        <button disabled={busy || running || starting} onClick={() => void act('workspace_tab', { operation: 'new' })}>New tab</button>
         {(state.tabs?.length || 0) > 1 && <button disabled={busy || running || starting} onClick={() => void act('workspace_tab', { operation: 'close' })}>Close tab</button>}
       </div>}
       <div className="nalu-browser-screen" style={{ position: 'relative' }}>

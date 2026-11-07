@@ -8,7 +8,7 @@ const dir = await mkdtemp(path.join(os.tmpdir(), 'nalu-device-native-live-'))
 const source = await readFile('api/web.ts', 'utf8')
 const decisionSource = source.slice(source.indexOf('type AgentEl ='), source.indexOf('// eslint-disable-next-line @typescript-eslint/no-explicit-any\nexport default async function handler'))
 assert.ok(decisionSource.includes('async function agentStep'))
-await build({ stdin: { contents: `import { browserDecision } from './api/_browserDecision'; ${decisionSource}\nexport {agentStep}; export { DeviceRuntime } from './services/browser-device/runtime.mjs'; export {startProxy} from './services/browser-host/proxy.mjs';`, resolveDir: process.cwd(), loader: 'ts' },
+await build({ stdin: { contents: `import { browserDecision } from './api/_browserDecision'; import { search } from './api/_webResearch'; ${decisionSource}\nexport {agentStep}; export { DeviceRuntime } from './services/browser-device/runtime.mjs'; export {startProxy} from './services/browser-host/proxy.mjs';`, resolveDir: process.cwd(), loader: 'ts' },
   outfile: path.join(dir, 'test.cjs'), bundle: true, platform: 'node', format: 'cjs', nodePaths: [path.resolve('services/browser-host/node_modules')],
   plugins: [{ name: 'native-host', setup(b) { b.onResolve({ filter: /browser-host\/adapter\.mjs$/ }, () => ({ path: path.resolve('services/browser-device/native-host.mjs') })) } }], logLevel: 'warning' })
 process.env.BROWSER_DATA_DIR = path.join(dir, 'profiles')
